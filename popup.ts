@@ -119,7 +119,7 @@ async function handleUpload(event: Event): Promise<void> {
     renderStatus('Parsing Excel...');
     const buffer = await file.arrayBuffer();
     const bytes = Array.from(new Uint8Array(buffer));
-    const result = await sendMessage<{ uploadMeta: PopupState['uploadMeta']; entryCount: number }>({
+    const result = await sendMessage<{ entryCount: number }>({
       type: 'PARSE_EXCEL',
       payload: { fileName: file.name, bytes }
     });

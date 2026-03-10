@@ -10,7 +10,6 @@ import type {
 const MEMOQ_CELL_SELECTOR = '.editor-cell';
 const MEMOQ_CONTENT_SELECTOR = '.content-container';
 const MEMOQ_HIDDEN_INPUT_SELECTOR = '#editorHiddenInput';
-const DEBUG_PREFIX = '[bulk-fill][memoq]';
 const VISIBLE_SEGMENT_TOP_BUCKET_PX = 24;
 
 export class MemoqAdapter {
@@ -29,11 +28,6 @@ export class MemoqAdapter {
       this.helpers.findBestScrollContainer(cells) ??
       this.findMemoqScrollContainer(cells);
 
-    console.info(
-      `${DEBUG_PREFIX} scroll-context`,
-      container ? this.describeContainer(container) : { found: false, visibleCells: cells.length }
-    );
-
     if (container) {
       return this.helpers.toElementScrollContext(container);
     }
@@ -43,13 +37,15 @@ export class MemoqAdapter {
       return null;
     }
 
-    console.info(`${DEBUG_PREFIX} synthetic-scroll-target`, this.describeContainer(interactionTarget));
     return this.createSyntheticScrollContext(interactionTarget);
   }
 
   collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[] {
-    const cells = Array.from(document.querySelectorAll<HTMLElement>(MEMOQ_CELL_SELECTOR))
-      .filter((cell) => this.helpers.isElementVisible(cell));
+    const cells = this.helpers.sortByVisualPosition(
+      Array.from(document.querySelectorAll<HTMLElement>(MEMOQ_CELL_SELECTOR))
+        .filter((cell) => this.helpers.isElementVisible(cell)),
+      scrollContext
+    );
 
     if (cells.length === 0) {
       return [];
@@ -111,25 +107,10 @@ export class MemoqAdapter {
     }
 
     this.helpers.setNativeInputValue(hiddenInput, value);
-    hiddenInput.dispatchEvent(
-      new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        data: value,
-        inputType: 'insertText'
-      })
-    );
-    hiddenInput.dispatchEvent(
-      new InputEvent('input', {
-        bubbles: true,
-        data: value,
-        inputType: 'insertText'
-      })
-    );
-    hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
-    hiddenInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Tab' }));
-    hiddenInput.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Tab' }));
-    hiddenInput.dispatchEvent(new Event('blur', { bubbles: true }));
+    this.helpers.dispatchInput(hiddenInput, value, true);
+    this.helpers.dispatchChange(hiddenInput);
+    this.helpers.dispatchTabNavigation(hiddenInput);
+    this.helpers.dispatchBlur(hiddenInput);
 
     await delay(120);
     const nextValue = this.getEditableValue(target);
@@ -163,19 +144,11 @@ export class MemoqAdapter {
     row: HTMLElement,
     scrollContext: ScrollContext
   ): RuntimeSegment | null {
-    const cells = Array.from(row.querySelectorAll<HTMLElement>(MEMOQ_CELL_SELECTOR))
-      .filter((cell) => this.helpers.isElementVisible(cell))
-      .sort((left, right) => {
-        const topDiff =
-          this.helpers.getAbsoluteTop(left, scrollContext) -
-          this.helpers.getAbsoluteTop(right, scrollContext);
-
-        if (Math.abs(topDiff) > 2) {
-          return topDiff;
-        }
-
-        return left.getBoundingClientRect().left - right.getBoundingClientRect().left;
-      });
+    const cells = this.helpers.sortByVisualPosition(
+      Array.from(row.querySelectorAll<HTMLElement>(MEMOQ_CELL_SELECTOR))
+        .filter((cell) => this.helpers.isElementVisible(cell)),
+      scrollContext
+    );
 
     if (cells.length < 2) {
       return null;
@@ -304,7 +277,6 @@ export class MemoqAdapter {
 
       while (ancestor && ancestor !== document.body && depth < 8) {
         const current = candidates.get(ancestor) ?? 0;
-        current;
         candidates.set(ancestor, current + Math.max(1, 8 - depth));
         ancestor = ancestor.parentElement;
         depth += 1;
@@ -371,30 +343,8 @@ export class MemoqAdapter {
   }
 
   private async activateTarget(targetElement: HTMLElement): Promise<void> {
-    for (const eventName of ['mousedown', 'mouseup', 'click']) {
-      targetElement.dispatchEvent(
-        new MouseEvent(eventName, {
-          bubbles: true,
-          cancelable: true,
-          view: window
-        })
-      );
-    }
-
+    this.helpers.dispatchMouseSequence(targetElement, ['mousedown', 'mouseup', 'click']);
     targetElement.focus();
     await delay(80);
-  }
-
-  private describeContainer(container: HTMLElement): Record<string, unknown> {
-    return {
-      found: true,
-      tag: container.tagName,
-      id: container.id || null,
-      className: container.className || null,
-      scrollTop: container.scrollTop,
-      clientHeight: container.clientHeight,
-      scrollHeight: container.scrollHeight,
-      cellCount: container.querySelectorAll(MEMOQ_CELL_SELECTOR).length
-    };
   }
 }

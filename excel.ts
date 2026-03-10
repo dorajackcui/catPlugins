@@ -52,7 +52,7 @@ export function parseExcelBuffer(
       return;
     }
 
-    const sourceNormalized = normalizeText(sourceRaw);
+    const sourceNormalized = sourceRaw;
     const nextOccurrence = (occurrences.get(sourceNormalized) ?? 0) + 1;
     occurrences.set(sourceNormalized, nextOccurrence);
 

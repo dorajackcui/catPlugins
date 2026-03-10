@@ -72,13 +72,11 @@ export class PhraseAdapter {
       return rowSegments;
     }
 
-    const editables = Array.from(
-      document.querySelectorAll<EditableElement>(EDITABLE_SELECTORS.join(','))
-    )
-      .filter((element) => this.helpers.isEditableCandidate(element))
-      .sort((left, right) => {
-        return this.helpers.getAbsoluteTop(left, scrollContext) - this.helpers.getAbsoluteTop(right, scrollContext);
-      });
+    const editables = this.helpers.sortByVisualPosition(
+      Array.from(document.querySelectorAll<EditableElement>(EDITABLE_SELECTORS.join(',')))
+        .filter((element) => this.helpers.isEditableCandidate(element)),
+      scrollContext
+    );
 
     const segments: RuntimeSegment[] = [];
 
@@ -108,23 +106,22 @@ export class PhraseAdapter {
       const liveInput = this.findLiveInput(target);
 
       if (liveInput instanceof HTMLInputElement || liveInput instanceof HTMLTextAreaElement) {
-        this.helpers.setNativeInputValue(liveInput, value);
-        liveInput.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
-        liveInput.dispatchEvent(new Event('change', { bubbles: true }));
-        liveInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Tab' }));
-        liveInput.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Tab' }));
-        liveInput.dispatchEvent(new Event('blur', { bubbles: true }));
+        this.helpers.setEditableValue(liveInput, value);
+        this.helpers.dispatchInput(liveInput, value);
+        this.helpers.dispatchChange(liveInput);
+        this.helpers.dispatchTabNavigation(liveInput);
+        this.helpers.dispatchBlur(liveInput);
       } else if (liveInput instanceof HTMLElement && liveInput.isContentEditable) {
-        liveInput.textContent = value;
-        liveInput.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
-        liveInput.dispatchEvent(new Event('change', { bubbles: true }));
-        liveInput.dispatchEvent(new Event('blur', { bubbles: true }));
+        this.helpers.setEditableValue(liveInput, value);
+        this.helpers.dispatchInput(liveInput, value);
+        this.helpers.dispatchChange(liveInput);
+        this.helpers.dispatchBlur(liveInput);
       } else {
         const textContainer =
           target.querySelector<HTMLElement>('.te_text_container') || target;
-        textContainer.textContent = value;
-        textContainer.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
-        textContainer.dispatchEvent(new Event('change', { bubbles: true }));
+        this.helpers.setEditableValue(textContainer, value);
+        this.helpers.dispatchInput(textContainer, value);
+        this.helpers.dispatchChange(textContainer);
       }
 
       await delay(80);
@@ -139,25 +136,20 @@ export class PhraseAdapter {
       };
     }
 
-    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
-      this.helpers.setNativeInputValue(target, value);
-    } else {
-      target.textContent = value;
-    }
-
+    this.helpers.setEditableValue(target, value);
     target.dispatchEvent(new Event('input', { bubbles: true }));
-    target.dispatchEvent(new Event('change', { bubbles: true }));
-    target.dispatchEvent(new Event('blur', { bubbles: true }));
+    this.helpers.dispatchChange(target);
+    this.helpers.dispatchBlur(target);
 
     return { domId: segment.domId, filled: true };
   }
 
   private collectRowSegments(scrollContext: ScrollContext): RuntimeSegment[] {
-    const rows = Array.from(document.querySelectorAll<HTMLElement>(ROW_SELECTORS.join(',')))
-      .filter((row) => this.helpers.isElementVisible(row))
-      .sort((left, right) => {
-        return this.helpers.getAbsoluteTop(left, scrollContext) - this.helpers.getAbsoluteTop(right, scrollContext);
-      });
+    const rows = this.helpers.sortByVisualPosition(
+      Array.from(document.querySelectorAll<HTMLElement>(ROW_SELECTORS.join(',')))
+        .filter((row) => this.helpers.isElementVisible(row)),
+      scrollContext
+    );
 
     const segments: RuntimeSegment[] = [];
 
@@ -239,16 +231,7 @@ export class PhraseAdapter {
       targetElement.querySelector<HTMLElement>(TARGET_ACTIVATION_SELECTORS.join(',')) ||
       targetElement;
 
-    for (const eventName of ['mousedown', 'mouseup', 'click', 'dblclick']) {
-      clickTarget.dispatchEvent(
-        new MouseEvent(eventName, {
-          bubbles: true,
-          cancelable: true,
-          view: window
-        })
-      );
-    }
-
+    this.helpers.dispatchMouseSequence(clickTarget, ['mousedown', 'mouseup', 'click', 'dblclick']);
     clickTarget.focus();
     await delay(80);
   }
@@ -282,4 +265,3 @@ export class PhraseAdapter {
     return null;
   }
 }
-

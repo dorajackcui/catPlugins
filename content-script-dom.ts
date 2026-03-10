@@ -37,6 +37,24 @@ export interface RuntimeSegment {
 }
 
 export class ContentScriptDomHelpers {
+  sortByVisualPosition<T extends Element>(
+    elements: T[],
+    scrollContext: ScrollContext,
+    topTolerancePx = 2
+  ): T[] {
+    return [...elements].sort((left, right) => {
+      const topDiff =
+        this.getAbsoluteTop(left, scrollContext) -
+        this.getAbsoluteTop(right, scrollContext);
+
+      if (Math.abs(topDiff) > topTolerancePx) {
+        return topDiff;
+      }
+
+      return left.getBoundingClientRect().left - right.getBoundingClientRect().left;
+    });
+  }
+
   readTextBySelectors(root: ParentNode, selectors: string[]): string {
     for (const selector of selectors) {
       const node = root.querySelector<HTMLElement>(selector);
@@ -247,6 +265,15 @@ export class ContentScriptDomHelpers {
     return targetElement.textContent ?? '';
   }
 
+  setEditableValue(target: EditableElement, value: string): void {
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      this.setNativeInputValue(target, value);
+      return;
+    }
+
+    target.textContent = value;
+  }
+
   setNativeInputValue(
     input: HTMLInputElement | HTMLTextAreaElement,
     value: string
@@ -258,6 +285,52 @@ export class ContentScriptDomHelpers {
       descriptor.set.call(input, value);
     } else {
       input.value = value;
+    }
+  }
+
+  dispatchInput(target: EventTarget, value: string, includeBeforeInput = false): void {
+    if (includeBeforeInput) {
+      target.dispatchEvent(
+        new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: value,
+          inputType: 'insertText'
+        })
+      );
+    }
+
+    target.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        data: value,
+        inputType: 'insertText'
+      })
+    );
+  }
+
+  dispatchChange(target: EventTarget): void {
+    target.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  dispatchBlur(target: EventTarget): void {
+    target.dispatchEvent(new Event('blur', { bubbles: true }));
+  }
+
+  dispatchTabNavigation(target: EventTarget): void {
+    target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Tab' }));
+    target.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Tab' }));
+  }
+
+  dispatchMouseSequence(target: HTMLElement, eventNames: string[]): void {
+    for (const eventName of eventNames) {
+      target.dispatchEvent(
+        new MouseEvent(eventName, {
+          bubbles: true,
+          cancelable: true,
+          view: window
+        })
+      );
     }
   }
 }

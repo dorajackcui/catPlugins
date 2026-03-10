@@ -11,6 +11,12 @@ import type {
   PopupState
 } from './types.ts';
 
+const MEMOQ_URL_RE = /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/webpm\/webtrans\//;
+const MEMSOURCE_JOB_URL_RE =
+  /^https:\/\/cloud\.memsource\.com\/web\/job\/[^/]+\/translate(?:[/?#]|$)/;
+const MEMSOURCE_EDITOR_FRAME_URL_RE =
+  /^https:\/\/editor\.memsource\.com\/twe\/translation\/job\/[^/?#]+/;
+
 function isPhraseEditorUrl(url?: string): boolean {
   if (!url) {
     return false;
@@ -18,25 +24,38 @@ function isPhraseEditorUrl(url?: string): boolean {
 
   return (
     url.startsWith('https://app.phrase.com/editor/') ||
-    /^https:\/\/cloud\.memsource\.com\/web\/job\/[^/]+\/translate(?:[/?#]|$)/.test(url) ||
-    /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/webpm\/webtrans\//.test(url)
+    MEMSOURCE_JOB_URL_RE.test(url) ||
+    MEMOQ_URL_RE.test(url)
   );
 }
 
 function isMemoqUrl(url?: string): boolean {
-  if (!url) {
-    return false;
-  }
-
-  return /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/webpm\/webtrans\//.test(url);
+  return Boolean(url && MEMOQ_URL_RE.test(url));
 }
 
 function isMemsourceEditorFrameUrl(url?: string): boolean {
-  if (!url) {
-    return false;
+  return Boolean(url && MEMSOURCE_EDITOR_FRAME_URL_RE.test(url));
+}
+
+function finalizePreviewForTab<T extends { preview: ReturnType<typeof applyMemoqPreviewCorrection> }>(
+  url: string | undefined,
+  result: T
+): T {
+  if (!isMemoqUrl(url)) {
+    return result;
   }
 
-  return /^https:\/\/editor\.memsource\.com\/twe\/translation\/job\/[^/?#]+/.test(url);
+  return {
+    ...result,
+    preview: applyMemoqPreviewCorrection(result.preview)
+  };
+}
+
+function buildPreviewForTab(
+  url: string | undefined,
+  preview: ReturnType<typeof buildPreview>
+): ReturnType<typeof buildPreview> {
+  return isMemoqUrl(url) ? applyMemoqPreviewCorrection(preview) : preview;
 }
 
 async function ensurePhraseTab(): Promise<{
@@ -66,8 +85,7 @@ async function getPopupState(): Promise<PopupState> {
 
   return {
     uploadMeta: state.uploadMeta,
-    previewResult: state.previewResult,
-    hasEntries: state.translationEntries.length > 0
+    previewResult: state.previewResult
   };
 }
 
@@ -91,7 +109,6 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
       return {
         ok: true,
         data: {
-          uploadMeta: parsed.meta,
           entryCount: parsed.entries.length
         }
       };
@@ -113,11 +130,10 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
         throw new Error(response.error);
       }
 
-      const preview = isMemoqUrl(tab.url)
-        ? applyMemoqPreviewCorrection(
-            buildPreview(state.translationEntries, response.data)
-          )
-        : buildPreview(state.translationEntries, response.data);
+      const preview = buildPreviewForTab(
+        tab.url,
+        buildPreview(state.translationEntries, response.data)
+      );
       await writeRuntimeState({ previewResult: preview });
       return { ok: true, data: preview };
     }
@@ -141,12 +157,7 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
         throw new Error(response.error);
       }
 
-      const result = isMemoqUrl(tab.url)
-        ? {
-            ...response.data,
-            preview: applyMemoqPreviewCorrection(response.data.preview)
-          }
-        : response.data;
+      const result = finalizePreviewForTab(tab.url, response.data);
 
       await writeRuntimeState({ previewResult: result.preview });
       return { ok: true, data: result };

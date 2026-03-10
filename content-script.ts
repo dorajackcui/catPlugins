@@ -99,7 +99,6 @@ class PlatformDomAdapter {
   private async collectSegments(
     onSegment?: (segment: RuntimeSegment) => Promise<void> | void
   ): Promise<RuntimeSegment[]> {
-    const debugMemoq = memoqAdapter.isActive();
     const scrollContext = this.findScrollContext();
     const seenIds = new Set<string>();
     const recentSyntheticFingerprints = new WeakMap<
@@ -134,14 +133,6 @@ class PlatformDomAdapter {
               ? repeatedSyntheticSignaturePasses + 1
               : 0;
           previousSyntheticSignature = syntheticSignature;
-
-          if (debugMemoq) {
-            console.info('[bulk-fill][memoq] synthetic-signature', {
-              pass: pass + 1,
-              repeatedSyntheticSignaturePasses,
-              visibleCount: visibleSegments.length
-            });
-          }
         }
 
         for (const segment of visibleSegments) {
@@ -203,17 +194,6 @@ class PlatformDomAdapter {
         const isAtBottom = scrollContext.isAtBottom();
         const scrollStep = Math.max(scrollContext.getHeight() * SCROLL_RATIO, 240);
 
-        if (debugMemoq) {
-          console.info('[bulk-fill][memoq] scan-pass', {
-            pass: pass + 1,
-            discoveredCount,
-            totalSegments: segments.length,
-            scrollTopBefore,
-            isAtBottom,
-            scrollStep
-          });
-        }
-
         if (isAtBottom && noNewSegmentsPasses >= 3) {
           break;
         }
@@ -238,16 +218,6 @@ class PlatformDomAdapter {
           Math.abs(scrollTopAfter - scrollTopBefore) < 2
             ? noMovementPasses + 1
             : 0;
-
-        if (debugMemoq) {
-          console.info('[bulk-fill][memoq] scan-pass-result', {
-            pass: pass + 1,
-            scrollTopAfter,
-            movedBy: scrollTopAfter - scrollTopBefore,
-            noNewSegmentsPasses,
-            noMovementPasses
-          });
-        }
 
         if (noMovementPasses >= 5 && noNewSegmentsPasses >= 3) {
           break;

@@ -15,8 +15,3 @@ export function delay(ms: number): Promise<void> {
     window.setTimeout(resolve, ms);
   });
 }
-
-export function uniq<T>(items: T[]): T[] {
-  return [...new Set(items)];
-}
-

@@ -61,7 +61,6 @@ export interface ParseExcelResult {
 export interface PopupState {
   uploadMeta: UploadMeta | null;
   previewResult: PreviewResult | null;
-  hasEntries: boolean;
 }
 
 export interface FillRunResult {
