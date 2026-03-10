@@ -116,3 +116,17 @@ export function applyFilledToPreview(
 
   return summarizePreview(updatedItems);
 }
+
+export function applyMemoqPreviewCorrection(preview: PreviewResult): PreviewResult {
+  const unmatchedIndex = [...preview.items]
+    .map((item, index) => ({ item, index }))
+    .reverse()
+    .find(({ item }) => item.status === 'unmatched')?.index;
+
+  if (unmatchedIndex === undefined) {
+    return preview;
+  }
+
+  const items = preview.items.filter((_, index) => index !== unmatchedIndex);
+  return summarizePreview(items);
+}

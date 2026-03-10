@@ -1,6 +1,6 @@
 import { executeScript, getAllFrames, queryActiveTab, sendTabMessage } from './chrome-api.ts';
 import { parseExcelBuffer } from './excel.ts';
-import { buildPreview } from './matcher.ts';
+import { applyMemoqPreviewCorrection, buildPreview } from './matcher.ts';
 import { readRuntimeState, writeRuntimeState } from './storage.ts';
 import type {
   ApiResponse,
@@ -21,6 +21,14 @@ function isPhraseEditorUrl(url?: string): boolean {
     /^https:\/\/cloud\.memsource\.com\/web\/job\/[^/]+\/translate(?:[/?#]|$)/.test(url) ||
     /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/webpm\/webtrans\//.test(url)
   );
+}
+
+function isMemoqUrl(url?: string): boolean {
+  if (!url) {
+    return false;
+  }
+
+  return /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/webpm\/webtrans\//.test(url);
 }
 
 function isMemsourceEditorFrameUrl(url?: string): boolean {
@@ -105,7 +113,11 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
         throw new Error(response.error);
       }
 
-      const preview = buildPreview(state.translationEntries, response.data);
+      const preview = isMemoqUrl(tab.url)
+        ? applyMemoqPreviewCorrection(
+            buildPreview(state.translationEntries, response.data)
+          )
+        : buildPreview(state.translationEntries, response.data);
       await writeRuntimeState({ previewResult: preview });
       return { ok: true, data: preview };
     }
@@ -129,8 +141,15 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
         throw new Error(response.error);
       }
 
-      await writeRuntimeState({ previewResult: response.data.preview });
-      return { ok: true, data: response.data };
+      const result = isMemoqUrl(tab.url)
+        ? {
+            ...response.data,
+            preview: applyMemoqPreviewCorrection(response.data.preview)
+          }
+        : response.data;
+
+      await writeRuntimeState({ previewResult: result.preview });
+      return { ok: true, data: result };
     }
 
     default: {
