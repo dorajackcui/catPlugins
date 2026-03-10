@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Phrase Bulk Fill</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <header class="hero">
+        <p class="eyebrow">Phrase Bulk Fill</p>
+        <h1>MVP</h1>
+        <p class="subtitle">Upload Excel, preview matches, then fill empty targets.</p>
+      </header>
+
+      <section class="card">
+        <input id="file-input" type="file" accept=".xlsx,.xls" hidden />
+        <button id="upload-button" class="primary" type="button">Upload Excel</button>
+        <p id="file-info" class="muted">No Excel file uploaded yet.</p>
+      </section>
+
+      <section class="card actions">
+        <button id="preview-button" type="button" disabled>Preview</button>
+        <button id="fill-button" class="accent" type="button" disabled>Fill</button>
+      </section>
+
+      <section class="card">
+        <p id="status" class="status" data-kind="default">Ready.</p>
+      </section>
+
+      <section class="card">
+        <h2>Preview Summary</h2>
+        <ul id="preview-summary" class="summary-list">
+          <li>Total segments: -</li>
+          <li>Matched: -</li>
+          <li>Already translated: -</li>
+          <li>Placeholder errors: -</li>
+          <li>Ready to fill: -</li>
+          <li>Skipped: -</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Sample Matches</h2>
+        <ul id="preview-items" class="items-list"></ul>
+      </section>
+    </main>
+    <script src="./popup.js"></script>
+  </body>
+</html>
+
