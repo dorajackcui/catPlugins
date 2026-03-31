@@ -71,7 +71,7 @@ h2 {
 
 .actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 10px;
 }
 
@@ -98,6 +98,12 @@ button.accent {
   color: white;
 }
 
+button.ghost {
+  background: transparent;
+  border-color: #b8ad9c;
+  color: var(--muted);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -121,4 +127,3 @@ button:disabled {
 .items-list li + li {
   margin-top: 6px;
 }
-

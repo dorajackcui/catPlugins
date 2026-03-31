@@ -8,17 +8,20 @@ import type {
 } from './types.ts';
 
 const state = {
-  busy: false
+  busy: false,
+  stopping: false
 };
 
 const uploadButton = document.querySelector<HTMLButtonElement>('#upload-button');
 const fileInput = document.querySelector<HTMLInputElement>('#file-input');
 const previewButton = document.querySelector<HTMLButtonElement>('#preview-button');
 const fillButton = document.querySelector<HTMLButtonElement>('#fill-button');
+const stopButton = document.querySelector<HTMLButtonElement>('#stop-button');
 const fileInfo = document.querySelector<HTMLElement>('#file-info');
 const statusNode = document.querySelector<HTMLElement>('#status');
 const previewNode = document.querySelector<HTMLElement>('#preview-summary');
 const previewListNode = document.querySelector<HTMLElement>('#preview-items');
+const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 
 async function sendMessage<T>(message: BackgroundRequest): Promise<T> {
   const response = await runtimeSendMessage<BackgroundRequest, ApiResponse<T>>(message);
@@ -34,6 +37,12 @@ function setBusy(nextBusy: boolean): void {
   if (uploadButton) uploadButton.disabled = nextBusy;
   if (previewButton) previewButton.disabled = nextBusy;
   if (fillButton) fillButton.disabled = nextBusy;
+  if (stopButton) stopButton.disabled = !nextBusy || state.stopping;
+}
+
+function setStopping(nextStopping: boolean): void {
+  state.stopping = nextStopping;
+  if (stopButton) stopButton.disabled = !state.busy || nextStopping;
 }
 
 function renderStatus(message: string, kind: 'default' | 'error' = 'default'): void {
@@ -85,12 +94,14 @@ function renderFileInfo(popupState: PopupState): void {
     fileInfo.textContent = 'No Excel file uploaded yet.';
     if (previewButton) previewButton.disabled = true;
     if (fillButton) fillButton.disabled = true;
+    if (stopButton) stopButton.disabled = true;
     return;
   }
 
   fileInfo.textContent = `${popupState.uploadMeta.fileName} · ${popupState.uploadMeta.entryCount} rows · sheet ${popupState.uploadMeta.sheetName}`;
   if (previewButton) previewButton.disabled = state.busy;
   if (fillButton) fillButton.disabled = state.busy;
+  if (stopButton) stopButton.disabled = !state.busy || state.stopping;
 }
 
 async function refreshState(): Promise<void> {
@@ -137,13 +148,16 @@ async function handleUpload(event: Event): Promise<void> {
 async function handlePreview(): Promise<void> {
   try {
     setBusy(true);
+    setStopping(false);
     renderStatus('Scanning Phrase segments...');
     const preview = await sendMessage<PreviewResult>({ type: 'RUN_PREVIEW' });
     renderPreview(preview);
     renderStatus(`Preview ready. ${preview.readyToFill} segment(s) can be filled.`);
   } catch (error) {
-    renderStatus(error instanceof Error ? error.message : 'Preview failed.', 'error');
+    const message = error instanceof Error ? error.message : 'Preview failed.';
+    renderStatus(message === STOP_ERROR_MESSAGE ? 'Stopped.' : message, message === STOP_ERROR_MESSAGE ? 'default' : 'error');
   } finally {
+    setStopping(false);
     setBusy(false);
     await refreshState();
   }
@@ -152,15 +166,33 @@ async function handlePreview(): Promise<void> {
 async function handleFill(): Promise<void> {
   try {
     setBusy(true);
+    setStopping(false);
     renderStatus('Re-scanning and filling segments...');
     const result = await sendMessage<FillRunResult>({ type: 'RUN_FILL' });
     renderPreview(result.preview);
     renderStatus(`Filled ${result.filledCount} segment(s).`);
   } catch (error) {
-    renderStatus(error instanceof Error ? error.message : 'Fill failed.', 'error');
+    const message = error instanceof Error ? error.message : 'Fill failed.';
+    renderStatus(message === STOP_ERROR_MESSAGE ? 'Stopped.' : message, message === STOP_ERROR_MESSAGE ? 'default' : 'error');
   } finally {
+    setStopping(false);
     setBusy(false);
     await refreshState();
+  }
+}
+
+async function handleStop(): Promise<void> {
+  if (!state.busy || state.stopping) {
+    return;
+  }
+
+  try {
+    setStopping(true);
+    renderStatus('Stopping current run...');
+    await sendMessage<null>({ type: 'STOP_RUN' });
+  } catch (error) {
+    setStopping(false);
+    renderStatus(error instanceof Error ? error.message : 'Stop failed.', 'error');
   }
 }
 
@@ -173,6 +205,9 @@ previewButton?.addEventListener('click', () => {
 });
 fillButton?.addEventListener('click', () => {
   void handleFill();
+});
+stopButton?.addEventListener('click', () => {
+  void handleStop();
 });
 
 void refreshState().catch((error) => {

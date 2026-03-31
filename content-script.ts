@@ -18,6 +18,7 @@ import { delay, normalizeText } from './utils.ts';
 declare global {
   interface Window {
     __phraseBulkFillListenerBound?: boolean;
+    __phraseBulkFillStopRequested?: boolean;
   }
 }
 
@@ -29,9 +30,11 @@ const SCROLL_RATIO = 0.85;
 const helpers = new ContentScriptDomHelpers();
 const memoqAdapter = new MemoqAdapter(helpers);
 const phraseAdapter = new PhraseAdapter(helpers);
+const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 
 class PlatformDomAdapter {
   async scanSegments(): Promise<PageSegment[]> {
+    this.resetStopState();
     const runtimeSegments = await this.collectSegments();
     return runtimeSegments.map(
       ({
@@ -45,6 +48,7 @@ class PlatformDomAdapter {
   }
 
   async fillAll(entries: TranslationEntry[]): Promise<FillRunResult> {
+    this.resetStopState();
     const entryLookup = createEntryLookup(entries);
     const previewItems: PreviewItem[] = [];
     const filledDomIds: string[] = [];
@@ -72,6 +76,7 @@ class PlatformDomAdapter {
   }
 
   private async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
+    this.assertNotStopped();
     const currentValue = this.getEditableValue(segment);
     if (normalizeText(currentValue)) {
       return {
@@ -115,7 +120,9 @@ class PlatformDomAdapter {
       let noMovementPasses = 0;
 
       for (let pass = 0; pass < MAX_PASSES && segments.length < MAX_SEGMENTS; pass += 1) {
+        this.assertNotStopped();
         await delay(SCAN_DELAY_MS);
+        this.assertNotStopped();
 
         const countBefore = segments.length;
         const visibleSegments = this.collectVisibleSegments(scrollContext);
@@ -136,6 +143,7 @@ class PlatformDomAdapter {
         }
 
         for (const segment of visibleSegments) {
+          this.assertNotStopped();
           if (
             scrollContext.mode === 'synthetic' &&
             shouldSkipSyntheticPass
@@ -212,6 +220,7 @@ class PlatformDomAdapter {
         }
 
         await delay(80);
+        this.assertNotStopped();
 
         const scrollTopAfter = scrollContext.getTop();
         noMovementPasses =
@@ -227,6 +236,20 @@ class PlatformDomAdapter {
       return segments;
     } finally {
       scrollContext.restore();
+    }
+  }
+
+  stopCurrentRun(): void {
+    window.__phraseBulkFillStopRequested = true;
+  }
+
+  private resetStopState(): void {
+    window.__phraseBulkFillStopRequested = false;
+  }
+
+  private assertNotStopped(): void {
+    if (window.__phraseBulkFillStopRequested) {
+      throw new Error(STOP_ERROR_MESSAGE);
     }
   }
 
@@ -260,6 +283,11 @@ async function handleRequest(request: ContentRequest): Promise<ApiResponse<unkno
     case 'CONTENT_FILL': {
       const result = await adapter.fillAll(request.payload.entries);
       return { ok: true, data: result };
+    }
+
+    case 'CONTENT_STOP': {
+      adapter.stopCurrentRun();
+      return { ok: true, data: null };
     }
 
     default: {

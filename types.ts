@@ -91,6 +91,10 @@ export interface RunFillRequest {
   type: 'RUN_FILL';
 }
 
+export interface StopRunRequest {
+  type: 'STOP_RUN';
+}
+
 export interface GetStateRequest {
   type: 'GET_STATE';
 }
@@ -99,6 +103,7 @@ export type BackgroundRequest =
   | ParseExcelRequest
   | RunPreviewRequest
   | RunFillRequest
+  | StopRunRequest
   | GetStateRequest;
 
 export interface ContentScanRequest {
@@ -112,7 +117,14 @@ export interface ContentFillRequest {
   };
 }
 
-export type ContentRequest = ContentScanRequest | ContentFillRequest;
+export interface ContentStopRequest {
+  type: 'CONTENT_STOP';
+}
+
+export type ContentRequest =
+  | ContentScanRequest
+  | ContentFillRequest
+  | ContentStopRequest;
 
 export type ApiResponse<T> =
   | {

@@ -3,19 +3,48 @@ import { read, utils as xlsxUtils } from 'xlsx';
 import type { ParseExcelResult, TranslationEntry } from './types.ts';
 import { normalizeText, toText } from './utils.ts';
 
+interface IndexedRow {
+  rowNumber: number;
+  values: unknown[];
+}
+
 function normalizeHeader(value: unknown): string {
   return toText(value).trim().toLowerCase().replace(/[\s_-]+/g, '');
 }
 
-function findColumnIndex(headers: unknown[], expected: 'source' | 'target'): number {
-  return headers.findIndex((header) => normalizeHeader(header) === expected);
+function resolveColumnMapping(rows: IndexedRow[]): {
+  sourceIndex: number;
+  targetIndex: number;
+  dataRows: IndexedRow[];
+} {
+  const [headerRow] = rows;
+  const sourceIndex = (headerRow?.values ?? []).findIndex(
+    (cell) => normalizeHeader(cell) === 'source'
+  );
+  const targetIndex = (headerRow?.values ?? []).findIndex(
+    (cell) => normalizeHeader(cell) === 'target'
+  );
+
+  if (sourceIndex !== -1 && targetIndex !== -1) {
+    return {
+      sourceIndex,
+      targetIndex,
+      dataRows: rows.slice(1)
+    };
+  }
+
+  return {
+    sourceIndex: 0,
+    targetIndex: 1,
+    dataRows: rows
+  };
 }
 
 export function parseExcelBuffer(
   buffer: ArrayBuffer | Uint8Array,
   fileName: string
 ): ParseExcelResult {
-  const workbook = read(buffer, { type: 'array' });
+  const workbook = read(buffer, { type: 'array', cellStyles: true });
   const [sheetName] = workbook.SheetNames;
 
   if (!sheetName) {
@@ -28,25 +57,28 @@ export function parseExcelBuffer(
     defval: '',
     raw: false
   });
+  const visibleRows = rows
+    .map<IndexedRow>((values, index) => ({
+      rowNumber: index + 1,
+      values
+    }))
+    .filter(({ rowNumber }) => !sheet['!rows']?.[rowNumber - 1]?.hidden);
 
-  if (!rows.length) {
+  if (!visibleRows.length) {
     throw new Error('The first sheet is empty.');
   }
 
-  const [headerRow, ...dataRows] = rows;
-  const sourceIndex = findColumnIndex(headerRow, 'source');
-  const targetIndex = findColumnIndex(headerRow, 'target');
-
-  if (sourceIndex === -1 || targetIndex === -1) {
-    throw new Error('The first sheet must contain source and target columns.');
-  }
-
+  const {
+    sourceIndex,
+    targetIndex,
+    dataRows
+  } = resolveColumnMapping(visibleRows);
   const occurrences = new Map<string, number>();
   const entries: TranslationEntry[] = [];
 
-  dataRows.forEach((row, rowOffset) => {
-    const sourceRaw = normalizeText(toText(row[sourceIndex]));
-    const targetRaw = normalizeText(toText(row[targetIndex]));
+  dataRows.forEach(({ rowNumber, values }) => {
+    const sourceRaw = normalizeText(toText(values[sourceIndex]));
+    const targetRaw = normalizeText(toText(values[targetIndex]));
 
     if (!sourceRaw || !targetRaw) {
       return;
@@ -57,7 +89,7 @@ export function parseExcelBuffer(
     occurrences.set(sourceNormalized, nextOccurrence);
 
     entries.push({
-      rowIndex: rowOffset + 2,
+      rowIndex: rowNumber,
       sourceRaw,
       sourceNormalized,
       targetRaw,

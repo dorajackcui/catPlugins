@@ -80,6 +80,15 @@ async function ensurePhraseTab(): Promise<{
   };
 }
 
+async function stopActiveRun(): Promise<void> {
+  const tab = await ensurePhraseTab();
+  await sendTabMessage<ContentRequest, ApiResponse<null>>(
+    tab.id,
+    { type: 'CONTENT_STOP' },
+    tab.frameId ? { frameId: tab.frameId } : undefined
+  );
+}
+
 async function getPopupState(): Promise<PopupState> {
   const state = await readRuntimeState();
 
@@ -161,6 +170,11 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
 
       await writeRuntimeState({ previewResult: result.preview });
       return { ok: true, data: result };
+    }
+
+    case 'STOP_RUN': {
+      await stopActiveRun();
+      return { ok: true, data: null };
     }
 
     default: {
