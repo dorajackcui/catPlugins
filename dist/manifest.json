@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Phrase Bulk Fill",
+  "version": "0.1.0",
+  "description": "Upload Excel translations, preview Phrase matches, and fill empty targets in bulk.",
+  "permissions": ["storage", "activeTab", "scripting", "webNavigation"],
+  "host_permissions": [
+    "https://app.phrase.com/*",
+    "https://cloud.memsource.com/*",
+    "https://editor.memsource.com/*"
+  ],
+  "action": {
+    "default_title": "Phrase Bulk Fill",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://app.phrase.com/editor/*",
+        "https://cloud.memsource.com/web/job/*/translate",
+        "https://editor.memsource.com/twe/translation/job/*"
+      ],
+      "js": ["content-script.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}
