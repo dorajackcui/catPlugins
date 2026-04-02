@@ -75,6 +75,32 @@ h2 {
   gap: 10px;
 }
 
+.field-label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.field-hint {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.number-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: white;
+  color: var(--text);
+  font: inherit;
+}
+
+.number-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 button {
   width: 100%;
   padding: 10px 12px;

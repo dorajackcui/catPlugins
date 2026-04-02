@@ -1,5 +1,6 @@
 import { executeScript, getAllFrames, queryActiveTab, sendTabMessage } from './chrome-api.ts';
 import { parseExcelBuffer } from './excel.ts';
+import { normalizeFillOptions } from './fill-options.ts';
 import { applyMemoqPreviewCorrection, buildPreview } from './matcher.ts';
 import { readRuntimeState, writeRuntimeState } from './storage.ts';
 import type {
@@ -94,7 +95,8 @@ async function getPopupState(): Promise<PopupState> {
 
   return {
     uploadMeta: state.uploadMeta,
-    previewResult: state.previewResult
+    previewResult: state.previewResult,
+    fillOptions: state.fillOptions
   };
 }
 
@@ -152,6 +154,7 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
       if (!state.translationEntries.length) {
         throw new Error('Upload an Excel file before running Fill.');
       }
+      const fillOptions = normalizeFillOptions(request.payload?.fillOptions);
 
       const tab = await ensurePhraseTab();
       const response = await sendTabMessage<
@@ -159,7 +162,10 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
         ApiResponse<FillRunResult>
       >(tab.id, {
         type: 'CONTENT_FILL',
-        payload: { entries: state.translationEntries }
+        payload: {
+          entries: state.translationEntries,
+          fillOptions
+        }
       }, tab.frameId ? { frameId: tab.frameId } : undefined);
 
       if (!response.ok) {
@@ -168,13 +174,22 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
 
       const result = finalizePreviewForTab(tab.url, response.data);
 
-      await writeRuntimeState({ previewResult: result.preview });
+      await writeRuntimeState({
+        previewResult: result.preview,
+        fillOptions
+      });
       return { ok: true, data: result };
     }
 
     case 'STOP_RUN': {
       await stopActiveRun();
       return { ok: true, data: null };
+    }
+
+    case 'SET_FILL_OPTIONS': {
+      const fillOptions = normalizeFillOptions(request.payload?.fillOptions);
+      await writeRuntimeState({ fillOptions });
+      return { ok: true, data: fillOptions };
     }
 
     default: {

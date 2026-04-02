@@ -1,6 +1,6 @@
 import { extractPlaceholderTokens } from './qa.ts';
 import type { FillOutcome } from './types.ts';
-import { delay, normalizeText } from './utils.ts';
+import { delay, normalizeText, waitForNormalizedTextMatch } from './utils.ts';
 import type {
   ContentScriptDomHelpers,
   RuntimeSegment,
@@ -112,14 +112,17 @@ export class MemoqAdapter {
     this.helpers.dispatchTabNavigation(hiddenInput);
     this.helpers.dispatchBlur(hiddenInput);
 
-    await delay(120);
-    const nextValue = this.getEditableValue(target);
+    const confirmed = await waitForNormalizedTextMatch(
+      () => this.getEditableValue(target),
+      value,
+      { attempts: 10, delayMs: 120 }
+    );
 
     return {
       domId: segment.domId,
-      filled: normalizeText(nextValue) === normalizeText(value),
+      filled: confirmed,
       reason:
-        normalizeText(nextValue) === normalizeText(value)
+        confirmed
           ? undefined
           : 'Unable to confirm memoQ target update after writing.'
     };

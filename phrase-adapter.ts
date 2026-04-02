@@ -1,6 +1,6 @@
 import { extractPlaceholderTokens } from './qa.ts';
 import type { FillOutcome } from './types.ts';
-import { delay, normalizeText } from './utils.ts';
+import { delay, normalizeText, waitForNormalizedTextMatch } from './utils.ts';
 import type {
   ContentScriptDomHelpers,
   EditableElement,
@@ -124,13 +124,15 @@ export class PhraseAdapter {
         this.helpers.dispatchChange(textContainer);
       }
 
-      await delay(80);
-      const nextValue = this.getEditableValue(target);
+      const confirmed = await waitForNormalizedTextMatch(
+        () => this.getEditableValue(target),
+        value
+      );
       return {
         domId: segment.domId,
-        filled: normalizeText(nextValue) === normalizeText(value),
+        filled: confirmed,
         reason:
-          normalizeText(nextValue) === normalizeText(value)
+          confirmed
             ? undefined
             : 'Unable to confirm target update after writing.'
       };
@@ -141,7 +143,17 @@ export class PhraseAdapter {
     this.helpers.dispatchChange(target);
     this.helpers.dispatchBlur(target);
 
-    return { domId: segment.domId, filled: true };
+    const confirmed = await waitForNormalizedTextMatch(
+      () => this.getEditableValue(target),
+      value,
+      { attempts: 4, delayMs: 60 }
+    );
+
+    return {
+      domId: segment.domId,
+      filled: confirmed,
+      reason: confirmed ? undefined : 'Unable to confirm target update after writing.'
+    };
   }
 
   private collectRowSegments(scrollContext: ScrollContext): RuntimeSegment[] {

@@ -26979,6 +26979,20 @@
     };
   }
 
+  // fill-options.ts
+  var DEFAULT_FILL_OPTIONS = {
+    autoStopAfterFilledCount: null
+  };
+  function normalizeFillOptions(fillOptions) {
+    const autoStopAfterFilledCount = fillOptions?.autoStopAfterFilledCount;
+    if (typeof autoStopAfterFilledCount !== "number" || !Number.isFinite(autoStopAfterFilledCount) || autoStopAfterFilledCount < 1) {
+      return DEFAULT_FILL_OPTIONS;
+    }
+    return {
+      autoStopAfterFilledCount: Math.floor(autoStopAfterFilledCount)
+    };
+  }
+
   // qa.ts
   function extractPlaceholderTokens(input) {
     const tokens = [];
@@ -27089,7 +27103,8 @@
   var STORAGE_KEYS = {
     translationEntries: "translation_entries",
     previewResult: "preview_result",
-    uploadMeta: "upload_meta"
+    uploadMeta: "upload_meta",
+    fillOptions: "fill_options"
   };
 
   // storage.ts
@@ -27098,7 +27113,8 @@
     return {
       translationEntries: stored[STORAGE_KEYS.translationEntries] ?? [],
       previewResult: stored[STORAGE_KEYS.previewResult] ?? null,
-      uploadMeta: stored[STORAGE_KEYS.uploadMeta] ?? null
+      uploadMeta: stored[STORAGE_KEYS.uploadMeta] ?? null,
+      fillOptions: normalizeFillOptions(stored[STORAGE_KEYS.fillOptions])
     };
   }
   async function writeRuntimeState(partial) {
@@ -27111,6 +27127,9 @@
     }
     if ("uploadMeta" in partial) {
       payload[STORAGE_KEYS.uploadMeta] = partial.uploadMeta ?? null;
+    }
+    if ("fillOptions" in partial) {
+      payload[STORAGE_KEYS.fillOptions] = normalizeFillOptions(partial.fillOptions);
     }
     await storageSet(payload);
   }
@@ -27168,7 +27187,8 @@
     const state = await readRuntimeState();
     return {
       uploadMeta: state.uploadMeta,
-      previewResult: state.previewResult
+      previewResult: state.previewResult,
+      fillOptions: state.fillOptions
     };
   }
   async function handleMessage(request) {
@@ -27215,21 +27235,33 @@
         if (!state.translationEntries.length) {
           throw new Error("Upload an Excel file before running Fill.");
         }
+        const fillOptions = normalizeFillOptions(request.payload?.fillOptions);
         const tab = await ensurePhraseTab();
         const response = await sendTabMessage(tab.id, {
           type: "CONTENT_FILL",
-          payload: { entries: state.translationEntries }
+          payload: {
+            entries: state.translationEntries,
+            fillOptions
+          }
         }, tab.frameId ? { frameId: tab.frameId } : void 0);
         if (!response.ok) {
           throw new Error(response.error);
         }
         const result = finalizePreviewForTab(tab.url, response.data);
-        await writeRuntimeState({ previewResult: result.preview });
+        await writeRuntimeState({
+          previewResult: result.preview,
+          fillOptions
+        });
         return { ok: true, data: result };
       }
       case "STOP_RUN": {
         await stopActiveRun();
         return { ok: true, data: null };
+      }
+      case "SET_FILL_OPTIONS": {
+        const fillOptions = normalizeFillOptions(request.payload?.fillOptions);
+        await writeRuntimeState({ fillOptions });
+        return { ok: true, data: fillOptions };
       }
       default: {
         throw new Error("Unsupported request.");

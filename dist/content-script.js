@@ -116,6 +116,20 @@
       window.setTimeout(resolve, ms);
     });
   }
+  async function waitForNormalizedTextMatch(readValue, expected, options) {
+    const attempts = Math.max(1, options?.attempts ?? 8);
+    const delayMs = Math.max(0, options?.delayMs ?? 120);
+    const normalizedExpected = normalizeText(expected);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (normalizeText(readValue()) === normalizedExpected) {
+        return true;
+      }
+      if (attempt < attempts - 1) {
+        await delay(delayMs);
+      }
+    }
+    return false;
+  }
 
   // content-script-dom.ts
   var KNOWN_SCROLL_CONTAINER_SELECTORS = [
@@ -354,6 +368,20 @@
     }
   };
 
+  // fill-options.ts
+  var DEFAULT_FILL_OPTIONS = {
+    autoStopAfterFilledCount: null
+  };
+  function normalizeFillOptions(fillOptions) {
+    const autoStopAfterFilledCount = fillOptions?.autoStopAfterFilledCount;
+    if (typeof autoStopAfterFilledCount !== "number" || !Number.isFinite(autoStopAfterFilledCount) || autoStopAfterFilledCount < 1) {
+      return DEFAULT_FILL_OPTIONS;
+    }
+    return {
+      autoStopAfterFilledCount: Math.floor(autoStopAfterFilledCount)
+    };
+  }
+
   // memoq-adapter.ts
   var MEMOQ_CELL_SELECTOR = ".editor-cell";
   var MEMOQ_CONTENT_SELECTOR = ".content-container";
@@ -437,12 +465,15 @@
       this.helpers.dispatchChange(hiddenInput);
       this.helpers.dispatchTabNavigation(hiddenInput);
       this.helpers.dispatchBlur(hiddenInput);
-      await delay(120);
-      const nextValue = this.getEditableValue(target);
+      const confirmed = await waitForNormalizedTextMatch(
+        () => this.getEditableValue(target),
+        value,
+        { attempts: 10, delayMs: 120 }
+      );
       return {
         domId: segment.domId,
-        filled: normalizeText(nextValue) === normalizeText(value),
-        reason: normalizeText(nextValue) === normalizeText(value) ? void 0 : "Unable to confirm memoQ target update after writing."
+        filled: confirmed,
+        reason: confirmed ? void 0 : "Unable to confirm memoQ target update after writing."
       };
     }
     findMemoqRowContainer(cell) {
@@ -715,19 +746,30 @@
           this.helpers.dispatchInput(textContainer, value);
           this.helpers.dispatchChange(textContainer);
         }
-        await delay(80);
-        const nextValue = this.getEditableValue(target);
+        const confirmed2 = await waitForNormalizedTextMatch(
+          () => this.getEditableValue(target),
+          value
+        );
         return {
           domId: segment.domId,
-          filled: normalizeText(nextValue) === normalizeText(value),
-          reason: normalizeText(nextValue) === normalizeText(value) ? void 0 : "Unable to confirm target update after writing."
+          filled: confirmed2,
+          reason: confirmed2 ? void 0 : "Unable to confirm target update after writing."
         };
       }
       this.helpers.setEditableValue(target, value);
       target.dispatchEvent(new Event("input", { bubbles: true }));
       this.helpers.dispatchChange(target);
       this.helpers.dispatchBlur(target);
-      return { domId: segment.domId, filled: true };
+      const confirmed = await waitForNormalizedTextMatch(
+        () => this.getEditableValue(target),
+        value,
+        { attempts: 4, delayMs: 60 }
+      );
+      return {
+        domId: segment.domId,
+        filled: confirmed,
+        reason: confirmed ? void 0 : "Unable to confirm target update after writing."
+      };
     }
     collectRowSegments(scrollContext) {
       const rows = this.helpers.sortByVisualPosition(
@@ -836,15 +878,19 @@
   var MAX_SEGMENTS = 500;
   var MAX_PASSES = 160;
   var SCAN_DELAY_MS = 260;
+  var INTER_FILL_DELAY_MS = 180;
   var SCROLL_RATIO = 0.85;
   var helpers = new ContentScriptDomHelpers();
   var memoqAdapter = new MemoqAdapter(helpers);
   var phraseAdapter = new PhraseAdapter(helpers);
   var STOP_ERROR_MESSAGE = "Operation stopped by user.";
+  var TAB_VISIBILITY_ERROR_MESSAGE = "Keep the Phrase editor tab visible while Fill is running.";
   var PlatformDomAdapter = class {
     async scanSegments() {
       this.resetStopState();
-      const runtimeSegments = await this.collectSegments();
+      const runtimeSegments = await this.collectSegments(void 0, {
+        restoreScrollPosition: true
+      });
       return runtimeSegments.map(
         ({
           targetElement: _targetElement,
@@ -855,31 +901,51 @@
         }) => segment
       );
     }
-    async fillAll(entries) {
+    async fillAll(entries, fillOptions) {
       this.resetStopState();
       const entryLookup = createEntryLookup(entries);
       const previewItems = [];
       const filledDomIds = [];
-      await this.collectSegments(async (segment) => {
-        const item = classifySegment(entryLookup, segment);
-        previewItems.push(item);
-        if (item.status !== "ready" || !item.translation) {
-          return;
+      const normalizedFillOptions = normalizeFillOptions(fillOptions);
+      const autoStopAfterFilledCount = normalizeAutoStopAfterFilledCount(
+        normalizedFillOptions.autoStopAfterFilledCount
+      );
+      let stoppedByAutoStop = false;
+      await this.collectSegments(
+        async (segment) => {
+          const item = classifySegment(entryLookup, segment);
+          previewItems.push(item);
+          if (item.status !== "ready" || !item.translation) {
+            return;
+          }
+          const outcome = await this.fillSegment(segment, item.translation);
+          if (outcome.filled) {
+            filledDomIds.push(outcome.domId);
+            if (autoStopAfterFilledCount !== null && filledDomIds.length >= autoStopAfterFilledCount) {
+              stoppedByAutoStop = true;
+              return "stop";
+            }
+          }
+          this.assertNotStopped();
+          await delay(INTER_FILL_DELAY_MS);
+        },
+        {
+          restoreScrollPosition: false,
+          requireVisibleTab: true
         }
-        const outcome = await this.fillSegment(segment, item.translation);
-        if (outcome.filled) {
-          filledDomIds.push(outcome.domId);
-        }
-      });
+      );
       const preFillPreview = summarizePreview(previewItems);
       return {
         preview: applyFilledToPreview(preFillPreview, filledDomIds),
         filledCount: filledDomIds.length,
-        filledDomIds
+        filledDomIds,
+        stoppedByAutoStop,
+        autoStopAfterFilledCount
       };
     }
     async fillSegment(segment, value) {
       this.assertNotStopped();
+      this.assertTabIsVisible();
       const currentValue = this.getEditableValue(segment);
       if (normalizeText(currentValue)) {
         return {
@@ -899,21 +965,30 @@
       }
       return phraseAdapter.getEditableValue(segment.targetElement);
     }
-    async collectSegments(onSegment) {
+    async collectSegments(onSegment, options) {
       const scrollContext = this.findScrollContext();
+      const shouldRestoreScrollPosition = options?.restoreScrollPosition ?? true;
+      const requireVisibleTab = options?.requireVisibleTab ?? false;
       const seenIds = /* @__PURE__ */ new Set();
       const recentSyntheticFingerprints = /* @__PURE__ */ new WeakMap();
       const occurrenceCounter = /* @__PURE__ */ new Map();
       const segments = [];
       let previousSyntheticSignature = "";
       let repeatedSyntheticSignaturePasses = 0;
+      let stopRequestedByCallback = false;
       try {
         let noNewSegmentsPasses = 0;
         let noMovementPasses = 0;
         for (let pass = 0; pass < MAX_PASSES && segments.length < MAX_SEGMENTS; pass += 1) {
           this.assertNotStopped();
+          if (requireVisibleTab) {
+            this.assertTabIsVisible();
+          }
           await delay(SCAN_DELAY_MS);
           this.assertNotStopped();
+          if (requireVisibleTab) {
+            this.assertTabIsVisible();
+          }
           const countBefore = segments.length;
           const visibleSegments = this.collectVisibleSegments(scrollContext);
           let shouldSkipSyntheticPass = false;
@@ -928,6 +1003,9 @@
           }
           for (const segment of visibleSegments) {
             this.assertNotStopped();
+            if (requireVisibleTab) {
+              this.assertTabIsVisible();
+            }
             if (scrollContext.mode === "synthetic" && shouldSkipSyntheticPass) {
               continue;
             }
@@ -956,10 +1034,14 @@
             segment.occurrenceIndex = nextOccurrence;
             segments.push(segment);
             if (onSegment) {
-              await onSegment(segment);
+              const callbackResult = await onSegment(segment);
+              if (callbackResult === "stop") {
+                stopRequestedByCallback = true;
+                break;
+              }
             }
           }
-          if (segments.length >= MAX_SEGMENTS) {
+          if (stopRequestedByCallback || segments.length >= MAX_SEGMENTS) {
             break;
           }
           const discoveredCount = segments.length - countBefore;
@@ -980,6 +1062,9 @@
           }
           await delay(80);
           this.assertNotStopped();
+          if (requireVisibleTab) {
+            this.assertTabIsVisible();
+          }
           const scrollTopAfter = scrollContext.getTop();
           noMovementPasses = Math.abs(scrollTopAfter - scrollTopBefore) < 2 ? noMovementPasses + 1 : 0;
           if (noMovementPasses >= 5 && noNewSegmentsPasses >= 3) {
@@ -988,7 +1073,9 @@
         }
         return segments;
       } finally {
-        scrollContext.restore();
+        if (shouldRestoreScrollPosition) {
+          scrollContext.restore();
+        }
       }
     }
     stopCurrentRun() {
@@ -1000,6 +1087,11 @@
     assertNotStopped() {
       if (window.__phraseBulkFillStopRequested) {
         throw new Error(STOP_ERROR_MESSAGE);
+      }
+    }
+    assertTabIsVisible() {
+      if (document.visibilityState !== "visible") {
+        throw new Error(TAB_VISIBILITY_ERROR_MESSAGE);
       }
     }
     collectVisibleSegments(scrollContext) {
@@ -1021,7 +1113,10 @@
         return { ok: true, data: segments };
       }
       case "CONTENT_FILL": {
-        const result = await adapter.fillAll(request.payload.entries);
+        const result = await adapter.fillAll(
+          request.payload.entries,
+          normalizeFillOptions(request.payload?.fillOptions)
+        );
         return { ok: true, data: result };
       }
       case "CONTENT_STOP": {
@@ -1032,6 +1127,12 @@
         return { ok: false, error: "Unsupported content-script request." };
       }
     }
+  }
+  function normalizeAutoStopAfterFilledCount(value) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 1) {
+      return null;
+    }
+    return Math.floor(value);
   }
   if (!window.__phraseBulkFillListenerBound) {
     chrome.runtime.onMessage.addListener(

@@ -14,6 +14,20 @@
     });
   }
 
+  // fill-options.ts
+  var DEFAULT_FILL_OPTIONS = {
+    autoStopAfterFilledCount: null
+  };
+  function normalizeFillOptions(fillOptions) {
+    const autoStopAfterFilledCount = fillOptions?.autoStopAfterFilledCount;
+    if (typeof autoStopAfterFilledCount !== "number" || !Number.isFinite(autoStopAfterFilledCount) || autoStopAfterFilledCount < 1) {
+      return DEFAULT_FILL_OPTIONS;
+    }
+    return {
+      autoStopAfterFilledCount: Math.floor(autoStopAfterFilledCount)
+    };
+  }
+
   // popup.ts
   var state = {
     busy: false,
@@ -24,6 +38,7 @@
   var previewButton = document.querySelector("#preview-button");
   var fillButton = document.querySelector("#fill-button");
   var stopButton = document.querySelector("#stop-button");
+  var autoStopCountInput = document.querySelector("#auto-stop-count");
   var fileInfo = document.querySelector("#file-info");
   var statusNode = document.querySelector("#status");
   var previewNode = document.querySelector("#preview-summary");
@@ -42,6 +57,7 @@
     if (previewButton) previewButton.disabled = nextBusy;
     if (fillButton) fillButton.disabled = nextBusy;
     if (stopButton) stopButton.disabled = !nextBusy || state.stopping;
+    if (autoStopCountInput) autoStopCountInput.disabled = nextBusy;
   }
   function setStopping(nextStopping) {
     state.stopping = nextStopping;
@@ -94,9 +110,39 @@
     const popupState = await sendMessage({ type: "GET_STATE" });
     renderFileInfo(popupState);
     renderPreview(popupState.previewResult);
+    renderFillOptions(popupState.fillOptions);
   }
   function escapeHtml(value) {
     return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+  }
+  function renderFillOptions(fillOptions) {
+    if (!autoStopCountInput) {
+      return;
+    }
+    const normalizedFillOptions = normalizeFillOptions(fillOptions);
+    autoStopCountInput.value = normalizedFillOptions.autoStopAfterFilledCount === null ? "" : String(normalizedFillOptions.autoStopAfterFilledCount);
+  }
+  function readFillOptions() {
+    const rawValue = autoStopCountInput?.value.trim() ?? "";
+    if (!rawValue) {
+      return {
+        autoStopAfterFilledCount: null
+      };
+    }
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      throw new Error("Auto stop count must be a positive number.");
+    }
+    return {
+      autoStopAfterFilledCount: Math.floor(parsed)
+    };
+  }
+  async function persistFillOptions() {
+    const fillOptions = readFillOptions();
+    await sendMessage({
+      type: "SET_FILL_OPTIONS",
+      payload: { fillOptions }
+    });
   }
   async function handleUpload(event) {
     const input = event.currentTarget;
@@ -141,12 +187,18 @@
   }
   async function handleFill() {
     try {
+      const fillOptions = readFillOptions();
       setBusy(true);
       setStopping(false);
       renderStatus("Re-scanning and filling segments...");
-      const result = await sendMessage({ type: "RUN_FILL" });
+      const result = await sendMessage({
+        type: "RUN_FILL",
+        payload: { fillOptions }
+      });
       renderPreview(result.preview);
-      renderStatus(`Filled ${result.filledCount} segment(s).`);
+      renderStatus(
+        result.stoppedByAutoStop && result.autoStopAfterFilledCount !== null ? `Filled ${result.filledCount} segment(s) and auto-stopped at ${result.autoStopAfterFilledCount}.` : `Filled ${result.filledCount} segment(s).`
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Fill failed.";
       renderStatus(message === STOP_ERROR_MESSAGE ? "Stopped." : message, message === STOP_ERROR_MESSAGE ? "default" : "error");
@@ -181,6 +233,11 @@
   });
   stopButton?.addEventListener("click", () => {
     void handleStop();
+  });
+  autoStopCountInput?.addEventListener("change", () => {
+    void persistFillOptions().catch((error) => {
+      renderStatus(error instanceof Error ? error.message : "Failed to save auto stop setting.", "error");
+    });
   });
   void refreshState().catch((error) => {
     renderStatus(error instanceof Error ? error.message : "Failed to load state.", "error");

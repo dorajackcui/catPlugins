@@ -47,10 +47,15 @@ export interface UploadMeta {
   sheetName: string;
 }
 
+export interface FillOptions {
+  autoStopAfterFilledCount: number | null;
+}
+
 export interface RuntimeState {
   translationEntries: TranslationEntry[];
   previewResult: PreviewResult | null;
   uploadMeta: UploadMeta | null;
+  fillOptions: FillOptions;
 }
 
 export interface ParseExcelResult {
@@ -61,12 +66,15 @@ export interface ParseExcelResult {
 export interface PopupState {
   uploadMeta: UploadMeta | null;
   previewResult: PreviewResult | null;
+  fillOptions: FillOptions;
 }
 
 export interface FillRunResult {
   preview: PreviewResult;
   filledCount: number;
   filledDomIds: string[];
+  stoppedByAutoStop: boolean;
+  autoStopAfterFilledCount: number | null;
 }
 
 export interface FillOutcome {
@@ -89,6 +97,9 @@ export interface RunPreviewRequest {
 
 export interface RunFillRequest {
   type: 'RUN_FILL';
+  payload: {
+    fillOptions: FillOptions;
+  };
 }
 
 export interface StopRunRequest {
@@ -99,12 +110,20 @@ export interface GetStateRequest {
   type: 'GET_STATE';
 }
 
+export interface SetFillOptionsRequest {
+  type: 'SET_FILL_OPTIONS';
+  payload: {
+    fillOptions: FillOptions;
+  };
+}
+
 export type BackgroundRequest =
   | ParseExcelRequest
   | RunPreviewRequest
   | RunFillRequest
   | StopRunRequest
-  | GetStateRequest;
+  | GetStateRequest
+  | SetFillOptionsRequest;
 
 export interface ContentScanRequest {
   type: 'CONTENT_SCAN';
@@ -114,6 +133,7 @@ export interface ContentFillRequest {
   type: 'CONTENT_FILL';
   payload: {
     entries: TranslationEntry[];
+    fillOptions: FillOptions;
   };
 }
 
@@ -139,5 +159,6 @@ export type ApiResponse<T> =
 export const STORAGE_KEYS = {
   translationEntries: 'translation_entries',
   previewResult: 'preview_result',
-  uploadMeta: 'upload_meta'
+  uploadMeta: 'upload_meta',
+  fillOptions: 'fill_options'
 } as const;

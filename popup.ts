@@ -1,7 +1,9 @@
 import { runtimeSendMessage } from './chrome-api.ts';
+import { normalizeFillOptions } from './fill-options.ts';
 import type {
   ApiResponse,
   BackgroundRequest,
+  FillOptions,
   FillRunResult,
   PopupState,
   PreviewResult
@@ -17,6 +19,7 @@ const fileInput = document.querySelector<HTMLInputElement>('#file-input');
 const previewButton = document.querySelector<HTMLButtonElement>('#preview-button');
 const fillButton = document.querySelector<HTMLButtonElement>('#fill-button');
 const stopButton = document.querySelector<HTMLButtonElement>('#stop-button');
+const autoStopCountInput = document.querySelector<HTMLInputElement>('#auto-stop-count');
 const fileInfo = document.querySelector<HTMLElement>('#file-info');
 const statusNode = document.querySelector<HTMLElement>('#status');
 const previewNode = document.querySelector<HTMLElement>('#preview-summary');
@@ -38,6 +41,7 @@ function setBusy(nextBusy: boolean): void {
   if (previewButton) previewButton.disabled = nextBusy;
   if (fillButton) fillButton.disabled = nextBusy;
   if (stopButton) stopButton.disabled = !nextBusy || state.stopping;
+  if (autoStopCountInput) autoStopCountInput.disabled = nextBusy;
 }
 
 function setStopping(nextStopping: boolean): void {
@@ -108,6 +112,7 @@ async function refreshState(): Promise<void> {
   const popupState = await sendMessage<PopupState>({ type: 'GET_STATE' });
   renderFileInfo(popupState);
   renderPreview(popupState.previewResult);
+  renderFillOptions(popupState.fillOptions);
 }
 
 function escapeHtml(value: string): string {
@@ -116,6 +121,46 @@ function escapeHtml(value: string): string {
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;');
+}
+
+function renderFillOptions(fillOptions?: FillOptions | null): void {
+  if (!autoStopCountInput) {
+    return;
+  }
+
+  const normalizedFillOptions = normalizeFillOptions(fillOptions);
+
+  autoStopCountInput.value =
+    normalizedFillOptions.autoStopAfterFilledCount === null
+      ? ''
+      : String(normalizedFillOptions.autoStopAfterFilledCount);
+}
+
+function readFillOptions(): FillOptions {
+  const rawValue = autoStopCountInput?.value.trim() ?? '';
+
+  if (!rawValue) {
+    return {
+      autoStopAfterFilledCount: null
+    };
+  }
+
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error('Auto stop count must be a positive number.');
+  }
+
+  return {
+    autoStopAfterFilledCount: Math.floor(parsed)
+  };
+}
+
+async function persistFillOptions(): Promise<void> {
+  const fillOptions = readFillOptions();
+  await sendMessage<FillOptions>({
+    type: 'SET_FILL_OPTIONS',
+    payload: { fillOptions }
+  });
 }
 
 async function handleUpload(event: Event): Promise<void> {
@@ -165,12 +210,20 @@ async function handlePreview(): Promise<void> {
 
 async function handleFill(): Promise<void> {
   try {
+    const fillOptions = readFillOptions();
     setBusy(true);
     setStopping(false);
     renderStatus('Re-scanning and filling segments...');
-    const result = await sendMessage<FillRunResult>({ type: 'RUN_FILL' });
+    const result = await sendMessage<FillRunResult>({
+      type: 'RUN_FILL',
+      payload: { fillOptions }
+    });
     renderPreview(result.preview);
-    renderStatus(`Filled ${result.filledCount} segment(s).`);
+    renderStatus(
+      result.stoppedByAutoStop && result.autoStopAfterFilledCount !== null
+        ? `Filled ${result.filledCount} segment(s) and auto-stopped at ${result.autoStopAfterFilledCount}.`
+        : `Filled ${result.filledCount} segment(s).`
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Fill failed.';
     renderStatus(message === STOP_ERROR_MESSAGE ? 'Stopped.' : message, message === STOP_ERROR_MESSAGE ? 'default' : 'error');
@@ -208,6 +261,11 @@ fillButton?.addEventListener('click', () => {
 });
 stopButton?.addEventListener('click', () => {
   void handleStop();
+});
+autoStopCountInput?.addEventListener('change', () => {
+  void persistFillOptions().catch((error) => {
+    renderStatus(error instanceof Error ? error.message : 'Failed to save auto stop setting.', 'error');
+  });
 });
 
 void refreshState().catch((error) => {

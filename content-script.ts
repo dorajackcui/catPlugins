@@ -1,12 +1,14 @@
 import { applyFilledToPreview, classifySegment, createEntryLookup, summarizePreview } from './matcher.ts';
 import { ContentScriptDomHelpers } from './content-script-dom.ts';
 import type { RuntimeSegment, ScrollContext } from './content-script-dom.ts';
+import { normalizeFillOptions } from './fill-options.ts';
 import { MemoqAdapter } from './memoq-adapter.ts';
 import { PhraseAdapter } from './phrase-adapter.ts';
 import { hasRepeatedSyntheticSignature, isRecentSyntheticDuplicate } from './scan-dedupe.ts';
 import type {
   ApiResponse,
   ContentRequest,
+  FillOptions,
   FillOutcome,
   FillRunResult,
   PageSegment,
@@ -25,6 +27,7 @@ declare global {
 const MAX_SEGMENTS = 500;
 const MAX_PASSES = 160;
 const SCAN_DELAY_MS = 260;
+const INTER_FILL_DELAY_MS = 180;
 const SCROLL_RATIO = 0.85;
 
 const helpers = new ContentScriptDomHelpers();
@@ -35,7 +38,9 @@ const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 class PlatformDomAdapter {
   async scanSegments(): Promise<PageSegment[]> {
     this.resetStopState();
-    const runtimeSegments = await this.collectSegments();
+    const runtimeSegments = await this.collectSegments(undefined, {
+      restoreScrollPosition: true
+    });
     return runtimeSegments.map(
       ({
         targetElement: _targetElement,
@@ -47,31 +52,56 @@ class PlatformDomAdapter {
     );
   }
 
-  async fillAll(entries: TranslationEntry[]): Promise<FillRunResult> {
+  async fillAll(
+    entries: TranslationEntry[],
+    fillOptions: FillOptions
+  ): Promise<FillRunResult> {
     this.resetStopState();
     const entryLookup = createEntryLookup(entries);
     const previewItems: PreviewItem[] = [];
     const filledDomIds: string[] = [];
+    const normalizedFillOptions = normalizeFillOptions(fillOptions);
+    const autoStopAfterFilledCount = normalizeAutoStopAfterFilledCount(
+      normalizedFillOptions.autoStopAfterFilledCount
+    );
+    let stoppedByAutoStop = false;
 
-    await this.collectSegments(async (segment) => {
-      const item = classifySegment(entryLookup, segment);
-      previewItems.push(item);
+    await this.collectSegments(
+      async (segment) => {
+        const item = classifySegment(entryLookup, segment);
+        previewItems.push(item);
 
-      if (item.status !== 'ready' || !item.translation) {
-        return;
+        if (item.status !== 'ready' || !item.translation) {
+          return;
+        }
+
+        const outcome = await this.fillSegment(segment, item.translation);
+        if (outcome.filled) {
+          filledDomIds.push(outcome.domId);
+          if (
+            autoStopAfterFilledCount !== null &&
+            filledDomIds.length >= autoStopAfterFilledCount
+          ) {
+            stoppedByAutoStop = true;
+            return 'stop';
+          }
+        }
+
+        this.assertNotStopped();
+        await delay(INTER_FILL_DELAY_MS);
+      },
+      {
+        restoreScrollPosition: false
       }
-
-      const outcome = await this.fillSegment(segment, item.translation);
-      if (outcome.filled) {
-        filledDomIds.push(outcome.domId);
-      }
-    });
+    );
 
     const preFillPreview = summarizePreview(previewItems);
     return {
       preview: applyFilledToPreview(preFillPreview, filledDomIds),
       filledCount: filledDomIds.length,
-      filledDomIds
+      filledDomIds,
+      stoppedByAutoStop,
+      autoStopAfterFilledCount
     };
   }
 
@@ -102,9 +132,13 @@ class PlatformDomAdapter {
   }
 
   private async collectSegments(
-    onSegment?: (segment: RuntimeSegment) => Promise<void> | void
+    onSegment?: (segment: RuntimeSegment) => Promise<'stop' | void> | 'stop' | void,
+    options?: {
+      restoreScrollPosition?: boolean;
+    }
   ): Promise<RuntimeSegment[]> {
     const scrollContext = this.findScrollContext();
+    const shouldRestoreScrollPosition = options?.restoreScrollPosition ?? true;
     const seenIds = new Set<string>();
     const recentSyntheticFingerprints = new WeakMap<
       Element,
@@ -114,6 +148,7 @@ class PlatformDomAdapter {
     const segments: RuntimeSegment[] = [];
     let previousSyntheticSignature = '';
     let repeatedSyntheticSignaturePasses = 0;
+    let stopRequestedByCallback = false;
 
     try {
       let noNewSegmentsPasses = 0;
@@ -187,11 +222,15 @@ class PlatformDomAdapter {
           segments.push(segment);
 
           if (onSegment) {
-            await onSegment(segment);
+            const callbackResult = await onSegment(segment);
+            if (callbackResult === 'stop') {
+              stopRequestedByCallback = true;
+              break;
+            }
           }
         }
 
-        if (segments.length >= MAX_SEGMENTS) {
+        if (stopRequestedByCallback || segments.length >= MAX_SEGMENTS) {
           break;
         }
 
@@ -235,7 +274,9 @@ class PlatformDomAdapter {
 
       return segments;
     } finally {
-      scrollContext.restore();
+      if (shouldRestoreScrollPosition) {
+        scrollContext.restore();
+      }
     }
   }
 
@@ -281,7 +322,10 @@ async function handleRequest(request: ContentRequest): Promise<ApiResponse<unkno
     }
 
     case 'CONTENT_FILL': {
-      const result = await adapter.fillAll(request.payload.entries);
+      const result = await adapter.fillAll(
+        request.payload.entries,
+        normalizeFillOptions(request.payload?.fillOptions)
+      );
       return { ok: true, data: result };
     }
 
@@ -294,6 +338,14 @@ async function handleRequest(request: ContentRequest): Promise<ApiResponse<unkno
       return { ok: false, error: 'Unsupported content-script request.' };
     }
   }
+}
+
+function normalizeAutoStopAfterFilledCount(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) {
+    return null;
+  }
+
+  return Math.floor(value);
 }
 
 if (!window.__phraseBulkFillListenerBound) {
