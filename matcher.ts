@@ -1,5 +1,7 @@
+import { normalizeFillOptions } from './fill-options.ts';
 import { placeholdersMatch } from './qa.ts';
 import type {
+  FillOptions,
   PageSegment,
   PreviewItem,
   PreviewResult,
@@ -23,8 +25,10 @@ export function createEntryLookup(
 
 export function classifySegment(
   entryLookup: Map<string, TranslationEntry>,
-  segment: PageSegment
+  segment: PageSegment,
+  fillOptions?: FillOptions | null
 ): PreviewItem {
+  const normalizedFillOptions = normalizeFillOptions(fillOptions);
   const entry = entryLookup.get(
     buildMatchKey(segment.sourceNormalized, segment.occurrenceIndex)
   );
@@ -47,7 +51,10 @@ export function classifySegment(
     };
   }
 
-  if (!placeholdersMatch(segment.sourceRaw, entry.targetRaw)) {
+  if (
+    normalizedFillOptions.validatePlaceholders &&
+    !placeholdersMatch(segment.sourceRaw, entry.targetRaw)
+  ) {
     return {
       ...segment,
       status: 'placeholderError',
@@ -90,10 +97,11 @@ export function summarizePreview(items: PreviewItem[]): PreviewResult {
 
 export function buildPreview(
   entries: TranslationEntry[],
-  segments: PageSegment[]
+  segments: PageSegment[],
+  fillOptions?: FillOptions | null
 ): PreviewResult {
   const lookup = createEntryLookup(entries);
-  const items = segments.map((segment) => classifySegment(lookup, segment));
+  const items = segments.map((segment) => classifySegment(lookup, segment, fillOptions));
   return summarizePreview(items);
 }
 

@@ -32,6 +32,12 @@
           placeholder="Leave blank for no limit"
         />
         <p class="field-hint muted">Example: set to 500 to stop automatically after 500 successful fills.</p>
+
+        <label class="checkbox-field" for="validate-placeholders">
+          <input id="validate-placeholders" type="checkbox" checked />
+          <span>Validate tag / placeholder tokens before fill</span>
+        </label>
+        <p class="field-hint muted">Turn this off to fill even when tags like `&lt;color&gt;`, `%s`, or `{name}` do not exactly match.</p>
       </section>
 
       <section class="card actions">
@@ -50,7 +56,7 @@
           <li>Total segments: -</li>
           <li>Matched: -</li>
           <li>Already translated: -</li>
-          <li>Placeholder errors: -</li>
+          <li>Tag / placeholder errors: -</li>
           <li>Ready to fill: -</li>
           <li>Skipped: -</li>
         </ul>

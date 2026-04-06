@@ -49,6 +49,28 @@ export interface UploadMeta {
 
 export interface FillOptions {
   autoStopAfterFilledCount: number | null;
+  validatePlaceholders: boolean;
+}
+
+export type RunKind = 'preview' | 'fill';
+
+export type RunPhase = 'idle' | 'running' | 'stopping';
+
+export type StatusKind = 'default' | 'error';
+
+export interface RunState {
+  runId: string | null;
+  kind: RunKind | null;
+  phase: RunPhase;
+  statusKind: StatusKind;
+  startedAt: string | null;
+  lastUpdatedAt: string | null;
+  tabId: number | null;
+  frameId: number | null;
+  plannedFillCount: number | null;
+  scannedCount: number;
+  filledCount: number;
+  message: string;
 }
 
 export interface RuntimeState {
@@ -56,6 +78,7 @@ export interface RuntimeState {
   previewResult: PreviewResult | null;
   uploadMeta: UploadMeta | null;
   fillOptions: FillOptions;
+  runState: RunState;
 }
 
 export interface ParseExcelResult {
@@ -67,6 +90,7 @@ export interface PopupState {
   uploadMeta: UploadMeta | null;
   previewResult: PreviewResult | null;
   fillOptions: FillOptions;
+  runState: RunState;
 }
 
 export interface FillRunResult {
@@ -93,6 +117,9 @@ export interface ParseExcelRequest {
 
 export interface RunPreviewRequest {
   type: 'RUN_PREVIEW';
+  payload?: {
+    fillOptions?: FillOptions;
+  };
 }
 
 export interface RunFillRequest {
@@ -117,23 +144,41 @@ export interface SetFillOptionsRequest {
   };
 }
 
+export interface ReportRunProgressRequest {
+  type: 'REPORT_RUN_PROGRESS';
+  payload: {
+    runId: string;
+    phase?: Extract<RunPhase, 'running' | 'stopping'>;
+    scannedCount?: number;
+    filledCount?: number;
+    plannedFillCount?: number | null;
+    message?: string;
+  };
+}
+
 export type BackgroundRequest =
   | ParseExcelRequest
   | RunPreviewRequest
   | RunFillRequest
   | StopRunRequest
   | GetStateRequest
-  | SetFillOptionsRequest;
+  | SetFillOptionsRequest
+  | ReportRunProgressRequest;
 
 export interface ContentScanRequest {
   type: 'CONTENT_SCAN';
+  payload: {
+    runId: string;
+  };
 }
 
 export interface ContentFillRequest {
   type: 'CONTENT_FILL';
   payload: {
+    runId: string;
     entries: TranslationEntry[];
     fillOptions: FillOptions;
+    plannedFillCount: number | null;
   };
 }
 
@@ -160,5 +205,6 @@ export const STORAGE_KEYS = {
   translationEntries: 'translation_entries',
   previewResult: 'preview_result',
   uploadMeta: 'upload_meta',
-  fillOptions: 'fill_options'
+  fillOptions: 'fill_options',
+  runState: 'run_state'
 } as const;

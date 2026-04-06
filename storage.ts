@@ -1,9 +1,11 @@
 import { normalizeFillOptions } from './fill-options.ts';
 import { storageGet, storageSet } from './chrome-api.ts';
+import { DEFAULT_RUN_STATE, normalizeRunState } from './run-state.ts';
 import { STORAGE_KEYS } from './types.ts';
 import type {
   FillOptions,
   PreviewResult,
+  RunState,
   RuntimeState,
   TranslationEntry,
   UploadMeta
@@ -20,7 +22,10 @@ export async function readRuntimeState(): Promise<RuntimeState> {
     previewResult:
       (stored[STORAGE_KEYS.previewResult] as PreviewResult | null | undefined) ?? null,
     uploadMeta: (stored[STORAGE_KEYS.uploadMeta] as UploadMeta | null | undefined) ?? null,
-    fillOptions: normalizeFillOptions(stored[STORAGE_KEYS.fillOptions] as FillOptions | undefined)
+    fillOptions: normalizeFillOptions(stored[STORAGE_KEYS.fillOptions] as FillOptions | undefined),
+    runState: normalizeRunState(
+      (stored[STORAGE_KEYS.runState] as Partial<RunState> | undefined) ?? DEFAULT_RUN_STATE
+    )
   };
 }
 
@@ -43,6 +48,10 @@ export async function writeRuntimeState(
 
   if ('fillOptions' in partial) {
     payload[STORAGE_KEYS.fillOptions] = normalizeFillOptions(partial.fillOptions);
+  }
+
+  if ('runState' in partial) {
+    payload[STORAGE_KEYS.runState] = normalizeRunState(partial.runState);
   }
 
   await storageSet(payload);

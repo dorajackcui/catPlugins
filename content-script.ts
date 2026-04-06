@@ -1,12 +1,15 @@
+import { runtimeSendMessage } from './chrome-api.ts';
 import { applyFilledToPreview, classifySegment, createEntryLookup, summarizePreview } from './matcher.ts';
 import { ContentScriptDomHelpers } from './content-script-dom.ts';
 import type { RuntimeSegment, ScrollContext } from './content-script-dom.ts';
 import { normalizeFillOptions } from './fill-options.ts';
+import { BULK_FILL_PAUSE_MS, shouldPauseBulkFill } from './fill-throttle.ts';
 import { MemoqAdapter } from './memoq-adapter.ts';
 import { PhraseAdapter } from './phrase-adapter.ts';
 import { hasRepeatedSyntheticSignature, isRecentSyntheticDuplicate } from './scan-dedupe.ts';
 import type {
   ApiResponse,
+  BackgroundRequest,
   ContentRequest,
   FillOptions,
   FillOutcome,
@@ -35,12 +38,39 @@ const memoqAdapter = new MemoqAdapter(helpers);
 const phraseAdapter = new PhraseAdapter(helpers);
 const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 
-class PlatformDomAdapter {
-  async scanSegments(): Promise<PageSegment[]> {
-    this.resetStopState();
-    const runtimeSegments = await this.collectSegments(undefined, {
-      restoreScrollPosition: true
+async function reportRunProgress(
+  runId: string,
+  progress: Omit<Extract<BackgroundRequest, { type: 'REPORT_RUN_PROGRESS' }>['payload'], 'runId'>
+): Promise<void> {
+  try {
+    await runtimeSendMessage<BackgroundRequest, ApiResponse<null>>({
+      type: 'REPORT_RUN_PROGRESS',
+      payload: {
+        ...progress,
+        runId
+      }
     });
+  } catch {
+    // Ignore transient background messaging issues to keep the run alive.
+  }
+}
+
+class PlatformDomAdapter {
+  async scanSegments(runId: string): Promise<PageSegment[]> {
+    this.resetStopState();
+    let scannedCount = 0;
+    const runtimeSegments = await this.collectSegments(
+      async () => {
+        scannedCount += 1;
+        if (scannedCount === 1 || scannedCount % 10 === 0) {
+          await reportRunProgress(runId, { scannedCount });
+        }
+      },
+      {
+        restoreScrollPosition: true
+      }
+    );
+    await reportRunProgress(runId, { scannedCount: runtimeSegments.length });
     return runtimeSegments.map(
       ({
         targetElement: _targetElement,
@@ -53,8 +83,10 @@ class PlatformDomAdapter {
   }
 
   async fillAll(
+    runId: string,
     entries: TranslationEntry[],
-    fillOptions: FillOptions
+    fillOptions: FillOptions,
+    plannedFillCount: number | null
   ): Promise<FillRunResult> {
     this.resetStopState();
     const entryLookup = createEntryLookup(entries);
@@ -68,8 +100,17 @@ class PlatformDomAdapter {
 
     await this.collectSegments(
       async (segment) => {
-        const item = classifySegment(entryLookup, segment);
+        const item = classifySegment(entryLookup, segment, normalizedFillOptions);
         previewItems.push(item);
+        const scannedCount = previewItems.length;
+
+        if (scannedCount === 1 || scannedCount % 10 === 0) {
+          await reportRunProgress(runId, {
+            scannedCount,
+            filledCount: filledDomIds.length,
+            plannedFillCount
+          });
+        }
 
         if (item.status !== 'ready' || !item.translation) {
           return;
@@ -85,6 +126,22 @@ class PlatformDomAdapter {
             stoppedByAutoStop = true;
             return 'stop';
           }
+
+          if (shouldPauseBulkFill(plannedFillCount, filledDomIds.length)) {
+            await reportRunProgress(runId, {
+              scannedCount,
+              filledCount: filledDomIds.length,
+              plannedFillCount,
+              message: 'Cooling down for 20 seconds...'
+            });
+            await this.waitWithStopChecks(BULK_FILL_PAUSE_MS);
+          }
+
+          await reportRunProgress(runId, {
+            scannedCount,
+            filledCount: filledDomIds.length,
+            plannedFillCount
+          });
         }
 
         this.assertNotStopped();
@@ -294,6 +351,19 @@ class PlatformDomAdapter {
     }
   }
 
+  private async waitWithStopChecks(ms: number): Promise<void> {
+    let remainingMs = Math.max(0, ms);
+
+    while (remainingMs > 0) {
+      this.assertNotStopped();
+      const nextDelayMs = Math.min(remainingMs, 250);
+      await delay(nextDelayMs);
+      remainingMs -= nextDelayMs;
+    }
+
+    this.assertNotStopped();
+  }
+
   private collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[] {
     const memoqSegments = memoqAdapter.collectVisibleSegments(scrollContext);
     if (memoqSegments.length > 0) {
@@ -317,14 +387,16 @@ const adapter = new PlatformDomAdapter();
 async function handleRequest(request: ContentRequest): Promise<ApiResponse<unknown>> {
   switch (request.type) {
     case 'CONTENT_SCAN': {
-      const segments = await adapter.scanSegments();
+      const segments = await adapter.scanSegments(request.payload.runId);
       return { ok: true, data: segments };
     }
 
     case 'CONTENT_FILL': {
       const result = await adapter.fillAll(
+        request.payload.runId,
         request.payload.entries,
-        normalizeFillOptions(request.payload?.fillOptions)
+        normalizeFillOptions(request.payload?.fillOptions),
+        request.payload?.plannedFillCount ?? null
       );
       return { ok: true, data: result };
     }

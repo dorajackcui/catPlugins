@@ -1,7 +1,9 @@
 import { executeScript, getAllFrames, queryActiveTab, sendTabMessage } from './chrome-api.ts';
 import { parseExcelBuffer } from './excel.ts';
 import { normalizeFillOptions } from './fill-options.ts';
+import { normalizePlannedFillCount } from './fill-throttle.ts';
 import { applyMemoqPreviewCorrection, buildPreview } from './matcher.ts';
+import { DEFAULT_RUN_STATE, isRunActive, normalizeRunState } from './run-state.ts';
 import { readRuntimeState, writeRuntimeState } from './storage.ts';
 import type {
   ApiResponse,
@@ -9,7 +11,10 @@ import type {
   ContentRequest,
   FillRunResult,
   PageSegment,
-  PopupState
+  PopupState,
+  RunKind,
+  RunState,
+  StatusKind
 } from './types.ts';
 
 const MEMOQ_URL_RE = /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/webpm\/webtrans\//;
@@ -17,6 +22,7 @@ const MEMSOURCE_JOB_URL_RE =
   /^https:\/\/cloud\.memsource\.com\/web\/job\/[^/]+\/translate(?:[/?#]|$)/;
 const MEMSOURCE_EDITOR_FRAME_URL_RE =
   /^https:\/\/editor\.memsource\.com\/twe\/translation\/job\/[^/?#]+/;
+const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 
 function isPhraseEditorUrl(url?: string): boolean {
   if (!url) {
@@ -81,12 +87,140 @@ async function ensurePhraseTab(): Promise<{
   };
 }
 
-async function stopActiveRun(): Promise<void> {
-  const tab = await ensurePhraseTab();
+function createRunId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createRunningRunState(
+  kind: RunKind,
+  target: { id: number; frameId?: number },
+  options?: {
+    plannedFillCount?: number | null;
+  }
+): RunState {
+  const now = new Date().toISOString();
+
+  return normalizeRunState({
+    runId: createRunId(),
+    kind,
+    phase: 'running',
+    statusKind: 'default',
+    startedAt: now,
+    lastUpdatedAt: now,
+    tabId: target.id,
+    frameId: target.frameId ?? null,
+    plannedFillCount: options?.plannedFillCount ?? null,
+    scannedCount: 0,
+    filledCount: 0,
+    message: ''
+  });
+}
+
+function createFinishedRunState(
+  currentRunState: RunState,
+  options: {
+    message: string;
+    statusKind?: StatusKind;
+    scannedCount?: number;
+    filledCount?: number;
+    plannedFillCount?: number | null;
+  }
+): RunState {
+  return normalizeRunState({
+    ...DEFAULT_RUN_STATE,
+    startedAt: currentRunState.startedAt,
+    lastUpdatedAt: new Date().toISOString(),
+    scannedCount: options.scannedCount ?? currentRunState.scannedCount,
+    filledCount: options.filledCount ?? currentRunState.filledCount,
+    plannedFillCount:
+      options.plannedFillCount === undefined
+        ? currentRunState.plannedFillCount
+        : options.plannedFillCount,
+    message: options.message,
+    statusKind: options.statusKind ?? 'default'
+  });
+}
+
+function mergeRunProgress(
+  currentRunState: RunState,
+  payload: Extract<BackgroundRequest, { type: 'REPORT_RUN_PROGRESS' }>['payload']
+): RunState {
+  return normalizeRunState({
+    ...currentRunState,
+    phase:
+      currentRunState.phase === 'stopping'
+        ? 'stopping'
+        : payload.phase ?? currentRunState.phase,
+    lastUpdatedAt: new Date().toISOString(),
+    scannedCount:
+      typeof payload.scannedCount === 'number'
+        ? Math.max(currentRunState.scannedCount, Math.floor(payload.scannedCount))
+        : currentRunState.scannedCount,
+    filledCount:
+      typeof payload.filledCount === 'number'
+        ? Math.max(currentRunState.filledCount, Math.floor(payload.filledCount))
+        : currentRunState.filledCount,
+    plannedFillCount:
+      payload.plannedFillCount === undefined
+        ? currentRunState.plannedFillCount
+        : normalizePlannedFillCount(payload.plannedFillCount),
+    message:
+      typeof payload.message === 'string' && payload.message.trim()
+        ? payload.message
+        : currentRunState.message
+  });
+}
+
+async function finalizeRunState(
+  runId: string,
+  options: {
+    message: string;
+    statusKind?: StatusKind;
+    scannedCount?: number;
+    filledCount?: number;
+    plannedFillCount?: number | null;
+  }
+): Promise<void> {
+  const latestState = await readRuntimeState();
+  const currentRunState =
+    latestState.runState.runId === runId ? latestState.runState : DEFAULT_RUN_STATE;
+
+  await writeRuntimeState({
+    runState: createFinishedRunState(currentRunState, options)
+  });
+}
+
+async function assertNoActiveRun(action: string): Promise<void> {
+  const state = await readRuntimeState();
+
+  if (!isRunActive(state.runState)) {
+    return;
+  }
+
+  const activeTaskLabel = state.runState.kind === 'preview' ? 'Preview' : 'Fill';
+  throw new Error(`${activeTaskLabel} is already running. Stop it before ${action}.`);
+}
+
+async function stopActiveRun(runState?: RunState): Promise<void> {
+  const activeRunState = runState ?? (await readRuntimeState()).runState;
+  const tabId = activeRunState.tabId;
+
+  if (typeof tabId !== 'number') {
+    const tab = await ensurePhraseTab();
+    await sendTabMessage<ContentRequest, ApiResponse<null>>(
+      tab.id,
+      { type: 'CONTENT_STOP' },
+      tab.frameId ? { frameId: tab.frameId } : undefined
+    );
+    return;
+  }
+
   await sendTabMessage<ContentRequest, ApiResponse<null>>(
-    tab.id,
+    tabId,
     { type: 'CONTENT_STOP' },
-    tab.frameId ? { frameId: tab.frameId } : undefined
+    typeof activeRunState.frameId === 'number'
+      ? { frameId: activeRunState.frameId }
+      : undefined
   );
 }
 
@@ -96,7 +230,8 @@ async function getPopupState(): Promise<PopupState> {
   return {
     uploadMeta: state.uploadMeta,
     previewResult: state.previewResult,
-    fillOptions: state.fillOptions
+    fillOptions: state.fillOptions,
+    runState: state.runState
   };
 }
 
@@ -107,6 +242,7 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
     }
 
     case 'PARSE_EXCEL': {
+      await assertNoActiveRun('uploading a new Excel file');
       const parsed = parseExcelBuffer(
         Uint8Array.from(request.payload.bytes),
         request.payload.fileName
@@ -130,23 +266,58 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
       if (!state.translationEntries.length) {
         throw new Error('Upload an Excel file before running Preview.');
       }
+      if (isRunActive(state.runState)) {
+        throw new Error('Another task is already running. Stop it before starting Preview.');
+      }
+      const fillOptions = normalizeFillOptions(request.payload?.fillOptions ?? state.fillOptions);
 
       const tab = await ensurePhraseTab();
-      const response = await sendTabMessage<
-        ContentRequest,
-        ApiResponse<PageSegment[]>
-      >(tab.id, { type: 'CONTENT_SCAN' }, tab.frameId ? { frameId: tab.frameId } : undefined);
+      const runState = createRunningRunState('preview', tab);
+      await writeRuntimeState({
+        fillOptions,
+        runState
+      });
 
-      if (!response.ok) {
-        throw new Error(response.error);
+      try {
+        const response = await sendTabMessage<
+          ContentRequest,
+          ApiResponse<PageSegment[]>
+        >(
+          tab.id,
+          {
+            type: 'CONTENT_SCAN',
+            payload: {
+              runId: runState.runId ?? ''
+            }
+          },
+          tab.frameId ? { frameId: tab.frameId } : undefined
+        );
+
+        if (!response.ok) {
+          throw new Error(response.error);
+        }
+
+        const preview = buildPreviewForTab(
+          tab.url,
+          buildPreview(state.translationEntries, response.data, fillOptions)
+        );
+        await writeRuntimeState({
+          previewResult: preview,
+          fillOptions
+        });
+        await finalizeRunState(runState.runId ?? '', {
+          message: `Preview ready. ${preview.readyToFill} segment(s) can be filled.`,
+          scannedCount: preview.totalSegments
+        });
+        return { ok: true, data: preview };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Preview failed.';
+        await finalizeRunState(runState.runId ?? '', {
+          message: message === STOP_ERROR_MESSAGE ? 'Stopped.' : message,
+          statusKind: message === STOP_ERROR_MESSAGE ? 'default' : 'error'
+        });
+        throw error;
       }
-
-      const preview = buildPreviewForTab(
-        tab.url,
-        buildPreview(state.translationEntries, response.data)
-      );
-      await writeRuntimeState({ previewResult: preview });
-      return { ok: true, data: preview };
     }
 
     case 'RUN_FILL': {
@@ -154,35 +325,83 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
       if (!state.translationEntries.length) {
         throw new Error('Upload an Excel file before running Fill.');
       }
+      if (isRunActive(state.runState)) {
+        throw new Error('Another task is already running. Stop it before starting Fill.');
+      }
       const fillOptions = normalizeFillOptions(request.payload?.fillOptions);
+      const plannedFillCount = normalizePlannedFillCount(
+        state.previewResult?.readyToFill ?? state.uploadMeta?.entryCount ?? state.translationEntries.length
+      );
 
       const tab = await ensurePhraseTab();
-      const response = await sendTabMessage<
-        ContentRequest,
-        ApiResponse<FillRunResult>
-      >(tab.id, {
-        type: 'CONTENT_FILL',
-        payload: {
-          entries: state.translationEntries,
-          fillOptions
-        }
-      }, tab.frameId ? { frameId: tab.frameId } : undefined);
-
-      if (!response.ok) {
-        throw new Error(response.error);
-      }
-
-      const result = finalizePreviewForTab(tab.url, response.data);
-
-      await writeRuntimeState({
-        previewResult: result.preview,
-        fillOptions
+      const runState = createRunningRunState('fill', tab, {
+        plannedFillCount
       });
-      return { ok: true, data: result };
+      await writeRuntimeState({
+        fillOptions,
+        runState
+      });
+
+      try {
+        const response = await sendTabMessage<
+          ContentRequest,
+          ApiResponse<FillRunResult>
+        >(tab.id, {
+          type: 'CONTENT_FILL',
+          payload: {
+            runId: runState.runId ?? '',
+            entries: state.translationEntries,
+            fillOptions,
+            plannedFillCount
+          }
+        }, tab.frameId ? { frameId: tab.frameId } : undefined);
+
+        if (!response.ok) {
+          throw new Error(response.error);
+        }
+
+        const result = finalizePreviewForTab(tab.url, response.data);
+
+        await writeRuntimeState({
+          previewResult: result.preview,
+          fillOptions
+        });
+        await finalizeRunState(runState.runId ?? '', {
+          message:
+            result.stoppedByAutoStop && result.autoStopAfterFilledCount !== null
+              ? `Filled ${result.filledCount} segment(s) and auto-stopped at ${result.autoStopAfterFilledCount}.`
+              : `Filled ${result.filledCount} segment(s).`,
+          filledCount: result.filledCount,
+          scannedCount: result.preview.totalSegments,
+          plannedFillCount
+        });
+        return { ok: true, data: result };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Fill failed.';
+        await finalizeRunState(runState.runId ?? '', {
+          message: message === STOP_ERROR_MESSAGE ? 'Stopped.' : message,
+          statusKind: message === STOP_ERROR_MESSAGE ? 'default' : 'error',
+          plannedFillCount
+        });
+        throw error;
+      }
     }
 
     case 'STOP_RUN': {
-      await stopActiveRun();
+      const state = await readRuntimeState();
+      if (!isRunActive(state.runState)) {
+        return { ok: true, data: null };
+      }
+
+      await writeRuntimeState({
+        runState: normalizeRunState({
+          ...state.runState,
+          phase: 'stopping',
+          statusKind: 'default',
+          lastUpdatedAt: new Date().toISOString()
+        })
+      });
+      await stopActiveRun(state.runState);
       return { ok: true, data: null };
     }
 
@@ -190,6 +409,22 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
       const fillOptions = normalizeFillOptions(request.payload?.fillOptions);
       await writeRuntimeState({ fillOptions });
       return { ok: true, data: fillOptions };
+    }
+
+    case 'REPORT_RUN_PROGRESS': {
+      const state = await readRuntimeState();
+      if (
+        !isRunActive(state.runState) ||
+        !state.runState.runId ||
+        state.runState.runId !== request.payload.runId
+      ) {
+        return { ok: true, data: null };
+      }
+
+      await writeRuntimeState({
+        runState: mergeRunProgress(state.runState, request.payload)
+      });
+      return { ok: true, data: null };
     }
 
     default: {
