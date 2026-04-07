@@ -11,6 +11,9 @@ const MEMOQ_CELL_SELECTOR = '.editor-cell';
 const MEMOQ_CONTENT_SELECTOR = '.content-container';
 const MEMOQ_HIDDEN_INPUT_SELECTOR = '#editorHiddenInput';
 const VISIBLE_SEGMENT_TOP_BUCKET_PX = 24;
+const MEMOQ_CONFIRM_ATTEMPTS = 4;
+const MEMOQ_CONFIRM_DELAY_MS = 50;
+const MEMOQ_ACTIVATION_DELAY_MS = 20;
 
 export class MemoqAdapter {
   constructor(private readonly helpers: ContentScriptDomHelpers) {}
@@ -115,7 +118,10 @@ export class MemoqAdapter {
     const confirmed = await waitForNormalizedTextMatch(
       () => this.getEditableValue(target),
       value,
-      { attempts: 10, delayMs: 120 }
+      {
+        attempts: MEMOQ_CONFIRM_ATTEMPTS,
+        delayMs: MEMOQ_CONFIRM_DELAY_MS
+      }
     );
 
     return {
@@ -348,6 +354,6 @@ export class MemoqAdapter {
   private async activateTarget(targetElement: HTMLElement): Promise<void> {
     this.helpers.dispatchMouseSequence(targetElement, ['mousedown', 'mouseup', 'click']);
     targetElement.focus();
-    await delay(80);
+    await delay(MEMOQ_ACTIVATION_DELAY_MS);
   }
 }

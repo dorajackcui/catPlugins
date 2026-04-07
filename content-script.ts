@@ -26,8 +26,13 @@ declare global {
 
 const MAX_SEGMENTS = 500;
 const MAX_PASSES = 160;
-const SCAN_DELAY_MS = 260;
-const INTER_FILL_DELAY_MS = 180;
+const DEFAULT_SCAN_DELAY_MS = 260;
+const MEMOQ_SCAN_DELAY_MS = 120;
+const MEMOQ_SYNTHETIC_SCAN_DELAY_MS = 160;
+const DEFAULT_INTER_FILL_DELAY_MS = 180;
+const MEMOQ_INTER_FILL_DELAY_MS = 40;
+const DEFAULT_SCROLL_SETTLE_DELAY_MS = 80;
+const MEMOQ_SCROLL_SETTLE_DELAY_MS = 35;
 const SCROLL_RATIO = 0.85;
 
 const helpers = new ContentScriptDomHelpers();
@@ -88,7 +93,7 @@ class PlatformDomAdapter {
         }
 
         this.assertNotStopped();
-        await delay(INTER_FILL_DELAY_MS);
+        await delay(this.getInterFillDelayMs(segment));
       },
       {
         restoreScrollPosition: false
@@ -139,6 +144,8 @@ class PlatformDomAdapter {
   ): Promise<RuntimeSegment[]> {
     const scrollContext = this.findScrollContext();
     const shouldRestoreScrollPosition = options?.restoreScrollPosition ?? true;
+    const scanDelayMs = this.getScanDelayMs(scrollContext);
+    const scrollSettleDelayMs = this.getScrollSettleDelayMs(scrollContext);
     const seenIds = new Set<string>();
     const recentSyntheticFingerprints = new WeakMap<
       Element,
@@ -156,7 +163,7 @@ class PlatformDomAdapter {
 
       for (let pass = 0; pass < MAX_PASSES && segments.length < MAX_SEGMENTS; pass += 1) {
         this.assertNotStopped();
-        await delay(SCAN_DELAY_MS);
+        await delay(scanDelayMs);
         this.assertNotStopped();
 
         const countBefore = segments.length;
@@ -258,7 +265,7 @@ class PlatformDomAdapter {
           scrollContext.scrollBy(Math.max(scrollStep / 2, 120));
         }
 
-        await delay(80);
+        await delay(scrollSettleDelayMs);
         this.assertNotStopped();
 
         const scrollTopAfter = scrollContext.getTop();
@@ -309,6 +316,32 @@ class PlatformDomAdapter {
       phraseAdapter.findScrollContext() ??
       helpers.toWindowScrollContext()
     );
+  }
+
+  private getInterFillDelayMs(segment: RuntimeSegment): number {
+    return segment.platform === 'memoq'
+      ? MEMOQ_INTER_FILL_DELAY_MS
+      : DEFAULT_INTER_FILL_DELAY_MS;
+  }
+
+  private getScanDelayMs(scrollContext: ScrollContext): number {
+    if (!memoqAdapter.isActive()) {
+      return DEFAULT_SCAN_DELAY_MS;
+    }
+
+    return scrollContext.mode === 'synthetic'
+      ? MEMOQ_SYNTHETIC_SCAN_DELAY_MS
+      : MEMOQ_SCAN_DELAY_MS;
+  }
+
+  private getScrollSettleDelayMs(scrollContext: ScrollContext): number {
+    if (!memoqAdapter.isActive()) {
+      return DEFAULT_SCROLL_SETTLE_DELAY_MS;
+    }
+
+    return scrollContext.mode === 'synthetic'
+      ? DEFAULT_SCROLL_SETTLE_DELAY_MS
+      : MEMOQ_SCROLL_SETTLE_DELAY_MS;
   }
 }
 
