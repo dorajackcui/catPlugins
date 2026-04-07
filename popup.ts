@@ -1,18 +1,21 @@
 import { runtimeSendMessage } from './chrome-api.ts';
 import { normalizeFillOptions } from './fill-options.ts';
+import { describeRunState, isRunActive, normalizeRunState } from './run-state.ts';
 import type {
   ApiResponse,
   BackgroundRequest,
   FillOptions,
   FillRunResult,
   PopupState,
-  PreviewResult
+  PreviewResult,
+  RunState
 } from './types.ts';
 
 const state = {
   busy: false,
   stopping: false
 };
+let refreshTimerId: number | null = null;
 
 const uploadButton = document.querySelector<HTMLButtonElement>('#upload-button');
 const fileInput = document.querySelector<HTMLInputElement>('#file-input');
@@ -20,6 +23,7 @@ const previewButton = document.querySelector<HTMLButtonElement>('#preview-button
 const fillButton = document.querySelector<HTMLButtonElement>('#fill-button');
 const stopButton = document.querySelector<HTMLButtonElement>('#stop-button');
 const autoStopCountInput = document.querySelector<HTMLInputElement>('#auto-stop-count');
+const validatePlaceholdersInput = document.querySelector<HTMLInputElement>('#validate-placeholders');
 const fileInfo = document.querySelector<HTMLElement>('#file-info');
 const statusNode = document.querySelector<HTMLElement>('#status');
 const previewNode = document.querySelector<HTMLElement>('#preview-summary');
@@ -42,11 +46,48 @@ function setBusy(nextBusy: boolean): void {
   if (fillButton) fillButton.disabled = nextBusy;
   if (stopButton) stopButton.disabled = !nextBusy || state.stopping;
   if (autoStopCountInput) autoStopCountInput.disabled = nextBusy;
+  if (validatePlaceholdersInput) validatePlaceholdersInput.disabled = nextBusy;
 }
 
 function setStopping(nextStopping: boolean): void {
   state.stopping = nextStopping;
   if (stopButton) stopButton.disabled = !state.busy || nextStopping;
+}
+
+function startRefreshLoop(): void {
+  if (refreshTimerId !== null) {
+    return;
+  }
+
+  refreshTimerId = window.setInterval(() => {
+    void refreshState().catch((error) => {
+      stopRefreshLoop();
+      renderStatus(error instanceof Error ? error.message : 'Failed to refresh state.', 'error');
+    });
+  }, 1000);
+}
+
+function stopRefreshLoop(): void {
+  if (refreshTimerId === null) {
+    return;
+  }
+
+  window.clearInterval(refreshTimerId);
+  refreshTimerId = null;
+}
+
+function renderRunState(runState?: RunState | null): void {
+  const normalizedRunState = normalizeRunState(runState);
+  setBusy(isRunActive(normalizedRunState));
+  setStopping(normalizedRunState.phase === 'stopping');
+  renderStatus(describeRunState(normalizedRunState), normalizedRunState.statusKind);
+
+  if (isRunActive(normalizedRunState)) {
+    startRefreshLoop();
+    return;
+  }
+
+  stopRefreshLoop();
 }
 
 function renderStatus(message: string, kind: 'default' | 'error' = 'default'): void {
@@ -64,7 +105,7 @@ function renderPreview(preview: PreviewResult | null): void {
   }
 
   if (!preview) {
-    previewNode.innerHTML = '<li>Total segments: -</li><li>Matched: -</li><li>Already translated: -</li><li>Placeholder errors: -</li><li>Ready to fill: -</li><li>Skipped: -</li>';
+    previewNode.innerHTML = '<li>Total segments: -</li><li>Matched: -</li><li>Already translated: -</li><li>Tag / placeholder errors: -</li><li>Ready to fill: -</li><li>Skipped: -</li>';
     previewListNode.innerHTML = '';
     return;
   }
@@ -73,7 +114,7 @@ function renderPreview(preview: PreviewResult | null): void {
     `Total segments: ${preview.totalSegments}`,
     `Matched: ${preview.matched}`,
     `Already translated: ${preview.alreadyTranslated}`,
-    `Placeholder errors: ${preview.placeholderErrors}`,
+    `Tag / placeholder errors: ${preview.placeholderErrors}`,
     `Ready to fill: ${preview.readyToFill}`,
     `Skipped: ${preview.skipped}`
   ]
@@ -110,6 +151,7 @@ function renderFileInfo(popupState: PopupState): void {
 
 async function refreshState(): Promise<void> {
   const popupState = await sendMessage<PopupState>({ type: 'GET_STATE' });
+  renderRunState(popupState.runState);
   renderFileInfo(popupState);
   renderPreview(popupState.previewResult);
   renderFillOptions(popupState.fillOptions);
@@ -124,7 +166,7 @@ function escapeHtml(value: string): string {
 }
 
 function renderFillOptions(fillOptions?: FillOptions | null): void {
-  if (!autoStopCountInput) {
+  if (!autoStopCountInput || !validatePlaceholdersInput) {
     return;
   }
 
@@ -134,14 +176,17 @@ function renderFillOptions(fillOptions?: FillOptions | null): void {
     normalizedFillOptions.autoStopAfterFilledCount === null
       ? ''
       : String(normalizedFillOptions.autoStopAfterFilledCount);
+  validatePlaceholdersInput.checked = normalizedFillOptions.validatePlaceholders;
 }
 
 function readFillOptions(): FillOptions {
   const rawValue = autoStopCountInput?.value.trim() ?? '';
+  const validatePlaceholders = validatePlaceholdersInput?.checked !== false;
 
   if (!rawValue) {
     return {
-      autoStopAfterFilledCount: null
+      autoStopAfterFilledCount: null,
+      validatePlaceholders
     };
   }
 
@@ -151,7 +196,8 @@ function readFillOptions(): FillOptions {
   }
 
   return {
-    autoStopAfterFilledCount: Math.floor(parsed)
+    autoStopAfterFilledCount: Math.floor(parsed),
+    validatePlaceholders
   };
 }
 
@@ -192,10 +238,15 @@ async function handleUpload(event: Event): Promise<void> {
 
 async function handlePreview(): Promise<void> {
   try {
+    const fillOptions = readFillOptions();
     setBusy(true);
     setStopping(false);
     renderStatus('Scanning Phrase segments...');
-    const preview = await sendMessage<PreviewResult>({ type: 'RUN_PREVIEW' });
+    startRefreshLoop();
+    const preview = await sendMessage<PreviewResult>({
+      type: 'RUN_PREVIEW',
+      payload: { fillOptions }
+    });
     renderPreview(preview);
     renderStatus(`Preview ready. ${preview.readyToFill} segment(s) can be filled.`);
   } catch (error) {
@@ -214,6 +265,7 @@ async function handleFill(): Promise<void> {
     setBusy(true);
     setStopping(false);
     renderStatus('Re-scanning and filling segments...');
+    startRefreshLoop();
     const result = await sendMessage<FillRunResult>({
       type: 'RUN_FILL',
       payload: { fillOptions }
@@ -265,6 +317,11 @@ stopButton?.addEventListener('click', () => {
 autoStopCountInput?.addEventListener('change', () => {
   void persistFillOptions().catch((error) => {
     renderStatus(error instanceof Error ? error.message : 'Failed to save auto stop setting.', 'error');
+  });
+});
+validatePlaceholdersInput?.addEventListener('change', () => {
+  void persistFillOptions().catch((error) => {
+    renderStatus(error instanceof Error ? error.message : 'Failed to save validation setting.', 'error');
   });
 });
 

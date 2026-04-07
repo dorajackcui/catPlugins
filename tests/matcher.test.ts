@@ -79,3 +79,38 @@ test('buildPreview marks placeholder mismatches', () => {
   assert.equal(preview.placeholderErrors, 1);
   assert.equal(preview.readyToFill, 0);
 });
+
+test('buildPreview can skip placeholder validation when disabled', () => {
+  const segments: PageSegment[] = [
+    {
+      domId: 'name-1',
+      sourceRaw: 'Hello {name}',
+      sourceNormalized: 'Hello {name}',
+      occurrenceIndex: 1,
+      targetRaw: '',
+      isEmptyTarget: true,
+      placeholderTokens: ['{name}']
+    }
+  ];
+
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 2,
+        sourceRaw: 'Hello {name}',
+        sourceNormalized: 'Hello {name}',
+        targetRaw: 'Bonjour %s',
+        occurrenceIndex: 1
+      }
+    ],
+    segments,
+    {
+      autoStopAfterFilledCount: null,
+      validatePlaceholders: false
+    }
+  );
+
+  assert.equal(preview.placeholderErrors, 0);
+  assert.equal(preview.readyToFill, 1);
+  assert.equal(preview.items[0]?.status, 'ready');
+});
