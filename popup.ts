@@ -1,4 +1,5 @@
 import { runtimeSendMessage } from './chrome-api.ts';
+import { formatFillCompletionMessage } from './fill-result.ts';
 import { normalizeFillOptions } from './fill-options.ts';
 import { describeRunState, isRunActive, normalizeRunState } from './run-state.ts';
 import type {
@@ -271,11 +272,7 @@ async function handleFill(): Promise<void> {
       payload: { fillOptions }
     });
     renderPreview(result.preview);
-    renderStatus(
-      result.stoppedByAutoStop && result.autoStopAfterFilledCount !== null
-        ? `Filled ${result.filledCount} segment(s) and auto-stopped at ${result.autoStopAfterFilledCount}.`
-        : `Filled ${result.filledCount} segment(s).`
-    );
+    renderStatus(formatFillCompletionMessage(result));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Fill failed.';
     renderStatus(message === STOP_ERROR_MESSAGE ? 'Stopped.' : message, message === STOP_ERROR_MESSAGE ? 'default' : 'error');

@@ -2,9 +2,26 @@ import { runtimeSendMessage } from './chrome-api.ts';
 import { applyFilledToPreview, classifySegment, createEntryLookup, summarizePreview } from './matcher.ts';
 import { ContentScriptDomHelpers } from './content-script-dom.ts';
 import type { RuntimeSegment, ScrollContext } from './content-script-dom.ts';
+import { resolvePagePlatform } from './editor-platform.ts';
 import { normalizeFillOptions } from './fill-options.ts';
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFill } from './fill-throttle.ts';
+import {
+  type MemoqCursorSegment,
+  type MemoqCursorVisitedSegment,
+  TARGET_NO_LONGER_EMPTY_REASON,
+  runMemoqCursorFill
+} from './memoq-fill.ts';
 import { MemoqAdapter } from './memoq-adapter.ts';
+import {
+  buildMemoqFailureSummary,
+  logMemoqDiagnostic,
+  NOOP_MEMOQ_DIAGNOSTICS
+} from './memoq-debug.ts';
+import type {
+  MemoqDiagnosticLevel,
+  MemoqDiagnosticStage,
+  MemoqDiagnostics
+} from './memoq-debug.ts';
 import { PhraseAdapter } from './phrase-adapter.ts';
 import { hasRepeatedSyntheticSignature, isRecentSyntheticDuplicate } from './scan-dedupe.ts';
 import type {
@@ -60,22 +77,70 @@ async function reportRunProgress(
   }
 }
 
+class MemoqRunDiagnostics implements MemoqDiagnostics {
+  private lastSummary = '';
+
+  constructor(private readonly runId: string) {}
+
+  info(stage: MemoqDiagnosticStage, message: string, details?: Record<string, unknown>): void {
+    this.log('info', stage, message, details);
+  }
+
+  warn(stage: MemoqDiagnosticStage, message: string, details?: Record<string, unknown>): void {
+    this.log('warn', stage, message, details);
+  }
+
+  error(stage: MemoqDiagnosticStage, message: string, details?: Record<string, unknown>): void {
+    this.log('error', stage, message, details);
+  }
+
+  summary(stage: MemoqDiagnosticStage, message: string): void {
+    const summary = buildMemoqFailureSummary(stage, message);
+    if (summary === this.lastSummary) {
+      return;
+    }
+
+    this.lastSummary = summary;
+    void reportRunProgress(this.runId, {
+      message: summary
+    });
+  }
+
+  private log(
+    level: MemoqDiagnosticLevel,
+    stage: MemoqDiagnosticStage,
+    message: string,
+    details?: Record<string, unknown>
+  ): void {
+    logMemoqDiagnostic(
+      {
+        scope: 'content',
+        runId: this.runId
+      },
+      stage,
+      message,
+      details,
+      level
+    );
+  }
+}
+
 class PlatformDomAdapter {
   async scanSegments(runId: string): Promise<PageSegment[]> {
     this.resetStopState();
-    let scannedCount = 0;
-    const runtimeSegments = await this.collectSegments(
-      async () => {
-        scannedCount += 1;
-        if (scannedCount === 1 || scannedCount % 10 === 0) {
-          await reportRunProgress(runId, { scannedCount });
-        }
-      },
-      {
-        restoreScrollPosition: true
-      }
-    );
+    const platform = this.detectPlatform();
+    const diagnostics = this.createDiagnostics(platform, runId);
+
+    this.logPlatform(platform, diagnostics);
+
+    const runtimeSegments =
+      platform === 'memoq'
+        ? await this.scanMemoqSegments(runId, diagnostics)
+        : await this.scanPhraseSegments(runId);
+
+    this.assertMemoqSegmentsFound(platform, runtimeSegments, diagnostics);
     await reportRunProgress(runId, { scannedCount: runtimeSegments.length });
+
     return runtimeSegments.map(
       ({
         targetElement: _targetElement,
@@ -94,6 +159,132 @@ class PlatformDomAdapter {
     plannedFillCount: number | null
   ): Promise<FillRunResult> {
     this.resetStopState();
+    const platform = this.detectPlatform();
+    const diagnostics = this.createDiagnostics(platform, runId);
+
+    this.logPlatform(platform, diagnostics);
+
+    return platform === 'memoq'
+      ? this.fillMemoqSegments(
+          runId,
+          entries,
+          fillOptions,
+          plannedFillCount,
+          diagnostics
+        )
+      : this.fillPhraseSegments(
+          runId,
+          entries,
+          fillOptions,
+          plannedFillCount,
+          diagnostics
+        );
+  }
+
+  private async fillSegment(
+    segment: RuntimeSegment,
+    value: string,
+    diagnostics: MemoqDiagnostics
+  ): Promise<FillOutcome> {
+    this.assertNotStopped();
+    const currentValue = this.getEditableValue(segment);
+    if (normalizeText(currentValue)) {
+      return {
+        domId: segment.domId,
+        filled: false,
+        reason: TARGET_NO_LONGER_EMPTY_REASON
+      };
+    }
+
+    if (segment.platform === 'memoq') {
+      return memoqAdapter.fillSegment(segment, value, diagnostics);
+    }
+
+    return phraseAdapter.fillSegment(segment, value);
+  }
+
+  private getEditableValue(segment: RuntimeSegment): string {
+    if (segment.platform === 'memoq') {
+      return memoqAdapter.getEditableValue(segment.targetElement as HTMLElement);
+    }
+
+    return phraseAdapter.getEditableValue(segment.targetElement);
+  }
+
+  private toMemoqCursorSegment(
+    segment: RuntimeSegment
+  ): MemoqCursorSegment<RuntimeSegment> {
+    return {
+      segment,
+      domId: segment.domId,
+      sourceRaw: segment.sourceRaw,
+      sourceNormalized: segment.sourceNormalized,
+      targetRaw: segment.targetRaw,
+      isEmptyTarget: segment.isEmptyTarget,
+      placeholderTokens: [...segment.placeholderTokens]
+    };
+  }
+
+  private toRuntimeSegment(
+    segment: MemoqCursorVisitedSegment<RuntimeSegment>
+  ): RuntimeSegment {
+    return {
+      ...segment.segment,
+      domId: segment.domId,
+      sourceRaw: segment.sourceRaw,
+      sourceNormalized: segment.sourceNormalized,
+      occurrenceIndex: segment.occurrenceIndex,
+      targetRaw: segment.targetRaw,
+      isEmptyTarget: segment.isEmptyTarget,
+      placeholderTokens: [...segment.placeholderTokens]
+    };
+  }
+
+  private async scanPhraseSegments(runId: string): Promise<RuntimeSegment[]> {
+    let scannedCount = 0;
+
+    return this.collectSegments(
+      async () => {
+        scannedCount += 1;
+        if (scannedCount === 1 || scannedCount % 10 === 0) {
+          await reportRunProgress(runId, { scannedCount });
+        }
+      },
+      {
+        restoreScrollPosition: true
+      }
+    );
+  }
+
+  private async scanMemoqSegments(
+    runId: string,
+    diagnostics: MemoqDiagnostics
+  ): Promise<RuntimeSegment[]> {
+    return this.collectMemoqSegments(
+      diagnostics,
+      async (batchSegments, metadata) => {
+        if (
+          metadata.totalSegments === batchSegments.length ||
+          metadata.totalSegments % 10 === 0
+        ) {
+          await reportRunProgress(runId, {
+            scannedCount: metadata.totalSegments
+          });
+        }
+      },
+      {
+        restoreScrollPosition: true
+      }
+    );
+  }
+
+  private async fillPhraseSegments(
+    runId: string,
+    entries: TranslationEntry[],
+    fillOptions: FillOptions,
+    plannedFillCount: number | null,
+    diagnostics: MemoqDiagnostics
+  ): Promise<FillRunResult> {
     const entryLookup = createEntryLookup(entries);
     const previewItems: PreviewItem[] = [];
     const filledDomIds: string[] = [];
@@ -121,7 +312,7 @@ class PlatformDomAdapter {
           return;
         }
 
-        const outcome = await this.fillSegment(segment, item.translation);
+        const outcome = await this.fillSegment(segment, item.translation, diagnostics);
         if (outcome.filled) {
           filledDomIds.push(outcome.domId);
           if (
@@ -162,35 +353,190 @@ class PlatformDomAdapter {
       preview: applyFilledToPreview(preFillPreview, filledDomIds),
       filledCount: filledDomIds.length,
       filledDomIds,
+      failedCount: 0,
+      failures: [],
       stoppedByAutoStop,
       autoStopAfterFilledCount
     };
   }
 
-  private async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
-    this.assertNotStopped();
-    const currentValue = this.getEditableValue(segment);
-    if (normalizeText(currentValue)) {
-      return {
-        domId: segment.domId,
-        filled: false,
-        reason: 'Target is no longer empty.'
-      };
+  private async fillMemoqSegments(
+    runId: string,
+    entries: TranslationEntry[],
+    fillOptions: FillOptions,
+    plannedFillCount: number | null,
+    diagnostics: MemoqDiagnostics
+  ): Promise<FillRunResult> {
+    const entryLookup = createEntryLookup(entries);
+    const normalizedFillOptions = normalizeFillOptions(fillOptions);
+    const autoStopAfterFilledCount = normalizeAutoStopAfterFilledCount(
+      normalizedFillOptions.autoStopAfterFilledCount
+    );
+    let scannedCount = 0;
+    const scrollContext = this.findScrollContext('memoq', diagnostics);
+    let currentViewport = memoqAdapter.captureMemoqFillViewport(scrollContext, diagnostics);
+    if (currentViewport.rows.length === 0) {
+      const reason = 'memoQ fill could not capture any visible rows.';
+      diagnostics.error('navigate', reason, {
+        activeElement:
+          document.activeElement instanceof Element
+            ? document.activeElement.tagName.toLowerCase()
+            : '(none)'
+      });
+      diagnostics.summary('navigate', reason);
+      throw new Error(`${reason} Check the page console for memoQ diagnostics.`);
     }
 
-    if (segment.platform === 'memoq') {
-      return memoqAdapter.fillSegment(segment, value);
+    const fillStart = memoqAdapter.resolveMemoqFillStart(currentViewport, diagnostics);
+    if (!fillStart) {
+      const reason =
+        'Could not uniquely resolve the current memoQ starting row. Select the starting segment and try again.';
+      diagnostics.error('navigate', reason, {
+        activeElement:
+          document.activeElement instanceof Element
+            ? document.activeElement.tagName.toLowerCase()
+            : '(none)'
+      });
+      diagnostics.summary('navigate', reason);
+      throw new Error(`${reason} Check the page console for memoQ diagnostics.`);
     }
+    let currentCursorState = fillStart.cursorState;
 
-    return phraseAdapter.fillSegment(segment, value);
-  }
+    const cursorResult = await runMemoqCursorFill({
+      initialSegment: this.toMemoqCursorSegment(fillStart.segment),
+      classify: (segment) =>
+        classifySegment(
+          entryLookup,
+          this.toRuntimeSegment(segment),
+          normalizedFillOptions
+        ),
+      shouldFill: (item) => item.status === 'ready' && Boolean(item.translation),
+      getTranslation: (item) => item.translation ?? null,
+      advance: async () => {
+        this.assertNotStopped();
+        const next = await memoqAdapter.advanceMemoqFillCursor(
+          currentCursorState,
+          currentViewport,
+          scrollContext,
+          diagnostics
+        );
+        currentViewport = next.viewport;
+        if (next.cursorState) {
+          currentCursorState = next.cursorState;
+        }
+        return {
+          reachedEnd: next.reachedEnd,
+          segment: next.segment ? this.toMemoqCursorSegment(next.segment) : null
+        };
+      },
+      fillSegment: async (segment, translation, attemptNumber) => {
+        this.assertNotStopped();
+        if (attemptNumber > 1) {
+          diagnostics.info('write', 'Retrying memoQ fill after a failed attempt.', {
+            domId: segment.domId,
+            attemptNumber
+          });
+        }
 
-  private getEditableValue(segment: RuntimeSegment): string {
-    if (segment.platform === 'memoq') {
-      return memoqAdapter.getEditableValue(segment.targetElement as HTMLElement);
-    }
+        const runtimeSegment = this.toRuntimeSegment(segment);
+        const outcome = await this.fillSegment(runtimeSegment, translation, diagnostics);
 
-    return phraseAdapter.getEditableValue(segment.targetElement);
+        if (outcome.filled) {
+          currentViewport = memoqAdapter.updateMemoqFillViewportRow(
+            currentViewport,
+            currentCursorState,
+            translation
+          );
+          currentCursorState = {
+            ...currentCursorState,
+            rowFingerprint:
+              currentViewport.rows[currentCursorState.viewportIndex]?.rowFingerprint ??
+              currentCursorState.rowFingerprint
+          };
+          return outcome;
+        }
+
+        if (outcome.reason === TARGET_NO_LONGER_EMPTY_REASON) {
+          currentViewport = memoqAdapter.updateMemoqFillViewportRow(
+            currentViewport,
+            currentCursorState,
+            this.getEditableValue(runtimeSegment)
+          );
+          currentCursorState = {
+            ...currentCursorState,
+            rowFingerprint:
+              currentViewport.rows[currentCursorState.viewportIndex]?.rowFingerprint ??
+              currentCursorState.rowFingerprint
+          };
+        }
+
+        return outcome;
+      },
+      autoStopAfterFilledCount,
+      onVisited: async (event) => {
+        scannedCount = event.processedCount;
+        if (event.processedCount === 1 || event.processedCount % 10 === 0) {
+          await reportRunProgress(runId, {
+            scannedCount: event.processedCount,
+            filledCount: event.filledCount,
+            plannedFillCount
+          });
+        }
+      },
+      onAttemptFailure: async (event) => {
+        diagnostics.warn(
+          'write',
+          event.willRetry
+            ? 'memoQ fill attempt failed; retrying the same segment.'
+            : 'memoQ fill attempt failed; continuing to the next segment.',
+          {
+            domId: event.segment.domId,
+            attemptNumber: event.attemptNumber,
+            maxAttempts: event.maxAttempts,
+            reason: event.outcome.reason ?? 'Unknown memoQ fill failure.'
+          }
+        );
+      },
+      onFilled: async (event) => {
+        if (event.stoppedByAutoStop) {
+          return;
+        }
+
+        if (shouldPauseBulkFill(plannedFillCount, event.filledCount)) {
+          await reportRunProgress(runId, {
+            scannedCount,
+            filledCount: event.filledCount,
+            plannedFillCount,
+            message: 'Cooling down for 20 seconds...'
+          });
+          await this.waitWithStopChecks(BULK_FILL_PAUSE_MS);
+        }
+
+        await reportRunProgress(runId, {
+          scannedCount,
+          filledCount: event.filledCount,
+          plannedFillCount
+        });
+      },
+      onSettled: async (event) => {
+        if (event.stoppedByAutoStop) {
+          return;
+        }
+
+        await this.waitWithStopChecks(this.getInterFillDelayMs(this.toRuntimeSegment(event.segment)));
+      }
+    });
+
+    const preFillPreview = summarizePreview(cursorResult.items);
+    return {
+      preview: applyFilledToPreview(preFillPreview, cursorResult.filledDomIds),
+      filledCount: cursorResult.filledDomIds.length,
+      filledDomIds: cursorResult.filledDomIds,
+      failedCount: cursorResult.failures.length,
+      failures: cursorResult.failures,
+      stoppedByAutoStop: cursorResult.stoppedByAutoStop,
+      autoStopAfterFilledCount
+    };
   }
 
   private async collectSegments(
@@ -199,10 +545,10 @@ class PlatformDomAdapter {
       restoreScrollPosition?: boolean;
     }
   ): Promise<RuntimeSegment[]> {
-    const scrollContext = this.findScrollContext();
+    const scrollContext = phraseAdapter.findScrollContext() ?? helpers.toWindowScrollContext();
     const shouldRestoreScrollPosition = options?.restoreScrollPosition ?? true;
-    const scanDelayMs = this.getScanDelayMs(scrollContext);
-    const scrollSettleDelayMs = this.getScrollSettleDelayMs(scrollContext);
+    const scanDelayMs = DEFAULT_SCAN_DELAY_MS;
+    const scrollSettleDelayMs = DEFAULT_SCROLL_SETTLE_DELAY_MS;
     const seenIds = new Set<string>();
     const recentSyntheticFingerprints = new WeakMap<
       Element,
@@ -224,7 +570,7 @@ class PlatformDomAdapter {
         this.assertNotStopped();
 
         const countBefore = segments.length;
-        const visibleSegments = this.collectVisibleSegments(scrollContext);
+        const visibleSegments = phraseAdapter.collectVisibleSegments(scrollContext);
         let shouldSkipSyntheticPass = false;
         if (scrollContext.mode === 'synthetic') {
           const syntheticSignature = visibleSegments
@@ -243,10 +589,7 @@ class PlatformDomAdapter {
 
         for (const segment of visibleSegments) {
           this.assertNotStopped();
-          if (
-            scrollContext.mode === 'synthetic' &&
-            shouldSkipSyntheticPass
-          ) {
+          if (scrollContext.mode === 'synthetic' && shouldSkipSyntheticPass) {
             continue;
           }
 
@@ -294,16 +637,20 @@ class PlatformDomAdapter {
           }
         }
 
-        if (stopRequestedByCallback || segments.length >= MAX_SEGMENTS) {
-          break;
-        }
-
         const discoveredCount = segments.length - countBefore;
         noNewSegmentsPasses = discoveredCount === 0 ? noNewSegmentsPasses + 1 : 0;
 
         const scrollTopBefore = scrollContext.getTop();
         const isAtBottom = scrollContext.isAtBottom();
         const scrollStep = Math.max(scrollContext.getHeight() * SCROLL_RATIO, 240);
+
+        if (stopRequestedByCallback) {
+          break;
+        }
+
+        if (segments.length >= MAX_SEGMENTS) {
+          break;
+        }
 
         if (isAtBottom && noNewSegmentsPasses >= 3) {
           break;
@@ -344,6 +691,221 @@ class PlatformDomAdapter {
     }
   }
 
+  private async collectMemoqSegments(
+    diagnostics: MemoqDiagnostics,
+    onBatch?: (
+      segments: RuntimeSegment[],
+      metadata: {
+        totalSegments: number;
+        pass: number;
+      }
+    ) => Promise<'stop' | void> | 'stop' | void,
+    options?: {
+      restoreScrollPosition?: boolean;
+    }
+  ): Promise<RuntimeSegment[]> {
+    const scrollContext = this.findScrollContext('memoq', diagnostics);
+    const shouldRestoreScrollPosition = options?.restoreScrollPosition ?? true;
+    const scanDelayMs = this.getScanDelayMs('memoq', scrollContext);
+    const scrollSettleDelayMs = this.getScrollSettleDelayMs('memoq', scrollContext);
+    const seenIds = new Set<string>();
+    const recentSyntheticFingerprints = new WeakMap<
+      Element,
+      { fingerprint: string; pass: number }
+    >();
+    const occurrenceCounter = new Map<string, number>();
+    const segments: RuntimeSegment[] = [];
+    let previousSyntheticSignature = '';
+    let repeatedSyntheticSignaturePasses = 0;
+    let stopRequestedByCallback = false;
+
+    try {
+      let noNewSegmentsPasses = 0;
+      let noMovementPasses = 0;
+
+      for (let pass = 0; pass < MAX_PASSES && segments.length < MAX_SEGMENTS; pass += 1) {
+        this.assertNotStopped();
+        await delay(scanDelayMs);
+        this.assertNotStopped();
+
+        diagnostics.info('scan', 'Starting memoQ scan pass.', {
+          pass: pass + 1,
+          knownSegments: segments.length,
+          scrollMode: scrollContext.mode ?? 'native'
+        });
+
+        const countBefore = segments.length;
+        const visibleSegments = memoqAdapter.collectVisibleSegments(scrollContext, diagnostics);
+        let shouldSkipSyntheticPass = false;
+        if (scrollContext.mode === 'synthetic') {
+          const syntheticSignature = visibleSegments
+            .map((segment) => `${segment.domId}=>${segment.scanFingerprint ?? ''}`)
+            .join('|');
+          shouldSkipSyntheticPass = hasRepeatedSyntheticSignature(
+            previousSyntheticSignature,
+            syntheticSignature
+          );
+          repeatedSyntheticSignaturePasses = shouldSkipSyntheticPass
+            ? repeatedSyntheticSignaturePasses + 1
+            : 0;
+          previousSyntheticSignature = syntheticSignature;
+        }
+
+        const eligibleSegments: RuntimeSegment[] = [];
+        for (const segment of visibleSegments) {
+          this.assertNotStopped();
+          if (scrollContext.mode === 'synthetic' && shouldSkipSyntheticPass) {
+            continue;
+          }
+
+          if (
+            scrollContext.mode === 'synthetic' &&
+            segment.scanElement &&
+            segment.scanFingerprint
+          ) {
+            const previousSyntheticSegment = recentSyntheticFingerprints.get(
+              segment.scanElement
+            );
+            recentSyntheticFingerprints.set(segment.scanElement, {
+              fingerprint: segment.scanFingerprint,
+              pass
+            });
+
+            if (
+              isRecentSyntheticDuplicate(
+                previousSyntheticSegment,
+                segment.scanFingerprint,
+                pass
+              )
+            ) {
+              continue;
+            }
+          }
+
+          eligibleSegments.push(segment);
+        }
+
+        const discoveredBatch: RuntimeSegment[] = [];
+        for (const segment of eligibleSegments) {
+          if (seenIds.has(segment.domId)) {
+            continue;
+          }
+
+          seenIds.add(segment.domId);
+          const nextOccurrence =
+            (occurrenceCounter.get(segment.sourceNormalized) ?? 0) + 1;
+          occurrenceCounter.set(segment.sourceNormalized, nextOccurrence);
+          segment.occurrenceIndex = nextOccurrence;
+          discoveredBatch.push(segment);
+        }
+        segments.push(...discoveredBatch);
+
+        if (discoveredBatch.length > 0 && onBatch) {
+          const callbackResult = await onBatch(discoveredBatch, {
+            totalSegments: segments.length,
+            pass: pass + 1
+          });
+          if (callbackResult === 'stop') {
+            stopRequestedByCallback = true;
+          }
+        }
+
+        const discoveredCount = segments.length - countBefore;
+        noNewSegmentsPasses = discoveredCount === 0 ? noNewSegmentsPasses + 1 : 0;
+
+        const scrollTopBefore = scrollContext.getTop();
+        const isAtBottom = scrollContext.isAtBottom();
+        const scrollStep = Math.max(scrollContext.getHeight() * SCROLL_RATIO, 240);
+
+        diagnostics.info('scan', 'Finished memoQ scan pass.', {
+          pass: pass + 1,
+          visibleSegments: visibleSegments.length,
+          discoveredCount,
+          totalSegments: segments.length,
+          shouldSkipSyntheticPass,
+          repeatedSyntheticSignaturePasses,
+          noNewSegmentsPasses,
+          isAtBottom
+        });
+
+        if (stopRequestedByCallback) {
+          diagnostics.info('scan', 'Stopping memoQ scan because the callback requested it.', {
+            pass: pass + 1,
+            totalSegments: segments.length
+          });
+          break;
+        }
+
+        if (segments.length >= MAX_SEGMENTS) {
+          diagnostics.warn('scan', 'Stopping memoQ scan after hitting the segment limit.', {
+            maxSegments: MAX_SEGMENTS
+          });
+          break;
+        }
+
+        if (isAtBottom && noNewSegmentsPasses >= 3) {
+          diagnostics.info('scan', 'Stopping memoQ scan at the bottom after repeated empty passes.', {
+            pass: pass + 1,
+            noNewSegmentsPasses
+          });
+          break;
+        }
+
+        if (
+          scrollContext.mode === 'synthetic' &&
+          (noNewSegmentsPasses >= 4 || repeatedSyntheticSignaturePasses >= 2)
+        ) {
+          diagnostics.warn(
+            'scan',
+            'Stopping memoQ synthetic scan after repeated duplicate passes.',
+            {
+              pass: pass + 1,
+              noNewSegmentsPasses,
+              repeatedSyntheticSignaturePasses
+            }
+          );
+          break;
+        }
+
+        if (!isAtBottom) {
+          scrollContext.scrollBy(scrollStep);
+        } else {
+          scrollContext.scrollBy(Math.max(scrollStep / 2, 120));
+        }
+
+        await delay(scrollSettleDelayMs);
+        this.assertNotStopped();
+
+        const scrollTopAfter = scrollContext.getTop();
+        noMovementPasses =
+          Math.abs(scrollTopAfter - scrollTopBefore) < 2
+            ? noMovementPasses + 1
+            : 0;
+
+        if (noMovementPasses >= 5 && noNewSegmentsPasses >= 3) {
+          diagnostics.warn('scan', 'Stopping memoQ scan after repeated passes without movement.', {
+            pass: pass + 1,
+            noMovementPasses,
+            noNewSegmentsPasses,
+            scrollTopBefore,
+            scrollTopAfter
+          });
+          break;
+        }
+      }
+
+      diagnostics.info('scan', 'Completed memoQ scan run.', {
+        totalSegments: segments.length
+      });
+
+      return segments;
+    } finally {
+      if (shouldRestoreScrollPosition) {
+        scrollContext.restore();
+      }
+    }
+  }
+
   stopCurrentRun(): void {
     window.__phraseBulkFillStopRequested = true;
   }
@@ -371,21 +933,23 @@ class PlatformDomAdapter {
     this.assertNotStopped();
   }
 
-  private collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[] {
-    const memoqSegments = memoqAdapter.collectVisibleSegments(scrollContext);
-    if (memoqSegments.length > 0) {
-      return memoqSegments;
+  private findScrollContext(
+    platform: 'memoq' | 'phrase',
+    diagnostics: MemoqDiagnostics
+  ): ScrollContext {
+    if (platform === 'memoq') {
+      const scrollContext = memoqAdapter.findScrollContext(diagnostics);
+      if (scrollContext) {
+        return scrollContext;
+      }
+
+      diagnostics.warn('scroll-context', 'Falling back to the window scroll context for memoQ.', {
+        url: window.location.href
+      });
+      return helpers.toWindowScrollContext();
     }
 
-    return phraseAdapter.collectVisibleSegments(scrollContext);
-  }
-
-  private findScrollContext(): ScrollContext {
-    return (
-      memoqAdapter.findScrollContext() ??
-      phraseAdapter.findScrollContext() ??
-      helpers.toWindowScrollContext()
-    );
+    return phraseAdapter.findScrollContext() ?? helpers.toWindowScrollContext();
   }
 
   private getInterFillDelayMs(segment: RuntimeSegment): number {
@@ -394,8 +958,8 @@ class PlatformDomAdapter {
       : DEFAULT_INTER_FILL_DELAY_MS;
   }
 
-  private getScanDelayMs(scrollContext: ScrollContext): number {
-    if (!memoqAdapter.isActive()) {
+  private getScanDelayMs(platform: 'memoq' | 'phrase', scrollContext: ScrollContext): number {
+    if (platform !== 'memoq') {
       return DEFAULT_SCAN_DELAY_MS;
     }
 
@@ -404,14 +968,56 @@ class PlatformDomAdapter {
       : MEMOQ_SCAN_DELAY_MS;
   }
 
-  private getScrollSettleDelayMs(scrollContext: ScrollContext): number {
-    if (!memoqAdapter.isActive()) {
+  private getScrollSettleDelayMs(
+    platform: 'memoq' | 'phrase',
+    scrollContext: ScrollContext
+  ): number {
+    if (platform !== 'memoq') {
       return DEFAULT_SCROLL_SETTLE_DELAY_MS;
     }
 
     return scrollContext.mode === 'synthetic'
       ? DEFAULT_SCROLL_SETTLE_DELAY_MS
       : MEMOQ_SCROLL_SETTLE_DELAY_MS;
+  }
+
+  private detectPlatform(): 'memoq' | 'phrase' {
+    return resolvePagePlatform(window.location.href, memoqAdapter.isActive());
+  }
+
+  private createDiagnostics(
+    platform: 'memoq' | 'phrase',
+    runId: string
+  ): MemoqDiagnostics {
+    return platform === 'memoq' ? new MemoqRunDiagnostics(runId) : NOOP_MEMOQ_DIAGNOSTICS;
+  }
+
+  private logPlatform(platform: 'memoq' | 'phrase', diagnostics: MemoqDiagnostics): void {
+    if (platform !== 'memoq') {
+      return;
+    }
+
+    diagnostics.info('platform', 'Resolved memoQ as the active editor platform.', {
+      url: window.location.href,
+      hasEditorCells: memoqAdapter.isActive()
+    });
+  }
+
+  private assertMemoqSegmentsFound(
+    platform: 'memoq' | 'phrase',
+    runtimeSegments: RuntimeSegment[],
+    diagnostics: MemoqDiagnostics
+  ): void {
+    if (platform !== 'memoq' || runtimeSegments.length > 0) {
+      return;
+    }
+
+    const reason = memoqAdapter.buildScanFailureReason();
+    diagnostics.error('scan', reason, {
+      ...memoqAdapter.getLastScanObservation()
+    });
+    diagnostics.summary('scan', reason);
+    throw new Error(`${reason} Check the page console for memoQ diagnostics.`);
   }
 }
 

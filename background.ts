@@ -1,8 +1,16 @@
 import { executeScript, getAllFrames, queryActiveTab, sendTabMessage } from './chrome-api.ts';
+import {
+  getEditorPlatformForUrl,
+  getPlatformDisplayName,
+  isMemsourceEditorFrameUrl,
+  isSupportedEditorUrl
+} from './editor-platform.ts';
 import { parseExcelBuffer } from './excel.ts';
+import { formatFillCompletionMessage } from './fill-result.ts';
 import { normalizeFillOptions } from './fill-options.ts';
 import { normalizePlannedFillCount } from './fill-throttle.ts';
-import { applyMemoqPreviewCorrection, buildPreview } from './matcher.ts';
+import { buildPreview } from './matcher.ts';
+import { logMemoqDiagnostic } from './memoq-debug.ts';
 import { DEFAULT_RUN_STATE, isRunActive, normalizeRunState } from './run-state.ts';
 import { readRuntimeState, writeRuntimeState } from './storage.ts';
 import type {
@@ -16,74 +24,96 @@ import type {
   RunState,
   StatusKind
 } from './types.ts';
-
-const MEMOQ_URL_RE = /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/webpm\/webtrans\//;
-const MEMSOURCE_JOB_URL_RE =
-  /^https:\/\/cloud\.memsource\.com\/web\/job\/[^/]+\/translate(?:[/?#]|$)/;
-const MEMSOURCE_EDITOR_FRAME_URL_RE =
-  /^https:\/\/editor\.memsource\.com\/twe\/translation\/job\/[^/?#]+/;
 const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 
-function isPhraseEditorUrl(url?: string): boolean {
-  if (!url) {
-    return false;
+function logMemoqBackground(
+  stage: Parameters<typeof logMemoqDiagnostic>[1],
+  message: string,
+  details?: Record<string, unknown>,
+  options?: {
+    level?: Parameters<typeof logMemoqDiagnostic>[4];
+    runId?: string | null;
   }
-
-  return (
-    url.startsWith('https://app.phrase.com/editor/') ||
-    MEMSOURCE_JOB_URL_RE.test(url) ||
-    MEMOQ_URL_RE.test(url)
+): void {
+  logMemoqDiagnostic(
+    {
+      scope: 'background',
+      runId: options?.runId
+    },
+    stage,
+    message,
+    details,
+    options?.level
   );
 }
 
-function isMemoqUrl(url?: string): boolean {
-  return Boolean(url && MEMOQ_URL_RE.test(url));
-}
-
-function isMemsourceEditorFrameUrl(url?: string): boolean {
-  return Boolean(url && MEMSOURCE_EDITOR_FRAME_URL_RE.test(url));
-}
-
-function finalizePreviewForTab<T extends { preview: ReturnType<typeof applyMemoqPreviewCorrection> }>(
-  url: string | undefined,
-  result: T
-): T {
-  if (!isMemoqUrl(url)) {
-    return result;
-  }
-
-  return {
-    ...result,
-    preview: applyMemoqPreviewCorrection(result.preview)
-  };
-}
-
-function buildPreviewForTab(
-  url: string | undefined,
-  preview: ReturnType<typeof buildPreview>
-): ReturnType<typeof buildPreview> {
-  return isMemoqUrl(url) ? applyMemoqPreviewCorrection(preview) : preview;
-}
-
-async function ensurePhraseTab(): Promise<{
+async function ensureEditorTab(): Promise<{
   id: number;
   url?: string;
   frameId?: number;
+  platform: 'memoq' | 'phrase';
 }> {
   const tab = await queryActiveTab();
+  const platform = getEditorPlatformForUrl(tab.url);
 
-  if (!isPhraseEditorUrl(tab.url)) {
-    throw new Error('Open a Phrase editor tab before running Preview or Fill.');
+  if (!platform || !isSupportedEditorUrl(tab.url)) {
+    throw new Error(
+      `Open a supported Phrase or memoQ editor tab before running Preview or Fill. Current URL: ${tab.url ?? 'unknown'}.`
+    );
   }
 
-  await executeScript(tab.id, ['content-script.js'], { allFrames: true });
+  if (platform === 'memoq') {
+    logMemoqBackground('tab-check', 'Detected memoQ editor tab.', {
+      tabId: tab.id,
+      url: tab.url
+    });
+  }
 
-  const frames = await getAllFrames(tab.id);
-  const editorFrame = frames.find((frame) => isMemsourceEditorFrameUrl(frame.url));
+  try {
+    await executeScript(tab.id, ['content-script.js'], { allFrames: true });
+  } catch (error) {
+    if (platform === 'memoq') {
+      logMemoqBackground(
+        'script-inject',
+        'Failed to inject content script into memoQ.',
+        {
+          tabId: tab.id,
+          url: tab.url,
+          error: error instanceof Error ? error.message : String(error)
+        },
+        {
+          level: 'error'
+        }
+      );
+    }
+
+    throw new Error(
+      `Failed to inject the ${getPlatformDisplayName(platform)} helper script. ${error instanceof Error ? error.message : 'Unknown scripting error.'}`
+    );
+  }
+
+  let editorFrame:
+    | {
+        frameId: number;
+        parentFrameId: number;
+        url?: string;
+      }
+    | undefined;
+
+  if (platform === 'phrase') {
+    const frames = await getAllFrames(tab.id);
+    editorFrame = frames.find((frame) => isMemsourceEditorFrameUrl(frame.url));
+  } else {
+    logMemoqBackground('frame-resolve', 'memoQ uses the main frame.', {
+      tabId: tab.id,
+      url: tab.url
+    });
+  }
 
   return {
     ...tab,
-    frameId: editorFrame?.frameId
+    frameId: editorFrame?.frameId,
+    platform
   };
 }
 
@@ -206,7 +236,7 @@ async function stopActiveRun(runState?: RunState): Promise<void> {
   const tabId = activeRunState.tabId;
 
   if (typeof tabId !== 'number') {
-    const tab = await ensurePhraseTab();
+    const tab = await ensureEditorTab();
     await sendTabMessage<ContentRequest, ApiResponse<null>>(
       tab.id,
       { type: 'CONTENT_STOP' },
@@ -271,7 +301,7 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
       }
       const fillOptions = normalizeFillOptions(request.payload?.fillOptions ?? state.fillOptions);
 
-      const tab = await ensurePhraseTab();
+      const tab = await ensureEditorTab();
       const runState = createRunningRunState('preview', tab);
       await writeRuntimeState({
         fillOptions,
@@ -279,6 +309,21 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
       });
 
       try {
+        if (tab.platform === 'memoq') {
+          logMemoqBackground(
+            'content-request',
+            'Sending preview request to memoQ content script.',
+            {
+              tabId: tab.id,
+              frameId: tab.frameId ?? null,
+              url: tab.url
+            },
+            {
+              runId: runState.runId
+            }
+          );
+        }
+
         const response = await sendTabMessage<
           ContentRequest,
           ApiResponse<PageSegment[]>
@@ -297,10 +342,7 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
           throw new Error(response.error);
         }
 
-        const preview = buildPreviewForTab(
-          tab.url,
-          buildPreview(state.translationEntries, response.data, fillOptions)
-        );
+        const preview = buildPreview(state.translationEntries, response.data, fillOptions);
         await writeRuntimeState({
           previewResult: preview,
           fillOptions
@@ -311,6 +353,23 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
         });
         return { ok: true, data: preview };
       } catch (error) {
+        if (tab.platform === 'memoq') {
+          logMemoqBackground(
+            'content-request',
+            'memoQ preview failed.',
+            {
+              tabId: tab.id,
+              frameId: tab.frameId ?? null,
+              url: tab.url,
+              error: error instanceof Error ? error.message : String(error)
+            },
+            {
+              level: 'error',
+              runId: runState.runId
+            }
+          );
+        }
+
         const message = error instanceof Error ? error.message : 'Preview failed.';
         await finalizeRunState(runState.runId ?? '', {
           message: message === STOP_ERROR_MESSAGE ? 'Stopped.' : message,
@@ -333,7 +392,7 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
         state.previewResult?.readyToFill ?? state.uploadMeta?.entryCount ?? state.translationEntries.length
       );
 
-      const tab = await ensurePhraseTab();
+      const tab = await ensureEditorTab();
       const runState = createRunningRunState('fill', tab, {
         plannedFillCount
       });
@@ -343,6 +402,22 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
       });
 
       try {
+        if (tab.platform === 'memoq') {
+          logMemoqBackground(
+            'content-request',
+            'Sending fill request to memoQ content script.',
+            {
+              tabId: tab.id,
+              frameId: tab.frameId ?? null,
+              url: tab.url,
+              plannedFillCount
+            },
+            {
+              runId: runState.runId
+            }
+          );
+        }
+
         const response = await sendTabMessage<
           ContentRequest,
           ApiResponse<FillRunResult>
@@ -360,23 +435,38 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
           throw new Error(response.error);
         }
 
-        const result = finalizePreviewForTab(tab.url, response.data);
+        const result = response.data;
 
         await writeRuntimeState({
           previewResult: result.preview,
           fillOptions
         });
         await finalizeRunState(runState.runId ?? '', {
-          message:
-            result.stoppedByAutoStop && result.autoStopAfterFilledCount !== null
-              ? `Filled ${result.filledCount} segment(s) and auto-stopped at ${result.autoStopAfterFilledCount}.`
-              : `Filled ${result.filledCount} segment(s).`,
+          message: formatFillCompletionMessage(result),
           filledCount: result.filledCount,
           scannedCount: result.preview.totalSegments,
           plannedFillCount
         });
         return { ok: true, data: result };
       } catch (error) {
+        if (tab.platform === 'memoq') {
+          logMemoqBackground(
+            'content-request',
+            'memoQ fill failed.',
+            {
+              tabId: tab.id,
+              frameId: tab.frameId ?? null,
+              url: tab.url,
+              plannedFillCount,
+              error: error instanceof Error ? error.message : String(error)
+            },
+            {
+              level: 'error',
+              runId: runState.runId
+            }
+          );
+        }
+
         const message = error instanceof Error ? error.message : 'Fill failed.';
         await finalizeRunState(runState.runId ?? '', {
           message: message === STOP_ERROR_MESSAGE ? 'Stopped.' : message,

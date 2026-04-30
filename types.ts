@@ -93,10 +93,18 @@ export interface PopupState {
   runState: RunState;
 }
 
+export interface FillFailure {
+  domId: string;
+  sourceRaw: string;
+  reason: string;
+}
+
 export interface FillRunResult {
   preview: PreviewResult;
   filledCount: number;
   filledDomIds: string[];
+  failedCount: number;
+  failures: FillFailure[];
   stoppedByAutoStop: boolean;
   autoStopAfterFilledCount: number | null;
 }
