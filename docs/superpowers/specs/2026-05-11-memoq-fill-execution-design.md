@@ -8,12 +8,15 @@ Rewrite only the memoQ fill execution chain so a fill run can automatically move
 
 Accuracy is the priority. The implementation may be slower, and it may stop early when it cannot prove the next write is safe, but it must not keep going after losing row identity or target certainty.
 
+This is a rebuild, not an incremental repair. The current memoQ fill execution internals should be treated as disposable. Keep only the surrounding contracts that still serve the goal, such as matched segment input, fill results, run progress, and any scanning pieces that remain necessary and trustworthy.
+
 ## Non-Goals
 
 - Do not change how uploaded Excel rows are parsed or matched to page sources.
 - Do not redesign Phrase filling.
 - Do not build a broad fallback stack of unrelated fill methods.
 - Do not continue filling after an unverified write, a possible row jump, or source mismatch.
+- Do not preserve existing memoQ fill internals merely because they already exist.
 
 ## Existing Boundaries To Preserve
 
@@ -37,7 +40,7 @@ The primary implementation should be small and explicit:
 5. Confirm same-row commit.
 6. Return success or a structured failure.
 
-This should replace the current memoQ fill execution chain rather than layering on more fallback behavior.
+This should replace the current memoQ fill execution chain rather than layering on more fallback behavior. Existing fill helpers should be deleted or rewritten when they obscure the new transaction model.
 
 ## Row Identity
 
