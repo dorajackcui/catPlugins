@@ -101,10 +101,58 @@ export interface FillRunResult {
   autoStopAfterFilledCount: number | null;
 }
 
+export type MemoqFillFailureCode =
+  | 'ROW_NOT_FOUND'
+  | 'ROW_AMBIGUOUS'
+  | 'SOURCE_MISMATCH'
+  | 'TARGET_NOT_EMPTY'
+  | 'FOCUS_FAILED'
+  | 'INPUT_FAILED'
+  | 'CONFIRM_TIMEOUT'
+  | 'SCROLL_STALLED'
+  | 'UNKNOWN_MEMOQ_FILL_ERROR';
+
+export interface MemoqVisibleRowSnapshot {
+  rowNumber?: string;
+  source: string;
+  target: string;
+}
+
+export interface MemoqFillDiagnostic {
+  outcome: 'success' | 'failure';
+  failureCode?: MemoqFillFailureCode;
+  runId: string;
+  sequence: number;
+  scanPass: number;
+  scrollTop: number;
+  scrollMode: 'native' | 'synthetic';
+  domId: string;
+  rowNumber?: string;
+  locatingMethod: 'rowNumber' | 'singleVisibleSource' | 'none';
+  segmentSource: string;
+  sourceBefore: string;
+  targetBefore: string;
+  expectedTranslation: string;
+  activation: {
+    attempted: boolean;
+    ok: boolean;
+    activeElement?: string;
+    error?: string;
+  };
+  inputMethod: 'chrome-debugger';
+  targetAfter: string;
+  confirmation: {
+    ok: boolean;
+    attempts: number;
+  };
+  nearbyRows: MemoqVisibleRowSnapshot[];
+}
+
 export interface FillOutcome {
   domId: string;
   filled: boolean;
   reason?: string;
+  diagnostic?: MemoqFillDiagnostic;
 }
 
 export interface ParseExcelRequest {
@@ -153,6 +201,15 @@ export interface ReportRunProgressRequest {
     filledCount?: number;
     plannedFillCount?: number | null;
     message?: string;
+  };
+}
+
+export interface MemoqDebuggerWriteTextRequest {
+  type: 'MEMOQ_DEBUGGER_WRITE_TEXT';
+  payload: {
+    x: number;
+    y: number;
+    text: string;
   };
 }
 
