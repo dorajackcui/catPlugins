@@ -148,6 +148,11 @@ export interface MemoqFillDiagnostic {
   nearbyRows: MemoqVisibleRowSnapshot[];
 }
 
+export type MemoqFillFailureDiagnostic = MemoqFillDiagnostic & {
+  outcome: 'failure';
+  failureCode: MemoqFillFailureCode;
+};
+
 export interface FillOutcome {
   domId: string;
   filled: boolean;

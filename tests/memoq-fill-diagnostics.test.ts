@@ -5,10 +5,10 @@ import {
   describeMemoqFillDiagnostic,
   truncateMemoqDiagnosticValue
 } from '../memoq-fill-diagnostics.ts';
-import type { MemoqFillDiagnostic } from '../types.ts';
+import type { MemoqFillFailureDiagnostic } from '../types.ts';
 
 test('describeMemoqFillDiagnostic formats a stable stop reason', () => {
-  const diagnostic: MemoqFillDiagnostic = {
+  const diagnostic: MemoqFillFailureDiagnostic = {
     outcome: 'failure',
     failureCode: 'SOURCE_MISMATCH',
     runId: 'run-1',
@@ -58,5 +58,13 @@ test('truncateMemoqDiagnosticValue keeps messages readable', () => {
   assert.equal(
     truncateMemoqDiagnosticValue('1234567890', 8),
     '12345...'
+  );
+  assert.equal(
+    truncateMemoqDiagnosticValue('1234567890', 3),
+    '...'
+  );
+  assert.equal(
+    truncateMemoqDiagnosticValue('1234567890', 2),
+    '..'
   );
 });

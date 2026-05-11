@@ -1,4 +1,4 @@
-import type { MemoqFillDiagnostic, MemoqFillFailureCode } from './types.ts';
+import type { MemoqFillFailureCode, MemoqFillFailureDiagnostic } from './types.ts';
 import { normalizeText } from './utils.ts';
 
 const FAILURE_MESSAGES: Record<MemoqFillFailureCode, string> = {
@@ -15,18 +15,24 @@ const FAILURE_MESSAGES: Record<MemoqFillFailureCode, string> = {
 
 export function truncateMemoqDiagnosticValue(value: string, maxLength = 120): string {
   const normalized = normalizeText(value);
-  return normalized.length > maxLength
-    ? `${normalized.slice(0, maxLength - 3)}...`
-    : normalized;
+  const safeMaxLength = Math.max(0, Math.floor(maxLength));
+
+  if (normalized.length <= safeMaxLength) {
+    return normalized;
+  }
+
+  if (safeMaxLength <= 3) {
+    return '.'.repeat(safeMaxLength);
+  }
+
+  return `${normalized.slice(0, safeMaxLength - 3)}...`;
 }
 
-export function describeMemoqFillDiagnostic(diagnostic: MemoqFillDiagnostic): string {
+export function describeMemoqFillDiagnostic(diagnostic: MemoqFillFailureDiagnostic): string {
   const rowLabel = diagnostic.rowNumber
     ? `row ${diagnostic.rowNumber}`
     : `segment ${diagnostic.domId}`;
-  const message = diagnostic.failureCode
-    ? FAILURE_MESSAGES[diagnostic.failureCode]
-    : 'memoQ fill stopped.';
+  const message = FAILURE_MESSAGES[diagnostic.failureCode];
   const source = diagnostic.sourceBefore || diagnostic.segmentSource;
 
   return `Stopped at memoQ ${rowLabel}: ${message} Source="${truncateMemoqDiagnosticValue(source)}"`;
