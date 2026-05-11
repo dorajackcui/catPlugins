@@ -118,9 +118,7 @@ export interface MemoqVisibleRowSnapshot {
   target: string;
 }
 
-export interface MemoqFillDiagnostic {
-  outcome: 'success' | 'failure';
-  failureCode?: MemoqFillFailureCode;
+export interface MemoqFillDiagnosticBase {
   runId: string;
   sequence: number;
   scanPass: number;
@@ -148,10 +146,19 @@ export interface MemoqFillDiagnostic {
   nearbyRows: MemoqVisibleRowSnapshot[];
 }
 
-export type MemoqFillFailureDiagnostic = MemoqFillDiagnostic & {
+export type MemoqFillSuccessDiagnostic = MemoqFillDiagnosticBase & {
+  outcome: 'success';
+  failureCode?: never;
+};
+
+export type MemoqFillFailureDiagnostic = MemoqFillDiagnosticBase & {
   outcome: 'failure';
   failureCode: MemoqFillFailureCode;
 };
+
+export type MemoqFillDiagnostic =
+  | MemoqFillSuccessDiagnostic
+  | MemoqFillFailureDiagnostic;
 
 export interface FillOutcome {
   domId: string;
