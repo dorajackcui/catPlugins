@@ -160,12 +160,20 @@ export type MemoqFillDiagnostic =
   | MemoqFillSuccessDiagnostic
   | MemoqFillFailureDiagnostic;
 
-export interface FillOutcome {
+export interface FillOutcomeBase {
   domId: string;
-  filled: boolean;
   reason?: string;
-  diagnostic?: MemoqFillDiagnostic;
 }
+
+export type FillOutcome =
+  | (FillOutcomeBase & {
+      filled: true;
+      diagnostic?: MemoqFillSuccessDiagnostic;
+    })
+  | (FillOutcomeBase & {
+      filled: false;
+      diagnostic?: MemoqFillFailureDiagnostic;
+    });
 
 export interface ParseExcelRequest {
   type: 'PARSE_EXCEL';
