@@ -23,6 +23,13 @@ const MEMSOURCE_JOB_URL_RE =
 const MEMSOURCE_EDITOR_FRAME_URL_RE =
   /^https:\/\/editor\.memsource\.com\/twe\/translation\/job\/[^/?#]+/;
 const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
+const CHROME_DEBUGGER_PROTOCOL_VERSION = '1.3';
+
+interface RuntimeMessageSender {
+  tab?: {
+    id?: number;
+  };
+}
 
 function isPhraseEditorUrl(url?: string): boolean {
   if (!url) {
@@ -235,7 +242,116 @@ async function getPopupState(): Promise<PopupState> {
   };
 }
 
-async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<unknown>> {
+async function withAttachedDebugger(
+  tabId: number,
+  callback: (target: { tabId: number }) => Promise<void>
+): Promise<void> {
+  const target = { tabId };
+  let attached = false;
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      chrome.debugger.attach(target, CHROME_DEBUGGER_PROTOCOL_VERSION, () => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new Error(error.message));
+          return;
+        }
+
+        attached = true;
+        resolve();
+      });
+    });
+
+    await callback(target);
+  } finally {
+    if (attached) {
+      await new Promise<void>((resolve) => {
+        chrome.debugger.detach(target, () => {
+          resolve();
+        });
+      });
+    }
+  }
+}
+
+async function dispatchTrustedMemoqClick(
+  target: { tabId: number },
+  x: number,
+  y: number
+): Promise<void> {
+  for (const type of ['mousePressed', 'mouseReleased'] as const) {
+    await new Promise<void>((resolve, reject) => {
+      chrome.debugger.sendCommand(
+        target,
+        'Input.dispatchMouseEvent',
+        {
+          type,
+          x,
+          y,
+          button: 'left',
+          clickCount: 1
+        },
+        () => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message));
+            return;
+          }
+
+          resolve();
+        }
+      );
+    });
+  }
+}
+
+async function dispatchTrustedTabClick(tabId: number, x: number, y: number): Promise<void> {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error('Invalid memoQ click coordinates.');
+  }
+
+  await withAttachedDebugger(tabId, async (target) => {
+    await dispatchTrustedMemoqClick(target, x, y);
+  });
+}
+
+async function dispatchTrustedMemoqWrite(
+  tabId: number,
+  x: number,
+  y: number,
+  text: string
+): Promise<void> {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !text) {
+    throw new Error('Invalid memoQ trusted write payload.');
+  }
+
+  await withAttachedDebugger(tabId, async (target) => {
+    await dispatchTrustedMemoqClick(target, x, y);
+
+    await new Promise<void>((resolve, reject) => {
+      chrome.debugger.sendCommand(
+        target,
+        'Input.insertText',
+        { text },
+        () => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message));
+            return;
+          }
+
+          resolve();
+        }
+      );
+    });
+  });
+}
+
+async function handleMessage(
+  request: BackgroundRequest,
+  sender?: RuntimeMessageSender
+): Promise<ApiResponse<unknown>> {
   switch (request.type) {
     case 'GET_STATE': {
       return { ok: true, data: await getPopupState() };
@@ -427,6 +543,31 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
       return { ok: true, data: null };
     }
 
+    case 'MEMOQ_DEBUGGER_WRITE_TEXT': {
+      const tabId = sender?.tab?.id;
+      if (typeof tabId !== 'number') {
+        throw new Error('memoQ trusted write requires a sender tab.');
+      }
+
+      await dispatchTrustedMemoqWrite(
+        tabId,
+        request.payload.x,
+        request.payload.y,
+        request.payload.text
+      );
+      return { ok: true, data: null };
+    }
+
+    case 'MEMOQ_DEBUGGER_CLICK': {
+      const tabId = sender?.tab?.id;
+      if (typeof tabId !== 'number') {
+        throw new Error('memoQ trusted click requires a sender tab.');
+      }
+
+      await dispatchTrustedTabClick(tabId, request.payload.x, request.payload.y);
+      return { ok: true, data: null };
+    }
+
     default: {
       throw new Error('Unsupported request.');
     }
@@ -436,12 +577,12 @@ async function handleMessage(request: BackgroundRequest): Promise<ApiResponse<un
 chrome.runtime.onMessage.addListener(
   (
     request: BackgroundRequest,
-    _sender: unknown,
+    sender: RuntimeMessageSender,
     sendResponse: (response: ApiResponse<unknown>) => void
   ) => {
     void (async () => {
       try {
-        sendResponse(await handleMessage(request));
+        sendResponse(await handleMessage(request, sender));
       } catch (error) {
         sendResponse({
           ok: false,

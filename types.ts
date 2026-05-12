@@ -224,6 +224,14 @@ export interface ReportRunProgressRequest {
   };
 }
 
+export interface MemoqDebuggerClickRequest {
+  type: 'MEMOQ_DEBUGGER_CLICK';
+  payload: {
+    x: number;
+    y: number;
+  };
+}
+
 export interface MemoqDebuggerWriteTextRequest {
   type: 'MEMOQ_DEBUGGER_WRITE_TEXT';
   payload: {
@@ -240,7 +248,9 @@ export type BackgroundRequest =
   | StopRunRequest
   | GetStateRequest
   | SetFillOptionsRequest
-  | ReportRunProgressRequest;
+  | ReportRunProgressRequest
+  | MemoqDebuggerClickRequest
+  | MemoqDebuggerWriteTextRequest;
 
 export interface ContentScanRequest {
   type: 'CONTENT_SCAN';
