@@ -17,8 +17,29 @@ test('extractPlaceholderTokens keeps source order', () => {
   ]);
 });
 
+test('extractPlaceholderTokens recognizes memoQ accessibility tag notation', () => {
+  assert.deepEqual(extractPlaceholderTokens('{2>Premier Cadeau<1>Recharge<2}'), [
+    '{2>',
+    '<1>',
+    '<2}'
+  ]);
+});
+
+test('extractPlaceholderTokens recognizes default GientTrans tag notation', () => {
+  assert.deepEqual(
+    extractPlaceholderTokens('❮size=38❯Cabichou❮/size❯'),
+    ['❮size=38❯', '❮/size❯']
+  );
+});
+
+test('extractPlaceholderTokens canonicalizes GientTrans XML-like tag notation', () => {
+  assert.deepEqual(
+    extractPlaceholderTokens('<size=38><color=#C8712F>Cabichou</color></size>\\nLine 2'),
+    ['❮size=38❯', '❮color=#C8712F❯', '❮/color❯', '❮/size❯', '\\n']
+  );
+});
+
 test('placeholdersMatch rejects mismatched placeholders', () => {
   assert.equal(placeholdersMatch('Hello {name}', 'Bonjour %s'), false);
   assert.equal(placeholdersMatch('Hello {name}', 'Bonjour {name}'), true);
 });
-

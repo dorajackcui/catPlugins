@@ -1,5 +1,11 @@
 import { executeScript, getAllFrames, queryActiveTab, sendTabMessage } from './chrome-api.ts';
-import { parseExcelBuffer } from './excel.ts';
+import {
+  isGientTransUrl,
+  isMemsourceEditorFrameUrl,
+  isMemoqUrl,
+  isSupportedEditorUrl
+} from './editor-url.ts';
+import { buildSourceExportWorkbook, parseExcelBuffer } from './excel.ts';
 import { normalizeFillOptions } from './fill-options.ts';
 import { normalizePlannedFillCount } from './fill-throttle.ts';
 import { applyMemoqPreviewCorrection, buildPreview } from './matcher.ts';
@@ -9,6 +15,7 @@ import type {
   ApiResponse,
   BackgroundRequest,
   ContentRequest,
+  ExportSourcesResult,
   FillRunResult,
   PageSegment,
   PopupState,
@@ -17,38 +24,16 @@ import type {
   StatusKind
 } from './types.ts';
 
-const MEMOQ_URL_RE = /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/webpm\/webtrans\//;
-const MEMSOURCE_JOB_URL_RE =
-  /^https:\/\/cloud\.memsource\.com\/web\/job\/[^/]+\/translate(?:[/?#]|$)/;
-const MEMSOURCE_EDITOR_FRAME_URL_RE =
-  /^https:\/\/editor\.memsource\.com\/twe\/translation\/job\/[^/?#]+/;
 const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
+const EXPORT_SCAN_MAX_PASSES = 1200;
+const EXPORT_SCAN_MAX_SEGMENTS = 10000;
 const CHROME_DEBUGGER_PROTOCOL_VERSION = '1.3';
+const DEBUG_PREFIX = '[Phrase Bulk Fill]';
 
 interface RuntimeMessageSender {
   tab?: {
     id?: number;
   };
-}
-
-function isPhraseEditorUrl(url?: string): boolean {
-  if (!url) {
-    return false;
-  }
-
-  return (
-    url.startsWith('https://app.phrase.com/editor/') ||
-    MEMSOURCE_JOB_URL_RE.test(url) ||
-    MEMOQ_URL_RE.test(url)
-  );
-}
-
-function isMemoqUrl(url?: string): boolean {
-  return Boolean(url && MEMOQ_URL_RE.test(url));
-}
-
-function isMemsourceEditorFrameUrl(url?: string): boolean {
-  return Boolean(url && MEMSOURCE_EDITOR_FRAME_URL_RE.test(url));
 }
 
 function finalizePreviewForTab<T extends { preview: ReturnType<typeof applyMemoqPreviewCorrection> }>(
@@ -79,14 +64,21 @@ async function ensurePhraseTab(): Promise<{
 }> {
   const tab = await queryActiveTab();
 
-  if (!isPhraseEditorUrl(tab.url)) {
-    throw new Error('Open a Phrase editor tab before running Preview or Fill.');
+  if (!isSupportedEditorUrl(tab.url)) {
+    console.info(DEBUG_PREFIX, 'Rejected active tab for CAT run.', { url: tab.url });
+    throw new Error('Open a Phrase, memoQ, or GientTrans editor tab before running Preview, Fill, or Export.');
   }
 
   await executeScript(tab.id, ['content-script.js'], { allFrames: true });
 
   const frames = await getAllFrames(tab.id);
   const editorFrame = frames.find((frame) => isMemsourceEditorFrameUrl(frame.url));
+  console.info(DEBUG_PREFIX, 'Prepared editor tab for CAT run.', {
+    tabId: tab.id,
+    url: tab.url,
+    platform: isGientTransUrl(tab.url) ? 'gientrans' : isMemoqUrl(tab.url) ? 'memoq' : 'phrase',
+    frameId: editorFrame?.frameId ?? null
+  });
 
   return {
     ...tab,
@@ -204,7 +196,12 @@ async function assertNoActiveRun(action: string): Promise<void> {
     return;
   }
 
-  const activeTaskLabel = state.runState.kind === 'preview' ? 'Preview' : 'Fill';
+  const activeTaskLabel =
+    state.runState.kind === 'preview'
+      ? 'Preview'
+      : state.runState.kind === 'export'
+        ? 'Export'
+        : 'Fill';
   throw new Error(`${activeTaskLabel} is already running. Stop it before ${action}.`);
 }
 
@@ -240,6 +237,11 @@ async function getPopupState(): Promise<PopupState> {
     fillOptions: state.fillOptions,
     runState: state.runState
   };
+}
+
+function createSourceExportFileName(): string {
+  const date = new Date().toISOString().slice(0, 10);
+  return `memoq-sources-${date}.xlsx`;
 }
 
 async function withAttachedDebugger(
@@ -436,6 +438,61 @@ async function handleMessage(
       }
     }
 
+    case 'EXPORT_SOURCES': {
+      const state = await readRuntimeState();
+      if (isRunActive(state.runState)) {
+        throw new Error('Another task is already running. Stop it before starting Export.');
+      }
+
+      const tab = await ensurePhraseTab();
+      const runState = createRunningRunState('export', tab);
+      await writeRuntimeState({ runState });
+
+      try {
+        const response = await sendTabMessage<
+          ContentRequest,
+          ApiResponse<PageSegment[]>
+        >(
+          tab.id,
+          {
+            type: 'CONTENT_SCAN',
+            payload: {
+              runId: runState.runId ?? '',
+              maxPasses: EXPORT_SCAN_MAX_PASSES,
+              maxSegments: EXPORT_SCAN_MAX_SEGMENTS,
+              scanFromTop: true
+            }
+          },
+          tab.frameId ? { frameId: tab.frameId } : undefined
+        );
+
+        if (!response.ok) {
+          throw new Error(response.error);
+        }
+
+        const workbookBytes = buildSourceExportWorkbook(response.data);
+        const result: ExportSourcesResult = {
+          fileName: createSourceExportFileName(),
+          bytes: Array.from(workbookBytes),
+          segmentCount: response.data.length
+        };
+
+        await finalizeRunState(runState.runId ?? '', {
+          message: `Exported ${result.segmentCount} source segment(s).`,
+          scannedCount: result.segmentCount
+        });
+
+        return { ok: true, data: result };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Export failed.';
+        await finalizeRunState(runState.runId ?? '', {
+          message: message === STOP_ERROR_MESSAGE ? 'Stopped.' : message,
+          statusKind: message === STOP_ERROR_MESSAGE ? 'default' : 'error'
+        });
+        throw error;
+      }
+    }
+
     case 'RUN_FILL': {
       const state = await readRuntimeState();
       if (!state.translationEntries.length) {
@@ -468,7 +525,14 @@ async function handleMessage(
             runId: runState.runId ?? '',
             entries: state.translationEntries,
             fillOptions,
-            plannedFillCount
+            plannedFillCount,
+            ...(isMemoqUrl(tab.url)
+              ? {
+                  maxPasses: EXPORT_SCAN_MAX_PASSES,
+                  maxSegments: EXPORT_SCAN_MAX_SEGMENTS,
+                  scanFromTop: true
+                }
+              : {})
           }
         }, tab.frameId ? { frameId: tab.frameId } : undefined);
 
@@ -484,7 +548,9 @@ async function handleMessage(
         });
         await finalizeRunState(runState.runId ?? '', {
           message:
-            result.stoppedByAutoStop && result.autoStopAfterFilledCount !== null
+            result.stopReason
+              ? result.stopReason
+              : result.stoppedByAutoStop && result.autoStopAfterFilledCount !== null
               ? `Filled ${result.filledCount} segment(s) and auto-stopped at ${result.autoStopAfterFilledCount}.`
               : `Filled ${result.filledCount} segment(s).`,
           filledCount: result.filledCount,

@@ -1,9 +1,20 @@
+import { normalizeGientTransInlineMarkup } from './gientrans-markup.ts';
+
 export function extractPlaceholderTokens(input: string): string[] {
   const tokens: Array<{ index: number; token: string }> = [];
-  const patterns = [/\{[^{}]+\}/g, /<\/?[\w-]+(?:\s+[^<>]*)?>/g, /%[sd]/g];
+  const normalizedInput = normalizeGientTransInlineMarkup(input);
+  const patterns = [
+    /\{\d+>/g,
+    /<\d+\}/g,
+    /\{[^{}<>]+\}/g,
+    /❮[^❮❯]+❯/g,
+    /\\n/g,
+    /<\/?[\w-]+(?:\s+[^<>]*)?>/g,
+    /%[sd]/g
+  ];
 
   for (const pattern of patterns) {
-    for (const match of input.matchAll(pattern)) {
+    for (const match of normalizedInput.matchAll(pattern)) {
       tokens.push({
         index: match.index ?? 0,
         token: match[0]
@@ -26,4 +37,3 @@ export function placeholdersMatch(source: string, target: string): boolean {
 
   return sourceTokens.every((token, index) => token === targetTokens[index]);
 }
-

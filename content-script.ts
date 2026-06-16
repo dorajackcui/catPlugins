@@ -4,9 +4,20 @@ import { ContentScriptDomHelpers } from './content-script-dom.ts';
 import type { RuntimeSegment, ScrollContext } from './content-script-dom.ts';
 import { normalizeFillOptions } from './fill-options.ts';
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFill } from './fill-throttle.ts';
+import { GientTransAdapter } from './gientrans-adapter.ts';
 import { MemoqAdapter } from './memoq-adapter.ts';
 import { PhraseAdapter } from './phrase-adapter.ts';
-import { hasRepeatedSyntheticSignature, isRecentSyntheticDuplicate } from './scan-dedupe.ts';
+import {
+  hasRepeatedSyntheticSignature,
+  isRecentSyntheticDuplicate,
+  shouldRescanAfterSegmentFill,
+  shouldStopScanBeforeNextScroll
+} from './scan-dedupe.ts';
+import {
+  filterSegmentsFromStartMarker,
+  findStartSegmentIndex,
+  type StartMarker
+} from './start-marker.ts';
 import type {
   ApiResponse,
   BackgroundRequest,
@@ -23,23 +34,32 @@ import { delay, normalizeText } from './utils.ts';
 declare global {
   interface Window {
     __phraseBulkFillListenerBound?: boolean;
+    __phraseBulkFillStartMarker?: StartMarker;
+    __phraseBulkFillStartMarkerBound?: boolean;
     __phraseBulkFillStopRequested?: boolean;
   }
 }
 
-const MAX_SEGMENTS = 500;
-const MAX_PASSES = 160;
+const CONTENT_DEBUG_PREFIX = '[Phrase Bulk Fill]';
+const DEFAULT_MAX_SEGMENTS = 500;
+const DEFAULT_MAX_PASSES = 160;
 const DEFAULT_SCAN_DELAY_MS = 260;
 const MEMOQ_SCAN_DELAY_MS = 120;
 const MEMOQ_SYNTHETIC_SCAN_DELAY_MS = 160;
 const DEFAULT_INTER_FILL_DELAY_MS = 180;
-const MEMOQ_INTER_FILL_DELAY_MS = 40;
+const MEMOQ_INTER_FILL_DELAY_MS = 320;
 const DEFAULT_SCROLL_SETTLE_DELAY_MS = 80;
 const MEMOQ_SCROLL_SETTLE_DELAY_MS = 35;
 const SCROLL_RATIO = 0.85;
+const START_MARKER_MAX_AGE_MS = 30 * 60 * 1000;
+const GIENTRANS_START_TARGET_SELECTOR = 'td.target-cell pre.edit__input[editortype="target"]';
+const GIENTRANS_START_TARGET_CELL_SELECTOR = 'td.target-cell';
+const PHRASE_START_TARGET_SELECTOR = '.twe_target';
+const MEMOQ_START_CELL_SELECTOR = '.editor-cell';
 
 const helpers = new ContentScriptDomHelpers();
 const memoqAdapter = new MemoqAdapter(helpers);
+const gientransAdapter = new GientTransAdapter(helpers);
 const phraseAdapter = new PhraseAdapter(helpers);
 const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 
@@ -61,7 +81,14 @@ async function reportRunProgress(
 }
 
 class PlatformDomAdapter {
-  async scanSegments(runId: string): Promise<PageSegment[]> {
+  async scanSegments(
+    runId: string,
+    options?: {
+      maxPasses?: number;
+      maxSegments?: number;
+      scanFromTop?: boolean;
+    }
+  ): Promise<PageSegment[]> {
     this.resetStopState();
     let scannedCount = 0;
     const runtimeSegments = await this.collectSegments(
@@ -72,14 +99,16 @@ class PlatformDomAdapter {
         }
       },
       {
-        restoreScrollPosition: true
+        maxPasses: normalizePositiveInteger(options?.maxPasses, DEFAULT_MAX_PASSES),
+        maxSegments: normalizePositiveInteger(options?.maxSegments, DEFAULT_MAX_SEGMENTS),
+        restoreScrollPosition: true,
+        scanFromTop: options?.scanFromTop === true
       }
     );
     await reportRunProgress(runId, { scannedCount: runtimeSegments.length });
     return runtimeSegments.map(
       ({
         targetElement: _targetElement,
-        platform: _platform,
         scanElement: _scanElement,
         scanFingerprint: _scanFingerprint,
         ...segment
@@ -91,7 +120,13 @@ class PlatformDomAdapter {
     runId: string,
     entries: TranslationEntry[],
     fillOptions: FillOptions,
-    plannedFillCount: number | null
+    plannedFillCount: number | null,
+    options?: {
+      maxPasses?: number;
+      maxSegments?: number;
+      scanFromTop?: boolean;
+      startFromMarker?: boolean;
+    }
   ): Promise<FillRunResult> {
     this.resetStopState();
     const entryLookup = createEntryLookup(entries);
@@ -102,6 +137,7 @@ class PlatformDomAdapter {
       normalizedFillOptions.autoStopAfterFilledCount
     );
     let stoppedByAutoStop = false;
+    let stopReason: string | undefined;
 
     await this.collectSegments(
       async (segment) => {
@@ -122,6 +158,7 @@ class PlatformDomAdapter {
         }
 
         const outcome = await this.fillSegment(segment, item.translation);
+        let shouldRescanVisibleSnapshot = false;
         if (outcome.filled) {
           filledDomIds.push(outcome.domId);
           if (
@@ -147,13 +184,31 @@ class PlatformDomAdapter {
             filledCount: filledDomIds.length,
             plannedFillCount
           });
+
+          shouldRescanVisibleSnapshot = shouldRescanAfterSegmentFill(segment, outcome);
+        } else if (segment.platform === 'memoq') {
+          stopReason = this.describeMemoqStopReason(segment, outcome);
+          await reportRunProgress(runId, {
+            scannedCount,
+            filledCount: filledDomIds.length,
+            plannedFillCount,
+            message: stopReason
+          });
+          return 'stop';
         }
 
         this.assertNotStopped();
         await delay(this.getInterFillDelayMs(segment));
+        if (shouldRescanVisibleSnapshot) {
+          return 'rescan';
+        }
       },
       {
-        restoreScrollPosition: false
+        maxPasses: normalizePositiveInteger(options?.maxPasses, DEFAULT_MAX_PASSES),
+        maxSegments: normalizePositiveInteger(options?.maxSegments, DEFAULT_MAX_SEGMENTS),
+        restoreScrollPosition: false,
+        scanFromTop: options?.scanFromTop === true,
+        startFromMarker: options?.startFromMarker === true
       }
     );
 
@@ -163,14 +218,15 @@ class PlatformDomAdapter {
       filledCount: filledDomIds.length,
       filledDomIds,
       stoppedByAutoStop,
-      autoStopAfterFilledCount
+      autoStopAfterFilledCount,
+      stopReason
     };
   }
 
   private async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
     this.assertNotStopped();
     const currentValue = this.getEditableValue(segment);
-    if (normalizeText(currentValue)) {
+    if (segment.platform !== 'gientrans' && normalizeText(currentValue)) {
       return {
         domId: segment.domId,
         filled: false,
@@ -182,6 +238,10 @@ class PlatformDomAdapter {
       return memoqAdapter.fillSegment(segment, value);
     }
 
+    if (segment.platform === 'gientrans') {
+      return gientransAdapter.fillSegment(segment, value);
+    }
+
     return phraseAdapter.fillSegment(segment, value);
   }
 
@@ -190,20 +250,44 @@ class PlatformDomAdapter {
       return memoqAdapter.getEditableValue(segment.targetElement as HTMLElement);
     }
 
+    if (segment.platform === 'gientrans') {
+      return gientransAdapter.getEditableValue(segment.targetElement as HTMLElement);
+    }
+
     return phraseAdapter.getEditableValue(segment.targetElement);
   }
 
+  private describeMemoqStopReason(segment: RuntimeSegment, outcome: FillOutcome): string {
+    const rowLabel = segment.rowNumber ? `row ${segment.rowNumber}` : `segment ${segment.domId}`;
+    const sourcePreview =
+      segment.sourceRaw.length > 80
+        ? `${segment.sourceRaw.slice(0, 77)}...`
+        : segment.sourceRaw;
+    const reason = outcome.reason ?? 'memoQ fill could not be confirmed.';
+
+    return `Stopped at memoQ ${rowLabel}: ${reason} Source="${sourcePreview}"`;
+  }
+
   private async collectSegments(
-    onSegment?: (segment: RuntimeSegment) => Promise<'stop' | void> | 'stop' | void,
+    onSegment?: (
+      segment: RuntimeSegment
+    ) => Promise<'stop' | 'rescan' | void> | 'stop' | 'rescan' | void,
     options?: {
+      maxPasses?: number;
+      maxSegments?: number;
       restoreScrollPosition?: boolean;
+      scanFromTop?: boolean;
+      startFromMarker?: boolean;
     }
   ): Promise<RuntimeSegment[]> {
     const scrollContext = this.findScrollContext();
+    const maxPasses = options?.maxPasses ?? DEFAULT_MAX_PASSES;
+    const maxSegments = options?.maxSegments ?? DEFAULT_MAX_SEGMENTS;
     const shouldRestoreScrollPosition = options?.restoreScrollPosition ?? true;
     const scanDelayMs = this.getScanDelayMs(scrollContext);
     const scrollSettleDelayMs = this.getScrollSettleDelayMs(scrollContext);
     const seenIds = new Set<string>();
+    const startMarker = options?.startFromMarker ? readFreshStartMarker() : null;
     const recentSyntheticFingerprints = new WeakMap<
       Element,
       { fingerprint: string; pass: number }
@@ -213,18 +297,39 @@ class PlatformDomAdapter {
     let previousSyntheticSignature = '';
     let repeatedSyntheticSignaturePasses = 0;
     let stopRequestedByCallback = false;
+    let rescanRequestedByCallback = false;
+    let shouldApplyStartMarker = startMarker !== null;
+
+    if (options?.startFromMarker && !startMarker) {
+      console.info(CONTENT_DEBUG_PREFIX, 'fill:start-marker', {
+        marker: 'none'
+      });
+    }
 
     try {
+      if (options?.scanFromTop) {
+        scrollContext.scrollToTop();
+        await delay(scrollSettleDelayMs);
+      }
+
       let noNewSegmentsPasses = 0;
       let noMovementPasses = 0;
 
-      for (let pass = 0; pass < MAX_PASSES && segments.length < MAX_SEGMENTS; pass += 1) {
+      for (let pass = 0; pass < maxPasses && segments.length < maxSegments; pass += 1) {
         this.assertNotStopped();
         await delay(scanDelayMs);
         this.assertNotStopped();
 
         const countBefore = segments.length;
-        const visibleSegments = this.collectVisibleSegments(scrollContext);
+        let visibleSegments = this.collectVisibleSegments(scrollContext);
+        if (shouldApplyStartMarker && startMarker) {
+          const startIndex = findStartSegmentIndex(visibleSegments, startMarker);
+          if (startIndex !== null) {
+            visibleSegments = filterSegmentsFromStartMarker(visibleSegments, startMarker);
+          }
+          this.debugStartMarker(startMarker, startIndex, countBefore, visibleSegments);
+          shouldApplyStartMarker = false;
+        }
         let shouldSkipSyntheticPass = false;
         if (scrollContext.mode === 'synthetic') {
           const syntheticSignature = visibleSegments
@@ -291,11 +396,23 @@ class PlatformDomAdapter {
               stopRequestedByCallback = true;
               break;
             }
+            if (callbackResult === 'rescan') {
+              rescanRequestedByCallback = true;
+              break;
+            }
           }
         }
 
-        if (stopRequestedByCallback || segments.length >= MAX_SEGMENTS) {
+        if (stopRequestedByCallback || segments.length >= maxSegments) {
           break;
+        }
+
+        if (rescanRequestedByCallback) {
+          rescanRequestedByCallback = false;
+          previousSyntheticSignature = '';
+          repeatedSyntheticSignaturePasses = 0;
+          noNewSegmentsPasses = 0;
+          continue;
         }
 
         const discoveredCount = segments.length - countBefore;
@@ -305,22 +422,18 @@ class PlatformDomAdapter {
         const isAtBottom = scrollContext.isAtBottom();
         const scrollStep = Math.max(scrollContext.getHeight() * SCROLL_RATIO, 240);
 
-        if (isAtBottom && noNewSegmentsPasses >= 3) {
-          break;
-        }
-
         if (
-          scrollContext.mode === 'synthetic' &&
-          (noNewSegmentsPasses >= 4 || repeatedSyntheticSignaturePasses >= 2)
+          shouldStopScanBeforeNextScroll({
+            scrollMode: scrollContext.mode,
+            isAtBottom,
+            noNewSegmentsPasses,
+            repeatedSyntheticSignaturePasses
+          })
         ) {
           break;
         }
 
-        if (!isAtBottom) {
-          scrollContext.scrollBy(scrollStep);
-        } else {
-          scrollContext.scrollBy(Math.max(scrollStep / 2, 120));
-        }
+        scrollContext.scrollBy(scrollStep);
 
         await delay(scrollSettleDelayMs);
         this.assertNotStopped();
@@ -377,12 +490,18 @@ class PlatformDomAdapter {
       return memoqSegments;
     }
 
+    const gientransSegments = gientransAdapter.collectVisibleSegments(scrollContext);
+    if (gientransSegments.length > 0) {
+      return gientransSegments;
+    }
+
     return phraseAdapter.collectVisibleSegments(scrollContext);
   }
 
   private findScrollContext(): ScrollContext {
     return (
       memoqAdapter.findScrollContext() ??
+      gientransAdapter.findScrollContext() ??
       phraseAdapter.findScrollContext() ??
       helpers.toWindowScrollContext()
     );
@@ -413,6 +532,23 @@ class PlatformDomAdapter {
       ? DEFAULT_SCROLL_SETTLE_DELAY_MS
       : MEMOQ_SCROLL_SETTLE_DELAY_MS;
   }
+
+  private debugStartMarker(
+    marker: StartMarker,
+    startIndex: number | null,
+    countBefore: number,
+    visibleSegments: RuntimeSegment[]
+  ): void {
+    console.info(CONTENT_DEBUG_PREFIX, 'fill:start-marker', {
+      markerDomId: marker.domId ?? null,
+      markerAgeMs: marker.setAt ? Date.now() - marker.setAt : null,
+      matchedStartIndex: startIndex,
+      skippedVisibleSegments: startIndex ?? 0,
+      scannedBeforeMarker: countBefore,
+      firstVisibleAfterMarker: visibleSegments[0]?.domId ?? null,
+      firstVisibleAfterMarkerRow: visibleSegments[0]?.rowNumber ?? null
+    });
+  }
 }
 
 const adapter = new PlatformDomAdapter();
@@ -420,7 +556,11 @@ const adapter = new PlatformDomAdapter();
 async function handleRequest(request: ContentRequest): Promise<ApiResponse<unknown>> {
   switch (request.type) {
     case 'CONTENT_SCAN': {
-      const segments = await adapter.scanSegments(request.payload.runId);
+      const segments = await adapter.scanSegments(request.payload.runId, {
+        maxPasses: request.payload.maxPasses,
+        maxSegments: request.payload.maxSegments,
+        scanFromTop: request.payload.scanFromTop
+      });
       return { ok: true, data: segments };
     }
 
@@ -429,7 +569,13 @@ async function handleRequest(request: ContentRequest): Promise<ApiResponse<unkno
         request.payload.runId,
         request.payload.entries,
         normalizeFillOptions(request.payload?.fillOptions),
-        request.payload?.plannedFillCount ?? null
+        request.payload?.plannedFillCount ?? null,
+        {
+          maxPasses: request.payload.maxPasses,
+          maxSegments: request.payload.maxSegments,
+          scanFromTop: request.payload.scanFromTop,
+          startFromMarker: true
+        }
       );
       return { ok: true, data: result };
     }
@@ -452,6 +598,147 @@ function normalizeAutoStopAfterFilledCount(value: number | null | undefined): nu
 
   return Math.floor(value);
 }
+
+function normalizePositiveInteger(value: number | null | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) {
+    return fallback;
+  }
+
+  return Math.floor(value);
+}
+
+function bindStartMarkerListeners(): void {
+  if (window.__phraseBulkFillStartMarkerBound) {
+    return;
+  }
+
+  for (const eventType of ['pointerdown', 'mousedown', 'focusin']) {
+    document.addEventListener(eventType, rememberStartMarkerFromEvent, true);
+  }
+
+  window.__phraseBulkFillStartMarkerBound = true;
+}
+
+function rememberStartMarkerFromEvent(event: Event): void {
+  if (!(event.target instanceof Element)) {
+    return;
+  }
+
+  const targetElement = resolveStartMarkerTargetElement(event.target);
+  if (!targetElement) {
+    if (isEditorSurfaceElement(event.target)) {
+      window.__phraseBulkFillStartMarker = undefined;
+    }
+    return;
+  }
+
+  window.__phraseBulkFillStartMarker = createStartMarker(targetElement);
+}
+
+function readFreshStartMarker(): StartMarker | null {
+  const marker = window.__phraseBulkFillStartMarker;
+  if (marker) {
+    if (!marker.setAt || Date.now() - marker.setAt <= START_MARKER_MAX_AGE_MS) {
+      return marker;
+    }
+
+    window.__phraseBulkFillStartMarker = undefined;
+  }
+
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof Element)) {
+    return null;
+  }
+
+  const targetElement = resolveStartMarkerTargetElement(activeElement);
+  if (!targetElement) {
+    return null;
+  }
+
+  const activeMarker = createStartMarker(targetElement);
+  window.__phraseBulkFillStartMarker = activeMarker;
+  return activeMarker;
+}
+
+function createStartMarker(targetElement: Element): StartMarker {
+  return {
+    targetElement,
+    domId: readLikelyTargetDomId(targetElement),
+    setAt: Date.now()
+  };
+}
+
+function resolveStartMarkerTargetElement(element: Element): Element | null {
+  const gientransTarget = element.closest<HTMLElement>(GIENTRANS_START_TARGET_SELECTOR);
+  if (gientransTarget) {
+    return gientransTarget;
+  }
+
+  const gientransTargetCell = element.closest<HTMLElement>(GIENTRANS_START_TARGET_CELL_SELECTOR);
+  const gientransCellTarget = gientransTargetCell?.querySelector<HTMLElement>(
+    GIENTRANS_START_TARGET_SELECTOR
+  );
+  if (gientransCellTarget) {
+    return gientransCellTarget;
+  }
+
+  const phraseTarget = element.closest<HTMLElement>(PHRASE_START_TARGET_SELECTOR);
+  if (phraseTarget) {
+    return phraseTarget;
+  }
+
+  const memoqCell = element.closest<HTMLElement>(MEMOQ_START_CELL_SELECTOR);
+  if (memoqCell) {
+    return memoqCell;
+  }
+
+  return null;
+}
+
+function readLikelyTargetDomId(targetElement: Element): string | null {
+  const gientransTarget =
+    targetElement.matches(GIENTRANS_START_TARGET_SELECTOR)
+      ? targetElement
+      : targetElement.querySelector(GIENTRANS_START_TARGET_SELECTOR);
+  const gientransSegmentId = gientransTarget?.getAttribute('segid');
+  if (gientransSegmentId) {
+    return gientransSegmentId;
+  }
+
+  const phraseRow = targetElement.closest<HTMLElement>(
+    '.segment-row[role="row"], .segment-row, .twe_segment'
+  );
+  return firstNonEmptyAttribute(phraseRow, ['id', 'data-position', 'data-row']) ??
+    firstNonEmptyAttribute(targetElement, ['id', 'data-position', 'data-row']);
+}
+
+function firstNonEmptyAttribute(
+  element: Element | null | undefined,
+  names: string[]
+): string | null {
+  if (!element) {
+    return null;
+  }
+
+  for (const name of names) {
+    const value = element.getAttribute(name);
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function isEditorSurfaceElement(element: Element): boolean {
+  return Boolean(
+    element.closest(
+      '#o-editor.online-editor, .editor__table, .segment-row, .twe_segment, .editor-cell'
+    )
+  );
+}
+
+bindStartMarkerListeners();
 
 if (!window.__phraseBulkFillListenerBound) {
   chrome.runtime.onMessage.addListener(

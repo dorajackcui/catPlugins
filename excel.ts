@@ -1,6 +1,6 @@
-import { read, utils as xlsxUtils } from 'xlsx';
+import { read, utils as xlsxUtils, write } from 'xlsx';
 
-import type { ParseExcelResult, TranslationEntry } from './types.ts';
+import type { PageSegment, ParseExcelResult, TranslationEntry } from './types.ts';
 import { normalizeText, toText } from './utils.ts';
 
 interface IndexedRow {
@@ -15,20 +15,27 @@ function normalizeHeader(value: unknown): string {
 function resolveColumnMapping(rows: IndexedRow[]): {
   sourceIndex: number;
   targetIndex: number;
+  rowNumberIndex: number;
+  occurrenceIndexIndex: number;
   dataRows: IndexedRow[];
 } {
   const [headerRow] = rows;
-  const sourceIndex = (headerRow?.values ?? []).findIndex(
-    (cell) => normalizeHeader(cell) === 'source'
+  const headers = headerRow?.values ?? [];
+  const sourceIndex = headers.findIndex((cell) => normalizeHeader(cell) === 'source');
+  const targetIndex = headers.findIndex((cell) => normalizeHeader(cell) === 'target');
+  const rowNumberIndex = headers.findIndex((cell) =>
+    ['rownumber', 'row', 'segmentnumber', 'segment'].includes(normalizeHeader(cell))
   );
-  const targetIndex = (headerRow?.values ?? []).findIndex(
-    (cell) => normalizeHeader(cell) === 'target'
+  const occurrenceIndexIndex = headers.findIndex((cell) =>
+    ['occurrenceindex', 'occurrence'].includes(normalizeHeader(cell))
   );
 
   if (sourceIndex !== -1 && targetIndex !== -1) {
     return {
       sourceIndex,
       targetIndex,
+      rowNumberIndex,
+      occurrenceIndexIndex,
       dataRows: rows.slice(1)
     };
   }
@@ -36,8 +43,26 @@ function resolveColumnMapping(rows: IndexedRow[]): {
   return {
     sourceIndex: 0,
     targetIndex: 1,
+    rowNumberIndex: -1,
+    occurrenceIndexIndex: -1,
     dataRows: rows
   };
+}
+
+function normalizeRowNumber(value: unknown): string | undefined {
+  const rowNumber = toText(value).trim().replace(/\.$/, '');
+  return /^\d+$/.test(rowNumber) ? rowNumber : undefined;
+}
+
+function normalizeOccurrenceIndex(value: unknown): number | null {
+  const occurrenceIndex = Number.parseInt(toText(value).trim(), 10);
+  return Number.isFinite(occurrenceIndex) && occurrenceIndex > 0
+    ? occurrenceIndex
+    : null;
+}
+
+function toRawCellText(value: unknown): string {
+  return toText(value).replace(/^[\t\n\r ]+|[\t\n\r ]+$/g, '');
 }
 
 export function parseExcelBuffer(
@@ -71,29 +96,40 @@ export function parseExcelBuffer(
   const {
     sourceIndex,
     targetIndex,
+    rowNumberIndex,
+    occurrenceIndexIndex,
     dataRows
   } = resolveColumnMapping(visibleRows);
   const occurrences = new Map<string, number>();
   const entries: TranslationEntry[] = [];
 
-  dataRows.forEach(({ rowNumber, values }) => {
-    const sourceRaw = normalizeText(toText(values[sourceIndex]));
-    const targetRaw = normalizeText(toText(values[targetIndex]));
+  dataRows.forEach(({ rowNumber: excelRowIndex, values }) => {
+    const sourceRaw = toRawCellText(values[sourceIndex]);
+    const targetRaw = toRawCellText(values[targetIndex]);
+    const exportedRowNumber =
+      rowNumberIndex >= 0
+        ? normalizeRowNumber(values[rowNumberIndex])
+        : undefined;
 
-    if (!sourceRaw || !targetRaw) {
+    const sourceNormalized = normalizeText(sourceRaw);
+    if (!sourceNormalized || !normalizeText(targetRaw)) {
       return;
     }
 
-    const sourceNormalized = sourceRaw;
-    const nextOccurrence = (occurrences.get(sourceNormalized) ?? 0) + 1;
-    occurrences.set(sourceNormalized, nextOccurrence);
+    const computedOccurrence = (occurrences.get(sourceNormalized) ?? 0) + 1;
+    occurrences.set(sourceNormalized, computedOccurrence);
+    const exportedOccurrence =
+      occurrenceIndexIndex >= 0
+        ? normalizeOccurrenceIndex(values[occurrenceIndexIndex])
+        : null;
 
     entries.push({
-      rowIndex: rowNumber,
+      rowIndex: excelRowIndex,
+      rowNumber: exportedRowNumber,
       sourceRaw,
       sourceNormalized,
       targetRaw,
-      occurrenceIndex: nextOccurrence
+      occurrenceIndex: exportedOccurrence ?? computedOccurrence
     });
   });
 
@@ -106,4 +142,32 @@ export function parseExcelBuffer(
       sheetName
     }
   };
+}
+
+export function buildSourceExportWorkbook(segments: PageSegment[]): Uint8Array {
+  const workbook = xlsxUtils.book_new();
+  const rows: Array<Array<string | number>> = [
+    ['rowNumber', 'source', 'target', 'occurrenceIndex'],
+    ...segments.map((segment) => [
+      segment.rowNumber ?? '',
+      segment.sourceRaw,
+      segment.targetRaw,
+      segment.occurrenceIndex
+    ])
+  ];
+  const worksheet = xlsxUtils.aoa_to_sheet(rows);
+  const worksheetWithColumns = worksheet as typeof worksheet & {
+    '!cols'?: Array<{ wch: number }>;
+  };
+
+  worksheetWithColumns['!cols'] = [
+    { wch: 12 },
+    { wch: 60 },
+    { wch: 60 },
+    { wch: 16 }
+  ];
+  xlsxUtils.book_append_sheet(workbook, worksheet, 'Sources');
+
+  const buffer = write(workbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer | Uint8Array;
+  return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
 }

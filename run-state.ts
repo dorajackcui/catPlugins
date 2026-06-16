@@ -36,7 +36,7 @@ function normalizePhase(value: RunPhase | null | undefined): RunPhase {
 }
 
 function normalizeKind(value: RunKind | null | undefined): RunKind | null {
-  return value === 'preview' || value === 'fill' ? value : null;
+  return value === 'preview' || value === 'fill' || value === 'export' ? value : null;
 }
 
 function normalizeStatusKind(value: StatusKind | null | undefined): StatusKind {
@@ -94,6 +94,10 @@ export function describeRunState(runState?: RunState | null): string {
       return 'Stopping fill...';
     }
 
+    if (normalizedRunState.kind === 'export') {
+      return 'Stopping export...';
+    }
+
     return 'Stopping current task...';
   }
 
@@ -108,6 +112,10 @@ export function describeRunState(runState?: RunState | null): string {
           ? `Filled ${normalizedRunState.filledCount} / ${normalizedRunState.plannedFillCount} segment(s)`
           : `Filled ${normalizedRunState.filledCount} segment(s)`;
       return `${fillProgress}; scanned ${normalizedRunState.scannedCount}.`;
+    }
+
+    if (normalizedRunState.kind === 'export') {
+      return `Export running. Scanned ${normalizedRunState.scannedCount} segment(s)...`;
     }
 
     return 'Task running...';

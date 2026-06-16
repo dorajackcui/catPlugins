@@ -18,12 +18,14 @@ export interface ScrollContext {
   getTop(): number;
   getHeight(): number;
   scrollBy(delta: number): void;
+  scrollToTop(): void;
   isAtBottom(): boolean;
   restore(): void;
 }
 
 export interface RuntimeSegment {
   domId: string;
+  rowNumber?: string;
   sourceRaw: string;
   sourceNormalized: string;
   occurrenceIndex: number;
@@ -31,7 +33,7 @@ export interface RuntimeSegment {
   isEmptyTarget: boolean;
   placeholderTokens: string[];
   targetElement: EditableElement;
-  platform: 'memoq' | 'phrase' | 'generic';
+  platform: 'memoq' | 'gientrans' | 'phrase' | 'generic';
   scanElement?: Element;
   scanFingerprint?: string;
 }
@@ -94,6 +96,7 @@ export class ContentScriptDomHelpers {
       getTop: () => container.scrollTop,
       getHeight: () => container.clientHeight || window.innerHeight,
       scrollBy: (delta) => container.scrollBy({ top: delta, behavior: 'auto' }),
+      scrollToTop: () => container.scrollTo({ top: 0, behavior: 'auto' }),
       isAtBottom: () =>
         container.scrollTop + container.clientHeight >= container.scrollHeight - 8,
       restore: () => container.scrollTo({ top: initialTop, behavior: 'auto' })
@@ -108,6 +111,7 @@ export class ContentScriptDomHelpers {
       getTop: () => window.scrollY,
       getHeight: () => window.innerHeight,
       scrollBy: (delta) => window.scrollBy({ top: delta, behavior: 'auto' }),
+      scrollToTop: () => window.scrollTo({ top: 0, behavior: 'auto' }),
       isAtBottom: () =>
         window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 8,
       restore: () => window.scrollTo({ top: initialTop, behavior: 'auto' })
@@ -323,12 +327,20 @@ export class ContentScriptDomHelpers {
   }
 
   dispatchMouseSequence(target: HTMLElement, eventNames: string[]): void {
+    const rect = target.getBoundingClientRect();
+    const clientX = rect.left + rect.width / 2;
+    const clientY = rect.top + rect.height / 2;
+
     for (const eventName of eventNames) {
       target.dispatchEvent(
         new MouseEvent(eventName, {
           bubbles: true,
           cancelable: true,
-          view: window
+          view: window,
+          clientX,
+          clientY,
+          screenX: window.screenX + clientX,
+          screenY: window.screenY + clientY
         })
       );
     }

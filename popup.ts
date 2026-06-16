@@ -4,6 +4,7 @@ import { describeRunState, isRunActive, normalizeRunState } from './run-state.ts
 import type {
   ApiResponse,
   BackgroundRequest,
+  ExportSourcesResult,
   FillOptions,
   FillRunResult,
   PopupState,
@@ -19,6 +20,7 @@ let refreshTimerId: number | null = null;
 
 const uploadButton = document.querySelector<HTMLButtonElement>('#upload-button');
 const fileInput = document.querySelector<HTMLInputElement>('#file-input');
+const exportButton = document.querySelector<HTMLButtonElement>('#export-button');
 const previewButton = document.querySelector<HTMLButtonElement>('#preview-button');
 const fillButton = document.querySelector<HTMLButtonElement>('#fill-button');
 const stopButton = document.querySelector<HTMLButtonElement>('#stop-button');
@@ -42,6 +44,7 @@ async function sendMessage<T>(message: BackgroundRequest): Promise<T> {
 function setBusy(nextBusy: boolean): void {
   state.busy = nextBusy;
   if (uploadButton) uploadButton.disabled = nextBusy;
+  if (exportButton) exportButton.disabled = nextBusy;
   if (previewButton) previewButton.disabled = nextBusy;
   if (fillButton) fillButton.disabled = nextBusy;
   if (stopButton) stopButton.disabled = !nextBusy || state.stopping;
@@ -137,6 +140,7 @@ function renderFileInfo(popupState: PopupState): void {
 
   if (!popupState.uploadMeta) {
     fileInfo.textContent = 'No Excel file uploaded yet.';
+    if (exportButton) exportButton.disabled = state.busy;
     if (previewButton) previewButton.disabled = true;
     if (fillButton) fillButton.disabled = true;
     if (stopButton) stopButton.disabled = true;
@@ -144,6 +148,7 @@ function renderFileInfo(popupState: PopupState): void {
   }
 
   fileInfo.textContent = `${popupState.uploadMeta.fileName} · ${popupState.uploadMeta.entryCount} rows · sheet ${popupState.uploadMeta.sheetName}`;
+  if (exportButton) exportButton.disabled = state.busy;
   if (previewButton) previewButton.disabled = state.busy;
   if (fillButton) fillButton.disabled = state.busy;
   if (stopButton) stopButton.disabled = !state.busy || state.stopping;
@@ -259,6 +264,42 @@ async function handlePreview(): Promise<void> {
   }
 }
 
+function downloadExportFile(result: ExportSourcesResult): void {
+  const blob = new Blob([Uint8Array.from(result.bytes)], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = result.fileName;
+  link.style.display = 'none';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function handleExportSources(): Promise<void> {
+  try {
+    setBusy(true);
+    setStopping(false);
+    renderStatus('Exporting source segments...');
+    startRefreshLoop();
+    const result = await sendMessage<ExportSourcesResult>({
+      type: 'EXPORT_SOURCES'
+    });
+    downloadExportFile(result);
+    renderStatus(`Exported ${result.segmentCount} source segment(s).`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Export failed.';
+    renderStatus(message === STOP_ERROR_MESSAGE ? 'Stopped.' : message, message === STOP_ERROR_MESSAGE ? 'default' : 'error');
+  } finally {
+    setStopping(false);
+    setBusy(false);
+    await refreshState();
+  }
+}
+
 async function handleFill(): Promise<void> {
   try {
     const fillOptions = readFillOptions();
@@ -271,11 +312,12 @@ async function handleFill(): Promise<void> {
       payload: { fillOptions }
     });
     renderPreview(result.preview);
-    renderStatus(
-      result.stoppedByAutoStop && result.autoStopAfterFilledCount !== null
+    const message =
+      result.stopReason ??
+      (result.stoppedByAutoStop && result.autoStopAfterFilledCount !== null
         ? `Filled ${result.filledCount} segment(s) and auto-stopped at ${result.autoStopAfterFilledCount}.`
-        : `Filled ${result.filledCount} segment(s).`
-    );
+        : `Filled ${result.filledCount} segment(s).`);
+    renderStatus(message, result.stopReason ? 'error' : 'default');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Fill failed.';
     renderStatus(message === STOP_ERROR_MESSAGE ? 'Stopped.' : message, message === STOP_ERROR_MESSAGE ? 'default' : 'error');
@@ -304,6 +346,9 @@ async function handleStop(): Promise<void> {
 uploadButton?.addEventListener('click', () => fileInput?.click());
 fileInput?.addEventListener('change', (event) => {
   void handleUpload(event);
+});
+exportButton?.addEventListener('click', () => {
+  void handleExportSources();
 });
 previewButton?.addEventListener('click', () => {
   void handlePreview();

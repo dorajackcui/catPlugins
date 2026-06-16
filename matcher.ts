@@ -7,20 +7,41 @@ import type {
   PreviewResult,
   TranslationEntry
 } from './types.ts';
+import {
+  normalizeGientTransInlineMarkup,
+  stripGientTransInlineMarkup
+} from './gientrans-markup.ts';
+import { normalizeText } from './utils.ts';
 
 export function buildMatchKey(sourceNormalized: string, occurrenceIndex: number): string {
-  return `${sourceNormalized}::${occurrenceIndex}`;
+  return `source:${sourceNormalized}::${occurrenceIndex}`;
+}
+
+function buildRowNumberMatchKey(rowNumber: string): string {
+  return `row:${rowNumber}`;
 }
 
 export function createEntryLookup(
   entries: TranslationEntry[]
 ): Map<string, TranslationEntry> {
-  return new Map(
-    entries.map((entry) => [
-      buildMatchKey(entry.sourceNormalized, entry.occurrenceIndex),
-      entry
-    ])
-  );
+  const lookup = new Map<string, TranslationEntry>();
+
+  for (const entry of entries) {
+    if (entry.rowNumber) {
+      lookup.set(buildRowNumberMatchKey(entry.rowNumber), entry);
+    }
+
+    addSourceLookupEntry(lookup, entry, entry.sourceNormalized);
+
+    const canonicalGientTransSource = normalizeText(
+      normalizeGientTransInlineMarkup(entry.sourceRaw)
+    );
+    addSourceLookupEntry(lookup, entry, canonicalGientTransSource);
+
+    addSourceLookupEntry(lookup, entry, stripGientTransInlineMarkup(entry.sourceRaw));
+  }
+
+  return lookup;
 }
 
 export function classifySegment(
@@ -29,9 +50,11 @@ export function classifySegment(
   fillOptions?: FillOptions | null
 ): PreviewItem {
   const normalizedFillOptions = normalizeFillOptions(fillOptions);
-  const entry = entryLookup.get(
-    buildMatchKey(segment.sourceNormalized, segment.occurrenceIndex)
-  );
+  const entry =
+    segment.rowNumber
+      ? entryLookup.get(buildRowNumberMatchKey(segment.rowNumber)) ??
+        findEntryBySource(entryLookup, segment)
+      : findEntryBySource(entryLookup, segment);
 
   if (!entry) {
     return {
@@ -41,7 +64,7 @@ export function classifySegment(
     };
   }
 
-  if (!segment.isEmptyTarget) {
+  if (!segment.isEmptyTarget && segment.platform !== 'gientrans') {
     return {
       ...segment,
       status: 'alreadyTranslated',
@@ -70,6 +93,56 @@ export function classifySegment(
     translation: entry.targetRaw,
     excelRowIndex: entry.rowIndex
   };
+}
+
+function findEntryBySource(
+  entryLookup: Map<string, TranslationEntry>,
+  segment: PageSegment
+): TranslationEntry | undefined {
+  const exactEntry = entryLookup.get(
+    buildMatchKey(segment.sourceNormalized, segment.occurrenceIndex)
+  );
+  if (exactEntry) {
+    return exactEntry;
+  }
+
+  if (segment.platform !== 'gientrans') {
+    return undefined;
+  }
+
+  const canonicalGientTransSource = normalizeText(
+    normalizeGientTransInlineMarkup(segment.sourceRaw)
+  );
+  const canonicalEntry = entryLookup.get(
+    buildMatchKey(canonicalGientTransSource, segment.occurrenceIndex)
+  );
+  if (canonicalEntry) {
+    return canonicalEntry;
+  }
+
+  const sourceWithoutGientTransTags = stripGientTransInlineMarkup(segment.sourceRaw);
+  if (!sourceWithoutGientTransTags) {
+    return undefined;
+  }
+
+  return entryLookup.get(
+    buildMatchKey(sourceWithoutGientTransTags, segment.occurrenceIndex)
+  );
+}
+
+function addSourceLookupEntry(
+  lookup: Map<string, TranslationEntry>,
+  entry: TranslationEntry,
+  sourceNormalized: string
+): void {
+  if (!sourceNormalized) {
+    return;
+  }
+
+  const key = buildMatchKey(sourceNormalized, entry.occurrenceIndex);
+  if (!lookup.has(key)) {
+    lookup.set(key, entry);
+  }
 }
 
 export function summarizePreview(items: PreviewItem[]): PreviewResult {

@@ -1,5 +1,6 @@
 export interface TranslationEntry {
   rowIndex: number;
+  rowNumber?: string;
   sourceRaw: string;
   sourceNormalized: string;
   targetRaw: string;
@@ -8,12 +9,14 @@ export interface TranslationEntry {
 
 export interface PageSegment {
   domId: string;
+  rowNumber?: string;
   sourceRaw: string;
   sourceNormalized: string;
   occurrenceIndex: number;
   targetRaw: string;
   isEmptyTarget: boolean;
   placeholderTokens: string[];
+  platform?: 'memoq' | 'gientrans' | 'phrase' | 'generic';
 }
 
 export type PreviewItemStatus =
@@ -52,7 +55,7 @@ export interface FillOptions {
   validatePlaceholders: boolean;
 }
 
-export type RunKind = 'preview' | 'fill';
+export type RunKind = 'preview' | 'fill' | 'export';
 
 export type RunPhase = 'idle' | 'running' | 'stopping';
 
@@ -99,6 +102,13 @@ export interface FillRunResult {
   filledDomIds: string[];
   stoppedByAutoStop: boolean;
   autoStopAfterFilledCount: number | null;
+  stopReason?: string;
+}
+
+export interface ExportSourcesResult {
+  fileName: string;
+  bytes: number[];
+  segmentCount: number;
 }
 
 export type MemoqFillFailureCode =
@@ -197,6 +207,10 @@ export interface RunFillRequest {
   };
 }
 
+export interface ExportSourcesRequest {
+  type: 'EXPORT_SOURCES';
+}
+
 export interface StopRunRequest {
   type: 'STOP_RUN';
 }
@@ -245,6 +259,7 @@ export type BackgroundRequest =
   | ParseExcelRequest
   | RunPreviewRequest
   | RunFillRequest
+  | ExportSourcesRequest
   | StopRunRequest
   | GetStateRequest
   | SetFillOptionsRequest
@@ -256,6 +271,9 @@ export interface ContentScanRequest {
   type: 'CONTENT_SCAN';
   payload: {
     runId: string;
+    scanFromTop?: boolean;
+    maxPasses?: number;
+    maxSegments?: number;
   };
 }
 
@@ -266,6 +284,9 @@ export interface ContentFillRequest {
     entries: TranslationEntry[];
     fillOptions: FillOptions;
     plannedFillCount: number | null;
+    scanFromTop?: boolean;
+    maxPasses?: number;
+    maxSegments?: number;
   };
 }
 

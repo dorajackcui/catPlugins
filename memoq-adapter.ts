@@ -1,6 +1,7 @@
+import { runtimeSendMessage } from './chrome-api.ts';
 import { extractPlaceholderTokens } from './qa.ts';
-import type { FillOutcome } from './types.ts';
-import { delay, normalizeText, waitForNormalizedTextMatch } from './utils.ts';
+import type { ApiResponse, BackgroundRequest, FillOutcome } from './types.ts';
+import { delay, normalizeText } from './utils.ts';
 import type {
   ContentScriptDomHelpers,
   RuntimeSegment,
@@ -10,10 +11,105 @@ import type {
 const MEMOQ_CELL_SELECTOR = '.editor-cell';
 const MEMOQ_CONTENT_SELECTOR = '.content-container';
 const MEMOQ_HIDDEN_INPUT_SELECTOR = '#editorHiddenInput';
+const MEMOQ_ACCESSIBILITY_TEXTBOX_SELECTOR = 'textarea, input[type="text"]';
 const VISIBLE_SEGMENT_TOP_BUCKET_PX = 24;
-const MEMOQ_CONFIRM_ATTEMPTS = 4;
-const MEMOQ_CONFIRM_DELAY_MS = 50;
+const MEMOQ_COMMIT_CONFIRM_ATTEMPTS = 14;
+const MEMOQ_COMMIT_CONFIRM_DELAY_MS = 150;
 const MEMOQ_ACTIVATION_DELAY_MS = 20;
+
+type MemoqAccessibilityTextBoxLike = Pick<
+  HTMLInputElement | HTMLTextAreaElement,
+  'id' | 'disabled' | 'readOnly' | 'value' | 'textContent'
+>;
+
+interface MemoqCommitWaitResult {
+  confirmed: boolean;
+  lastCurrentTargetText: string;
+  lastOriginalTargetText: string;
+  rowLookupFound: boolean;
+}
+
+interface MemoqVisibleRowDiagnostic {
+  rowNumber?: string;
+  source: string;
+  target: string;
+}
+
+export function shouldUseMemoqAccessibilityTextBox(
+  textBox: MemoqAccessibilityTextBoxLike,
+  options: { requireWritable: boolean }
+): boolean {
+  if (textBox.id === 'editorHiddenInput') {
+    return false;
+  }
+
+  if (options.requireWritable && (textBox.disabled || textBox.readOnly)) {
+    return false;
+  }
+
+  return true;
+}
+
+export function readMemoqAccessibilityTextBoxValue(
+  textBox: Pick<HTMLInputElement | HTMLTextAreaElement, 'value' | 'textContent'>
+): string {
+  return normalizeText(textBox.value || textBox.textContent || '');
+}
+
+export function memoQAccessibilityTextToRenderedText(value: string): string {
+  return normalizeText(
+    value
+      .replace(/\{(\d+)>/g, '$1')
+      .replace(/<(\d+)\}/g, '$1')
+      .replace(/<(\d+)>/g, '$1')
+  );
+}
+
+export function isMemoqCommittedTargetText(cellText: string, value: string): boolean {
+  const committedText = normalizeText(cellText);
+  const expected = normalizeText(value);
+  const renderedExpected = memoQAccessibilityTextToRenderedText(value);
+
+  return (
+    committedText === expected ||
+    committedText === renderedExpected
+  );
+}
+
+export function formatMemoqInlineTag(className: string, tagText: string): string {
+  const tagId = normalizeText(tagText);
+  if (!tagId) {
+    return '';
+  }
+
+  if (className.includes('inline-open')) {
+    return `{${tagId}>`;
+  }
+
+  if (className.includes('inline-close')) {
+    return `<${tagId}}`;
+  }
+
+  return `<${tagId}>`;
+}
+
+export function chooseMemoqAccessibilityTextBoxes<T extends MemoqAccessibilityTextBoxLike>(
+  textBoxes: T[]
+): { source: T; target: T } | null {
+  const readable = textBoxes.filter((textBox) =>
+    shouldUseMemoqAccessibilityTextBox(textBox, { requireWritable: false })
+  );
+  const source = readable.find((textBox) => textBox.disabled || textBox.readOnly);
+  const target = readable.find((textBox) =>
+    shouldUseMemoqAccessibilityTextBox(textBox, { requireWritable: true })
+  );
+
+  if (!source || !target) {
+    return null;
+  }
+
+  return { source, target };
+}
 
 export class MemoqAdapter {
   constructor(private readonly helpers: ContentScriptDomHelpers) {}
@@ -72,14 +168,26 @@ export class MemoqAdapter {
   }
 
   getEditableValue(targetElement: HTMLElement): string {
+    if (targetElement.matches(MEMOQ_ACCESSIBILITY_TEXTBOX_SELECTOR)) {
+      return readMemoqAccessibilityTextBoxValue(
+        targetElement as HTMLInputElement | HTMLTextAreaElement
+      );
+    }
+
     const content = targetElement.querySelector<HTMLElement>(MEMOQ_CONTENT_SELECTOR) || targetElement;
-    return normalizeText(content.innerText || content.textContent || '');
+    return this.serializeMemoqContent(content);
   }
 
   async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
-    const target = segment.targetElement as HTMLElement;
-    await this.activateTarget(target);
-
+    const target =
+      this.findCurrentMemoqTargetCellByRowNumber(segment.rowNumber) ??
+      (segment.targetElement as HTMLElement);
+    const originalTarget = segment.targetElement as HTMLElement;
+    const currentTargetBefore = this.findCurrentMemoqTargetCellByRowNumber(segment.rowNumber);
+    const originalTargetBeforeText = this.readMemoqElementText(originalTarget);
+    const currentTargetBeforeText = currentTargetBefore
+      ? this.readMemoqElementText(currentTargetBefore)
+      : '';
     const hiddenInput = document.querySelector<HTMLInputElement>(MEMOQ_HIDDEN_INPUT_SELECTOR);
     if (!hiddenInput) {
       return {
@@ -89,12 +197,14 @@ export class MemoqAdapter {
       };
     }
 
+    await this.activateTarget(target);
     hiddenInput.focus();
 
+    let pasteWasHandled = false;
     try {
       const clipboardData = new DataTransfer();
       clipboardData.setData('text/plain', value);
-      hiddenInput.dispatchEvent(
+      pasteWasHandled = !hiddenInput.dispatchEvent(
         new ClipboardEvent('paste', {
           bubbles: true,
           cancelable: true,
@@ -105,32 +215,40 @@ export class MemoqAdapter {
       // Ignore environments where ClipboardEvent cannot be synthesized.
     }
 
-    if (typeof document.execCommand === 'function') {
+    if (!pasteWasHandled && typeof document.execCommand === 'function') {
       document.execCommand('insertText', false, value);
     }
 
     this.helpers.setNativeInputValue(hiddenInput, value);
     this.helpers.dispatchInput(hiddenInput, value, true);
     this.helpers.dispatchChange(hiddenInput);
-    this.helpers.dispatchTabNavigation(hiddenInput);
     this.helpers.dispatchBlur(hiddenInput);
 
-    const confirmed = await waitForNormalizedTextMatch(
-      () => this.getEditableValue(target),
+    const waitResult = await this.waitForCommittedTargetCellText(
+      target,
       value,
-      {
-        attempts: MEMOQ_CONFIRM_ATTEMPTS,
-        delayMs: MEMOQ_CONFIRM_DELAY_MS
-      }
+      segment.rowNumber
     );
+
+    const reason = waitResult.confirmed
+      ? undefined
+      : this.buildMemoqFillFailureReason({
+          segment,
+          value,
+          hiddenInput,
+          originalTargetBeforeText,
+          currentTargetBeforeText,
+          waitResult
+        });
+
+    if (reason) {
+      console.warn('[Phrase Bulk Fill] memoQ fill confirmation failed', reason);
+    }
 
     return {
       domId: segment.domId,
-      filled: confirmed,
-      reason:
-        confirmed
-          ? undefined
-          : 'Unable to confirm memoQ target update after writing.'
+      filled: waitResult.confirmed,
+      reason
     };
   }
 
@@ -173,13 +291,16 @@ export class MemoqAdapter {
     }
 
     const targetRaw = this.getEditableValue(targetCell);
+    const rowNumber = this.extractMemoqRowNumber(row, scrollContext);
     const domId =
+      rowNumber ||
       row.id ||
       row.getAttribute('data-row') ||
       `${sourceNormalized}::${Math.round(this.helpers.getAbsoluteTop(row, scrollContext))}`;
 
     return {
       domId,
+      rowNumber,
       sourceRaw,
       sourceNormalized,
       occurrenceIndex: 0,
@@ -191,6 +312,273 @@ export class MemoqAdapter {
       scanElement: row,
       scanFingerprint: `${sourceNormalized}::${normalizeText(targetRaw)}`
     };
+  }
+
+  private async waitForCommittedTargetCellText(
+    targetCell: HTMLElement,
+    value: string,
+    rowNumber?: string
+  ): Promise<MemoqCommitWaitResult> {
+    let lastCurrentTargetText = '';
+    let lastOriginalTargetText = '';
+    let rowLookupFound = false;
+
+    for (let attempt = 0; attempt < MEMOQ_COMMIT_CONFIRM_ATTEMPTS; attempt += 1) {
+      const currentTargetCell = this.findCurrentMemoqTargetCellByRowNumber(rowNumber);
+      rowLookupFound = currentTargetCell !== null;
+      const committedTargetCell = currentTargetCell ?? targetCell;
+      const committedText = this.readMemoqElementText(committedTargetCell);
+      lastCurrentTargetText = currentTargetCell ? committedText : '';
+      lastOriginalTargetText = this.readMemoqElementText(targetCell);
+
+      if (isMemoqCommittedTargetText(committedText, value)) {
+        return {
+          confirmed: true,
+          lastCurrentTargetText,
+          lastOriginalTargetText,
+          rowLookupFound
+        };
+      }
+
+      if (attempt < MEMOQ_COMMIT_CONFIRM_ATTEMPTS - 1) {
+        await delay(MEMOQ_COMMIT_CONFIRM_DELAY_MS);
+      }
+    }
+
+    return {
+      confirmed: false,
+      lastCurrentTargetText,
+      lastOriginalTargetText,
+      rowLookupFound
+    };
+  }
+
+  private buildMemoqFillFailureReason({
+    segment,
+    value,
+    hiddenInput,
+    originalTargetBeforeText,
+    currentTargetBeforeText,
+    waitResult
+  }: {
+    segment: RuntimeSegment;
+    value: string;
+    hiddenInput: HTMLInputElement;
+    originalTargetBeforeText: string;
+    currentTargetBeforeText: string;
+    waitResult: MemoqCommitWaitResult;
+  }): string {
+    const expectedRendered = memoQAccessibilityTextToRenderedText(value);
+    const currentTargetAfter =
+      this.findCurrentMemoqTargetCellByRowNumber(segment.rowNumber);
+    const visibleRows = this.collectVisibleRowDiagnostics(segment.rowNumber, 2)
+      .map((row) =>
+        `${row.rowNumber ?? '?'} src="${this.truncateDiagnostic(row.source)}" tgt="${this.truncateDiagnostic(row.target)}"`
+      )
+      .join(' | ');
+
+    return [
+      'Unable to confirm memoQ target update after writing.',
+      `row=${segment.rowNumber ?? segment.domId}`,
+      `source="${this.truncateDiagnostic(segment.sourceRaw)}"`,
+      `expected="${this.truncateDiagnostic(value)}"`,
+      `expectedRendered="${this.truncateDiagnostic(expectedRendered)}"`,
+      `rowLookupFound=${waitResult.rowLookupFound}`,
+      `currentBefore="${this.truncateDiagnostic(currentTargetBeforeText)}"`,
+      `currentAfter="${this.truncateDiagnostic(currentTargetAfter ? this.readMemoqElementText(currentTargetAfter) : '')}"`,
+      `lastCurrent="${this.truncateDiagnostic(waitResult.lastCurrentTargetText)}"`,
+      `oldBefore="${this.truncateDiagnostic(originalTargetBeforeText)}"`,
+      `oldAfter="${this.truncateDiagnostic(waitResult.lastOriginalTargetText)}"`,
+      `hiddenValue="${this.truncateDiagnostic(hiddenInput.value)}"`,
+      `active=${this.describeActiveElement()}`,
+      `visibleRows=[${visibleRows}]`
+    ].join(' ');
+  }
+
+  private collectVisibleRowDiagnostics(
+    targetRowNumber?: string,
+    radius = 2
+  ): MemoqVisibleRowDiagnostic[] {
+    if (typeof document.querySelectorAll !== 'function') {
+      return [];
+    }
+
+    const diagnostics: MemoqVisibleRowDiagnostic[] = [];
+    const seenRows = new Set<HTMLElement>();
+    const cells = Array.from(document.querySelectorAll<HTMLElement>(MEMOQ_CELL_SELECTOR));
+
+    for (const cell of cells) {
+      const row = this.findMemoqRowContainer(cell);
+      if (!row || seenRows.has(row)) {
+        continue;
+      }
+
+      seenRows.add(row);
+      const rowCells = Array.from(row.querySelectorAll<HTMLElement>(MEMOQ_CELL_SELECTOR))
+        .sort((left, right) =>
+          left.getBoundingClientRect().left - right.getBoundingClientRect().left
+        );
+
+      diagnostics.push({
+        rowNumber: this.extractMemoqRowNumberWithoutScrollContext(row),
+        source: rowCells[0] ? this.getEditableValue(rowCells[0]) : '',
+        target: rowCells[rowCells.length - 1]
+          ? this.getEditableValue(rowCells[rowCells.length - 1])
+          : ''
+      });
+    }
+
+    if (!targetRowNumber) {
+      return diagnostics.slice(-5);
+    }
+
+    const targetIndex = diagnostics.findIndex((row) => row.rowNumber === targetRowNumber);
+    if (targetIndex === -1) {
+      return diagnostics.slice(-5);
+    }
+
+    return diagnostics.slice(
+      Math.max(0, targetIndex - radius),
+      targetIndex + radius + 1
+    );
+  }
+
+  private describeActiveElement(): string {
+    const activeElement = document.activeElement as HTMLElement | null;
+    if (!activeElement) {
+      return 'none';
+    }
+
+    const value =
+      activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
+        ? activeElement.value
+        : activeElement.innerText || activeElement.textContent || '';
+
+    return `${activeElement.tagName.toLowerCase()}#${activeElement.id || ''}.${String(activeElement.className || '').replace(/\s+/g, '.')}:value="${this.truncateDiagnostic(value)}"`;
+  }
+
+  private readMemoqElementText(element: HTMLElement): string {
+    return normalizeText(element.innerText || element.textContent || '');
+  }
+
+  private truncateDiagnostic(value: string, maxLength = 120): string {
+    const normalized = normalizeText(value);
+    return normalized.length > maxLength
+      ? `${normalized.slice(0, maxLength - 3)}...`
+      : normalized;
+  }
+
+  private findCurrentMemoqTargetCellByRowNumber(rowNumber?: string): HTMLElement | null {
+    if (!rowNumber) {
+      return null;
+    }
+
+    if (typeof document.querySelectorAll !== 'function') {
+      return null;
+    }
+
+    const seenRows = new Set<HTMLElement>();
+    const cells = Array.from(document.querySelectorAll<HTMLElement>(MEMOQ_CELL_SELECTOR));
+
+    for (const cell of cells) {
+      const row = this.findMemoqRowContainer(cell);
+      if (!row || seenRows.has(row)) {
+        continue;
+      }
+
+      seenRows.add(row);
+
+      if (this.extractMemoqRowNumberWithoutScrollContext(row) !== rowNumber) {
+        continue;
+      }
+
+      const rowCells = Array.from(row.querySelectorAll<HTMLElement>(MEMOQ_CELL_SELECTOR))
+        .sort((left, right) =>
+          left.getBoundingClientRect().left - right.getBoundingClientRect().left
+        );
+
+      return rowCells[rowCells.length - 1] ?? null;
+    }
+
+    return null;
+  }
+
+  private extractMemoqRowNumberWithoutScrollContext(row: HTMLElement): string | undefined {
+    return this.extractMemoqRowNumberFromChildren(
+      Array.from(row.children) as HTMLElement[],
+      row
+    );
+  }
+
+  private extractMemoqRowNumber(
+    row: HTMLElement,
+    scrollContext: ScrollContext
+  ): string | undefined {
+    const children = this.helpers.sortByVisualPosition(
+      Array.from(row.children).filter((child): child is HTMLElement =>
+        child instanceof HTMLElement && this.helpers.isElementVisible(child)
+      ),
+      scrollContext
+    );
+
+    return this.extractMemoqRowNumberFromChildren(children, row);
+  }
+
+  private extractMemoqRowNumberFromChildren(
+    children: HTMLElement[],
+    row: HTMLElement
+  ): string | undefined {
+    for (const child of children) {
+      if (child.matches(MEMOQ_CELL_SELECTOR)) {
+        continue;
+      }
+
+      const text = normalizeText(child.innerText || child.textContent || '');
+      const match = text.match(/^(\d+)\.?$/);
+      if (match) {
+        return match[1];
+      }
+    }
+
+    const ariaRowIndex = row.getAttribute('aria-rowindex');
+    return ariaRowIndex && /^\d+$/.test(ariaRowIndex) ? ariaRowIndex : undefined;
+  }
+
+  private serializeMemoqContent(content: HTMLElement): string {
+    const fragments: string[] = [];
+
+    const visit = (node: ChildNode): void => {
+      if (node.nodeType === 3) {
+        fragments.push(node.textContent || '');
+        return;
+      }
+
+      if (node.nodeType !== 1) {
+        return;
+      }
+
+      const element = node as HTMLElement;
+      if (element.matches('textarea,input')) {
+        return;
+      }
+
+      if (element.classList.contains('tag')) {
+        const tagContent = element.querySelector<HTMLElement>('.tag-content');
+        fragments.push(formatMemoqInlineTag(element.className, tagContent?.textContent || element.textContent || ''));
+        return;
+      }
+
+      for (const child of Array.from(element.childNodes)) {
+        visit(child);
+      }
+    };
+
+    for (const child of Array.from(content.childNodes)) {
+      visit(child);
+    }
+
+    const serialized = fragments.join('');
+    return normalizeText(serialized || content.innerText || content.textContent || '');
   }
 
   private dedupeVisibleSegments(
@@ -304,12 +692,36 @@ export class MemoqAdapter {
       mode: 'synthetic',
       getTop: () => syntheticTop,
       getHeight: () => target.clientHeight || window.innerHeight,
+      scrollToTop: () => {
+        const focusTarget = this.findMemoqFocusTarget(target);
+
+        focusTarget.focus();
+        for (const receiver of [focusTarget, target]) {
+          receiver.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              bubbles: true,
+              cancelable: true,
+              key: 'Home',
+              code: 'Home',
+              ctrlKey: true,
+              metaKey: true
+            })
+          );
+          receiver.dispatchEvent(
+            new KeyboardEvent('keyup', {
+              bubbles: true,
+              cancelable: true,
+              key: 'Home',
+              code: 'Home',
+              ctrlKey: true,
+              metaKey: true
+            })
+          );
+        }
+        syntheticTop = 0;
+      },
       scrollBy: (delta) => {
-        const hiddenInput = document.querySelector<HTMLInputElement>(MEMOQ_HIDDEN_INPUT_SELECTOR);
-        const focusTarget =
-          hiddenInput ||
-          target.querySelector<HTMLElement>(MEMOQ_CELL_SELECTOR) ||
-          target;
+        const focusTarget = this.findMemoqFocusTarget(target);
 
         focusTarget.focus();
 
@@ -351,9 +763,40 @@ export class MemoqAdapter {
     };
   }
 
+  private findMemoqFocusTarget(target: HTMLElement): HTMLElement {
+    return (
+      document.querySelector<HTMLElement>(MEMOQ_HIDDEN_INPUT_SELECTOR) ||
+      target.querySelector<HTMLElement>(MEMOQ_CELL_SELECTOR) ||
+      target
+    );
+  }
+
   private async activateTarget(targetElement: HTMLElement): Promise<void> {
-    this.helpers.dispatchMouseSequence(targetElement, ['mousedown', 'mouseup', 'click']);
-    targetElement.focus();
+    targetElement.scrollIntoView?.({ block: 'center', inline: 'nearest' });
     await delay(MEMOQ_ACTIVATION_DELAY_MS);
+    await this.dispatchTrustedMouseClick(targetElement);
+    await delay(MEMOQ_ACTIVATION_DELAY_MS);
+  }
+
+  private async dispatchTrustedMouseClick(targetElement: HTMLElement): Promise<void> {
+    const rect = targetElement.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+
+    if (!Number.isFinite(x) || !Number.isFinite(y) || rect.width <= 0 || rect.height <= 0) {
+      throw new Error('memoQ target cell is not visible enough to click.');
+    }
+
+    const response = await runtimeSendMessage<BackgroundRequest, ApiResponse<null>>({
+      type: 'MEMOQ_DEBUGGER_CLICK',
+      payload: {
+        x,
+        y
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
   }
 }

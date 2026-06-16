@@ -22,3 +22,31 @@ export function isRecentSyntheticDuplicate(
 
   return previous.fingerprint === fingerprint && pass - previous.pass <= passWindow;
 }
+
+export function shouldRescanAfterSegmentFill(
+  segment: { platform: string },
+  outcome: { filled: boolean }
+): boolean {
+  return segment.platform === 'memoq' && outcome.filled;
+}
+
+export function shouldStopScanBeforeNextScroll({
+  scrollMode,
+  isAtBottom,
+  noNewSegmentsPasses,
+  repeatedSyntheticSignaturePasses
+}: {
+  scrollMode?: 'native' | 'synthetic';
+  isAtBottom: boolean;
+  noNewSegmentsPasses: number;
+  repeatedSyntheticSignaturePasses: number;
+}): boolean {
+  if (isAtBottom) {
+    return true;
+  }
+
+  return (
+    scrollMode === 'synthetic' &&
+    (noNewSegmentsPasses >= 4 || repeatedSyntheticSignaturePasses >= 2)
+  );
+}

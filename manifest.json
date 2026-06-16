@@ -3,11 +3,12 @@
   "name": "Phrase Bulk Fill",
   "version": "0.1.0",
   "description": "Upload Excel translations, preview Phrase matches, and fill empty targets in bulk.",
-  "permissions": ["storage", "activeTab", "scripting", "webNavigation"],
+  "permissions": ["storage", "activeTab", "scripting", "webNavigation", "debugger"],
   "host_permissions": [
     "https://app.phrase.com/*",
     "https://cloud.memsource.com/*",
-    "https://editor.memsource.com/*"
+    "https://editor.memsource.com/*",
+    "https://gentrans.genplus.cn/*"
   ],
   "action": {
     "default_title": "Phrase Bulk Fill",
@@ -21,7 +22,8 @@
       "matches": [
         "https://app.phrase.com/editor/*",
         "https://cloud.memsource.com/web/job/*/translate",
-        "https://editor.memsource.com/twe/translation/job/*"
+        "https://editor.memsource.com/twe/translation/job/*",
+        "https://gentrans.genplus.cn/*"
       ],
       "js": ["content-script.js"],
       "run_at": "document_idle",

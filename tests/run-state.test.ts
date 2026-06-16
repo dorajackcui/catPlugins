@@ -26,3 +26,15 @@ test('describeRunState summarizes fill progress', () => {
     'Filled 95 / 420 segment(s); scanned 180.'
   );
 });
+
+test('describeRunState summarizes export progress', () => {
+  assert.equal(
+    describeRunState({
+      ...DEFAULT_RUN_STATE,
+      phase: 'running',
+      kind: 'export',
+      scannedCount: 37
+    }),
+    'Export running. Scanned 37 segment(s)...'
+  );
+});
