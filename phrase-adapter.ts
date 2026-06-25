@@ -1,5 +1,6 @@
+import { runtimeSendMessage } from './chrome-api.ts';
 import { extractPlaceholderTokens } from './qa.ts';
-import type { FillOutcome } from './types.ts';
+import type { ApiResponse, BackgroundRequest, FillOutcome } from './types.ts';
 import { delay, normalizeText, waitForNormalizedTextMatch } from './utils.ts';
 import type {
   ContentScriptDomHelpers,
@@ -23,14 +24,6 @@ const TARGET_ACTIVATION_SELECTORS = [
   '.twe_target .te_text_container',
   '.twe_target .te_textarea_container',
   '.twe_target'
-];
-const LIVE_INPUT_SELECTORS = [
-  '.twe_target input.twe-main-input:not([readonly])',
-  '.twe_target textarea:not([readonly])',
-  '.twe_target [contenteditable="true"]',
-  'input.twe-main-input:not([readonly])',
-  'textarea:not([readonly])',
-  '[contenteditable="true"]'
 ];
 const SOURCE_SELECTORS = [
   '[data-testid*="source"]',
@@ -103,25 +96,16 @@ export class PhraseAdapter {
 
     if (target instanceof HTMLElement && target.matches('.twe_target')) {
       await this.activateTarget(target);
-      const liveInput = this.findLiveInput(target);
-
-      if (liveInput instanceof HTMLInputElement || liveInput instanceof HTMLTextAreaElement) {
-        this.helpers.setEditableValue(liveInput, value);
-        this.helpers.dispatchInput(liveInput, value);
-        this.helpers.dispatchChange(liveInput);
-        this.helpers.dispatchTabNavigation(liveInput);
-        this.helpers.dispatchBlur(liveInput);
-      } else if (liveInput instanceof HTMLElement && liveInput.isContentEditable) {
-        this.helpers.setEditableValue(liveInput, value);
-        this.helpers.dispatchInput(liveInput, value);
-        this.helpers.dispatchChange(liveInput);
-        this.helpers.dispatchBlur(liveInput);
-      } else {
-        const textContainer =
-          target.querySelector<HTMLElement>('.te_text_container') || target;
-        this.helpers.setEditableValue(textContainer, value);
-        this.helpers.dispatchInput(textContainer, value);
-        this.helpers.dispatchChange(textContainer);
+      try {
+        await this.dispatchTrustedTextWrite(target, value);
+      } catch (error) {
+        return {
+          domId: segment.domId,
+          filled: false,
+          reason: `Unable to write Phrase target through trusted input: ${
+            error instanceof Error ? error.message : 'Unknown error.'
+          }`
+        };
       }
 
       const confirmed = await waitForNormalizedTextMatch(
@@ -248,32 +232,29 @@ export class PhraseAdapter {
     await delay(80);
   }
 
-  private findLiveInput(targetElement: HTMLElement): EditableElement | null {
-    const row = targetElement.closest<HTMLElement>(ROW_SELECTORS.join(','));
-    const scopedRoots = [targetElement, row, document.body].filter(
-      (value): value is HTMLElement => Boolean(value)
-    );
+  private async dispatchTrustedTextWrite(targetElement: HTMLElement, text: string): Promise<void> {
+    targetElement.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+    await delay(20);
 
-    for (const root of scopedRoots) {
-      for (const selector of LIVE_INPUT_SELECTORS) {
-        const input = root.querySelector<EditableElement>(selector);
-        if (!input) {
-          continue;
-        }
+    const rect = targetElement.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
 
-        if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
-          if (!input.readOnly && !input.disabled) {
-            return input;
-          }
-          continue;
-        }
-
-        if (input.isContentEditable) {
-          return input;
-        }
-      }
+    if (!Number.isFinite(x) || !Number.isFinite(y) || rect.width <= 0 || rect.height <= 0) {
+      throw new Error('Phrase target cell is not visible enough to write.');
     }
 
-    return null;
+    const response = await runtimeSendMessage<BackgroundRequest, ApiResponse<null>>({
+      type: 'DEBUGGER_WRITE_TEXT',
+      payload: {
+        x,
+        y,
+        text
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
   }
 }

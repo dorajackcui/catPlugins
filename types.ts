@@ -255,6 +255,15 @@ export interface MemoqDebuggerWriteTextRequest {
   };
 }
 
+export interface DebuggerWriteTextRequest {
+  type: 'DEBUGGER_WRITE_TEXT';
+  payload: {
+    x: number;
+    y: number;
+    text: string;
+  };
+}
+
 export type BackgroundRequest =
   | ParseExcelRequest
   | RunPreviewRequest
@@ -265,7 +274,8 @@ export type BackgroundRequest =
   | SetFillOptionsRequest
   | ReportRunProgressRequest
   | MemoqDebuggerClickRequest
-  | MemoqDebuggerWriteTextRequest;
+  | MemoqDebuggerWriteTextRequest
+  | DebuggerWriteTextRequest;
 
 export interface ContentScanRequest {
   type: 'CONTENT_SCAN';

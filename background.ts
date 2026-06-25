@@ -318,14 +318,14 @@ async function dispatchTrustedTabClick(tabId: number, x: number, y: number): Pro
   });
 }
 
-async function dispatchTrustedMemoqWrite(
+async function dispatchTrustedTextWrite(
   tabId: number,
   x: number,
   y: number,
   text: string
 ): Promise<void> {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !text) {
-    throw new Error('Invalid memoQ trusted write payload.');
+    throw new Error('Invalid trusted write payload.');
   }
 
   await withAttachedDebugger(tabId, async (target) => {
@@ -609,13 +609,14 @@ async function handleMessage(
       return { ok: true, data: null };
     }
 
-    case 'MEMOQ_DEBUGGER_WRITE_TEXT': {
+    case 'MEMOQ_DEBUGGER_WRITE_TEXT':
+    case 'DEBUGGER_WRITE_TEXT': {
       const tabId = sender?.tab?.id;
       if (typeof tabId !== 'number') {
-        throw new Error('memoQ trusted write requires a sender tab.');
+        throw new Error('Trusted write requires a sender tab.');
       }
 
-      await dispatchTrustedMemoqWrite(
+      await dispatchTrustedTextWrite(
         tabId,
         request.payload.x,
         request.payload.y,
