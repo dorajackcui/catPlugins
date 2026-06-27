@@ -3,7 +3,8 @@ import { applyFilledToPreview, classifySegment, createEntryLookup, summarizePrev
 import { ContentScriptDomHelpers } from './content-script-dom.ts';
 import type { RuntimeSegment, ScrollContext } from './content-script-dom.ts';
 import { normalizeFillOptions } from './fill-options.ts';
-import { BULK_FILL_PAUSE_MS, shouldPauseBulkFill } from './fill-throttle.ts';
+import { describeFillStopReason, shouldStopAfterFillFailure } from './fill-failure.ts';
+import { BULK_FILL_PAUSE_MS, shouldPauseBulkFillForPlatform } from './fill-throttle.ts';
 import { GientTransAdapter } from './gientrans-adapter.ts';
 import { MemoqAdapter } from './memoq-adapter.ts';
 import { PhraseAdapter } from './phrase-adapter.ts';
@@ -18,6 +19,10 @@ import {
   findStartSegmentIndex,
   type StartMarker
 } from './start-marker.ts';
+import {
+  replaceRuntimeMessageListener,
+  type RuntimeMessageListener
+} from './runtime-listener.ts';
 import type {
   ApiResponse,
   BackgroundRequest,
@@ -33,7 +38,10 @@ import { delay, normalizeText } from './utils.ts';
 
 declare global {
   interface Window {
-    __phraseBulkFillListenerBound?: boolean;
+    __phraseBulkFillMessageListener?: RuntimeMessageListener<
+      ContentRequest,
+      ApiResponse<unknown>
+    >;
     __phraseBulkFillStartMarker?: StartMarker;
     __phraseBulkFillStartMarkerBound?: boolean;
     __phraseBulkFillStopRequested?: boolean;
@@ -139,6 +147,15 @@ class PlatformDomAdapter {
     let stoppedByAutoStop = false;
     let stopReason: string | undefined;
 
+    console.info(CONTENT_DEBUG_PREFIX, 'fill:start', {
+      autoStopAfterFilledCount,
+      plannedFillCount,
+      maxPasses: options?.maxPasses ?? DEFAULT_MAX_PASSES,
+      maxSegments: options?.maxSegments ?? DEFAULT_MAX_SEGMENTS,
+      scanFromTop: options?.scanFromTop === true,
+      startFromMarker: options?.startFromMarker === true
+    });
+
     await this.collectSegments(
       async (segment) => {
         const item = classifySegment(entryLookup, segment, normalizedFillOptions);
@@ -169,7 +186,13 @@ class PlatformDomAdapter {
             return 'stop';
           }
 
-          if (shouldPauseBulkFill(plannedFillCount, filledDomIds.length)) {
+          if (
+            shouldPauseBulkFillForPlatform(
+              segment.platform,
+              plannedFillCount,
+              filledDomIds.length
+            )
+          ) {
             await reportRunProgress(runId, {
               scannedCount,
               filledCount: filledDomIds.length,
@@ -186,8 +209,8 @@ class PlatformDomAdapter {
           });
 
           shouldRescanVisibleSnapshot = shouldRescanAfterSegmentFill(segment, outcome);
-        } else if (segment.platform === 'memoq') {
-          stopReason = this.describeMemoqStopReason(segment, outcome);
+        } else if (shouldStopAfterFillFailure(segment.platform)) {
+          stopReason = describeFillStopReason(segment, outcome);
           await reportRunProgress(runId, {
             scannedCount,
             filledCount: filledDomIds.length,
@@ -255,17 +278,6 @@ class PlatformDomAdapter {
     }
 
     return phraseAdapter.getEditableValue(segment.targetElement);
-  }
-
-  private describeMemoqStopReason(segment: RuntimeSegment, outcome: FillOutcome): string {
-    const rowLabel = segment.rowNumber ? `row ${segment.rowNumber}` : `segment ${segment.domId}`;
-    const sourcePreview =
-      segment.sourceRaw.length > 80
-        ? `${segment.sourceRaw.slice(0, 77)}...`
-        : segment.sourceRaw;
-    const reason = outcome.reason ?? 'memoQ fill could not be confirmed.';
-
-    return `Stopped at memoQ ${rowLabel}: ${reason} Source="${sourcePreview}"`;
   }
 
   private async collectSegments(
@@ -740,27 +752,32 @@ function isEditorSurfaceElement(element: Element): boolean {
 
 bindStartMarkerListeners();
 
-if (!window.__phraseBulkFillListenerBound) {
-  chrome.runtime.onMessage.addListener(
-    (
-      request: ContentRequest,
-      _sender: unknown,
-      sendResponse: (response: ApiResponse<unknown>) => void
-    ) => {
-      void (async () => {
-        try {
-          sendResponse(await handleRequest(request));
-        } catch (error) {
-          sendResponse({
-            ok: false,
-            error: error instanceof Error ? error.message : 'Unknown content-script error.'
-          });
-        }
-      })();
-
-      return true;
+replaceRuntimeMessageListener(
+  chrome.runtime.onMessage,
+  {
+    get current() {
+      return window.__phraseBulkFillMessageListener;
+    },
+    set current(listener) {
+      window.__phraseBulkFillMessageListener = listener;
     }
-  );
+  },
+  (
+    request: ContentRequest,
+    _sender: unknown,
+    sendResponse: (response: ApiResponse<unknown>) => void
+  ) => {
+    void (async () => {
+      try {
+        sendResponse(await handleRequest(request));
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : 'Unknown content-script error.'
+        });
+      }
+    })();
 
-  window.__phraseBulkFillListenerBound = true;
-}
+    return true;
+  }
+);

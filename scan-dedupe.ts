@@ -27,7 +27,7 @@ export function shouldRescanAfterSegmentFill(
   segment: { platform: string },
   outcome: { filled: boolean }
 ): boolean {
-  return segment.platform === 'memoq' && outcome.filled;
+  return (segment.platform === 'memoq' || segment.platform === 'phrase') && outcome.filled;
 }
 
 export function shouldStopScanBeforeNextScroll({

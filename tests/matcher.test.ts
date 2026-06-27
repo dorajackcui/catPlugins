@@ -284,3 +284,101 @@ test('buildPreview can skip placeholder validation when disabled', () => {
   assert.equal(preview.readyToFill, 1);
   assert.equal(preview.items[0]?.status, 'ready');
 });
+
+test('buildPreview matches Phrase tag clips against plain placeholder source text', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 2,
+        sourceRaw: '奋力争抢生效范围增加{1}米。',
+        sourceNormalized: '奋力争抢生效范围增加{1}米。',
+        targetRaw: '奮力争抢の有効範囲が{1}m増加する。',
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: 'phrase-tag-clip-1',
+        sourceRaw: '奋力争抢生效范围增加1{1}米。',
+        sourceNormalized: '奋力争抢生效范围增加1{1}米。',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: ['{1}'],
+        platform: 'phrase'
+      }
+    ]
+  );
+
+  assert.equal(preview.readyToFill, 1);
+  assert.equal(preview.items[0]?.translation, '奮力争抢の有効範囲が{1}m増加する。');
+});
+
+test('buildPreview matches Phrase repeated placeholder tag clips with different chip numbers', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 2,
+        sourceRaw: '无球移动速度+{1}米每秒，运球移动速度+{1}米每秒',
+        sourceNormalized: '无球移动速度+{1}米每秒，运球移动速度+{1}米每秒',
+        targetRaw: 'オフボール移動速度+{1}m/s、ドリブル移動速度+{1}m/s',
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: 'phrase-repeated-placeholder-tag-clip',
+        sourceRaw: '无球移动速度+1{1}米每秒，运球移动速度+2{1}米每秒',
+        sourceNormalized: '无球移动速度+1{1}米每秒，运球移动速度+2{1}米每秒',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: ['{1}', '{1}'],
+        platform: 'phrase'
+      }
+    ]
+  );
+
+  assert.equal(preview.readyToFill, 1);
+  assert.equal(
+    preview.items[0]?.translation,
+    'オフボール移動速度+{1}m/s、ドリブル移動速度+{1}m/s'
+  );
+});
+
+test('buildPreview matches Phrase numbered color tag clips against plain XML-like source text', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 2,
+        sourceRaw: '布拉德米勒<color=#fa7000>背打转身后</color>，利用转身惯性快速勾手<color=#fa7000>投篮</color>。',
+        sourceNormalized: '布拉德米勒<color=#fa7000>背打转身后</color>，利用转身惯性快速勾手<color=#fa7000>投篮</color>。',
+        targetRaw: 'ブラッド・ミラーが<color=#fa7000>ポストターン後</color>、ターンの勢いを利用して素早くフック<color=#fa7000>シュート</color>を決める。',
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: 'phrase-color-tag-clip-1',
+        sourceRaw: '布拉德米勒1<color=#fa7000>背打转身后2</color>，利用转身惯性快速勾手3<color=#fa7000>投篮4</color>。',
+        sourceNormalized: '布拉德米勒1<color=#fa7000>背打转身后2</color>，利用转身惯性快速勾手3<color=#fa7000>投篮4</color>。',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: [
+          '<color=#fa7000>',
+          '</color>',
+          '<color=#fa7000>',
+          '</color>'
+        ],
+        platform: 'phrase'
+      }
+    ]
+  );
+
+  assert.equal(preview.readyToFill, 1);
+  assert.equal(
+    preview.items[0]?.translation,
+    'ブラッド・ミラーが<color=#fa7000>ポストターン後</color>、ターンの勢いを利用して素早くフック<color=#fa7000>シュート</color>を決める。'
+  );
+});

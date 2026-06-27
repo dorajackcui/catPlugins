@@ -17,6 +17,7 @@ import type {
   ContentRequest,
   ExportSourcesResult,
   FillRunResult,
+  DebuggerInputOperation,
   PageSegment,
   PopupState,
   RunKind,
@@ -350,6 +351,60 @@ async function dispatchTrustedTextWrite(
   });
 }
 
+async function dispatchTrustedInputOperation(
+  target: { tabId: number },
+  operation: DebuggerInputOperation
+): Promise<void> {
+  if (operation.type === 'click') {
+    if (!Number.isFinite(operation.x) || !Number.isFinite(operation.y)) {
+      throw new Error('Invalid trusted sequence click coordinates.');
+    }
+
+    await dispatchTrustedMemoqClick(target, operation.x, operation.y);
+    return;
+  }
+
+  if (!operation.text) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    chrome.debugger.sendCommand(
+      target,
+      'Input.insertText',
+      { text: operation.text },
+      () => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new Error(error.message));
+          return;
+        }
+
+        resolve();
+      }
+    );
+  });
+}
+
+async function dispatchTrustedInputSequence(
+  tabId: number,
+  x: number,
+  y: number,
+  operations: DebuggerInputOperation[]
+): Promise<void> {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !operations.length) {
+    throw new Error('Invalid trusted sequence payload.');
+  }
+
+  await withAttachedDebugger(tabId, async (target) => {
+    await dispatchTrustedMemoqClick(target, x, y);
+
+    for (const operation of operations) {
+      await dispatchTrustedInputOperation(target, operation);
+    }
+  });
+}
+
 async function handleMessage(
   request: BackgroundRequest,
   sender?: RuntimeMessageSender
@@ -621,6 +676,21 @@ async function handleMessage(
         request.payload.x,
         request.payload.y,
         request.payload.text
+      );
+      return { ok: true, data: null };
+    }
+
+    case 'DEBUGGER_INPUT_SEQUENCE': {
+      const tabId = sender?.tab?.id;
+      if (typeof tabId !== 'number') {
+        throw new Error('Trusted input sequence requires a sender tab.');
+      }
+
+      await dispatchTrustedInputSequence(
+        tabId,
+        request.payload.x,
+        request.payload.y,
+        request.payload.operations
       );
       return { ok: true, data: null };
     }
