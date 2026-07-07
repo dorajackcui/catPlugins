@@ -1,7 +1,12 @@
 import { runtimeSendMessage } from './chrome-api.ts';
 import { extractPlaceholderTokens } from './qa.ts';
 import type { ApiResponse, BackgroundRequest, FillOutcome } from './types.ts';
-import { delay, normalizeText } from './utils.ts';
+import {
+  containsNoBreakSpace,
+  delay,
+  normalizeText,
+  normalizeTextPreservingNoBreakSpaces
+} from './utils.ts';
 import type {
   ContentScriptDomHelpers,
   RuntimeSegment,
@@ -16,6 +21,14 @@ const VISIBLE_SEGMENT_TOP_BUCKET_PX = 24;
 const MEMOQ_COMMIT_CONFIRM_ATTEMPTS = 14;
 const MEMOQ_COMMIT_CONFIRM_DELAY_MS = 150;
 const MEMOQ_ACTIVATION_DELAY_MS = 20;
+// One retry: re-resolve the row and click again when the first write clearly
+// landed nowhere (grid re-layout between measuring and clicking).
+const MEMOQ_FILL_ATTEMPTS = 2;
+// memoQ's virtualized grid re-renders rows asynchronously after scrolling;
+// wait until the target's rect stops moving before measuring click
+// coordinates.
+const MEMOQ_LAYOUT_STABLE_CHECK_DELAY_MS = 70;
+const MEMOQ_LAYOUT_STABLE_MAX_CHECKS = 8;
 
 type MemoqAccessibilityTextBoxLike = Pick<
   HTMLInputElement | HTMLTextAreaElement,
@@ -56,23 +69,54 @@ export function readMemoqAccessibilityTextBoxValue(
   return normalizeText(textBox.value || textBox.textContent || '');
 }
 
+function stripMemoqInlineTagMarkup(value: string): string {
+  return value
+    .replace(/\{(\d+)>/g, '$1')
+    .replace(/<(\d+)\}/g, '$1')
+    .replace(/<(\d+)>/g, '$1');
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function memoQAccessibilityTextToRenderedText(value: string): string {
-  return normalizeText(
-    value
-      .replace(/\{(\d+)>/g, '$1')
-      .replace(/<(\d+)\}/g, '$1')
-      .replace(/<(\d+)>/g, '$1')
-  );
+  return normalizeText(stripMemoqInlineTagMarkup(value));
+}
+
+// With "show whitespace marks" enabled, memoQ renders spaces as U+00B7
+// middle dots and no-break spaces as U+00B0 degree signs in the cell DOM.
+const MEMOQ_RENDERED_WHITESPACE_MARKS = new RegExp(
+  `[${String.fromCharCode(0x00b7, 0x00b0)}]`,
+  'g'
+);
+
+function normalizeMemoqRenderedWhitespace(value: string): string {
+  return normalizeText(value.replace(MEMOQ_RENDERED_WHITESPACE_MARKS, ' '));
 }
 
 export function isMemoqCommittedTargetText(cellText: string, value: string): boolean {
+  // The rendered cell cannot distinguish no-break spaces from plain spaces
+  // (editors render plain spaces as U+00A0 to stop HTML collapsing them), so
+  // the commit check must stay whitespace-insensitive.
   const committedText = normalizeText(cellText);
   const expected = normalizeText(value);
   const renderedExpected = memoQAccessibilityTextToRenderedText(value);
 
-  return (
+  if (
     committedText === expected ||
     committedText === renderedExpected
+  ) {
+    return true;
+  }
+
+  // Fall back to a comparison that treats memoQ's whitespace display marks
+  // as the whitespace they stand for. Mapped on both sides so genuine
+  // middle dots or degree signs in the translation still line up.
+  const committedMarked = normalizeMemoqRenderedWhitespace(cellText);
+  return (
+    committedMarked === normalizeMemoqRenderedWhitespace(value) ||
+    committedMarked === normalizeMemoqRenderedWhitespace(stripMemoqInlineTagMarkup(value))
   );
 }
 
@@ -178,16 +222,19 @@ export class MemoqAdapter {
     return this.serializeMemoqContent(content);
   }
 
+  // Reads the row's target text from the CURRENT DOM. The element captured
+  // at scan time may have been recycled by the virtualized grid to show a
+  // different row, so pre-fill emptiness checks must re-resolve by row
+  // number.
+  getCurrentEditableValue(segment: RuntimeSegment): string {
+    const currentTargetCell = this.findCurrentMemoqTargetCellByRowNumber(segment.rowNumber);
+    return this.getEditableValue(
+      (currentTargetCell ?? segment.targetElement) as HTMLElement
+    );
+  }
+
   async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
-    const target =
-      this.findCurrentMemoqTargetCellByRowNumber(segment.rowNumber) ??
-      (segment.targetElement as HTMLElement);
     const originalTarget = segment.targetElement as HTMLElement;
-    const currentTargetBefore = this.findCurrentMemoqTargetCellByRowNumber(segment.rowNumber);
-    const originalTargetBeforeText = this.readMemoqElementText(originalTarget);
-    const currentTargetBeforeText = currentTargetBefore
-      ? this.readMemoqElementText(currentTargetBefore)
-      : '';
     const hiddenInput = document.querySelector<HTMLInputElement>(MEMOQ_HIDDEN_INPUT_SELECTOR);
     if (!hiddenInput) {
       return {
@@ -197,9 +244,100 @@ export class MemoqAdapter {
       };
     }
 
-    await this.activateTarget(target);
-    hiddenInput.focus();
+    // Attach the debugger before resolving or measuring anything: a fresh
+    // attachment shows the debugging infobar, which resizes the page and
+    // re-lays out memoQ's virtualized grid, invalidating any element or
+    // coordinate captured earlier.
+    try {
+      await this.prepareTrustedInput();
+    } catch (error) {
+      return {
+        domId: segment.domId,
+        filled: false,
+        reason: `memoQ trusted input is unavailable: ${describeError(error)}`
+      };
+    }
 
+    const currentTargetBefore = this.findCurrentMemoqTargetCellByRowNumber(segment.rowNumber);
+    const originalTargetBeforeText = this.readMemoqElementText(originalTarget);
+    const currentTargetBeforeText = currentTargetBefore
+      ? this.readMemoqElementText(currentTargetBefore)
+      : '';
+
+    let waitResult: MemoqCommitWaitResult = {
+      confirmed: false,
+      lastCurrentTargetText: '',
+      lastOriginalTargetText: '',
+      rowLookupFound: false
+    };
+    let activationFailure: string | undefined;
+
+    // Resolved lazily and repeatedly: the virtualized grid can replace the
+    // row's DOM node at any moment (scroll, commit, infobar re-layout), so a
+    // reference is only trustworthy at the instant it is measured.
+    const resolveTarget = (): HTMLElement =>
+      this.findCurrentMemoqTargetCellByRowNumber(segment.rowNumber) ?? originalTarget;
+
+    for (let attempt = 0; attempt < MEMOQ_FILL_ATTEMPTS; attempt += 1) {
+      let target: HTMLElement;
+      try {
+        target = await this.activateTarget(resolveTarget);
+        activationFailure = undefined;
+      } catch (error) {
+        activationFailure = describeError(error);
+        continue;
+      }
+
+      hiddenInput.focus();
+      this.writeValueThroughHiddenInput(hiddenInput, value);
+
+      waitResult = await this.waitForCommittedTargetCellText(
+        target,
+        value,
+        segment.rowNumber
+      );
+
+      if (waitResult.confirmed) {
+        break;
+      }
+
+      // Retry only while the row still shows nothing — if partial or foreign
+      // text landed there, a second insert could duplicate content.
+      if (waitResult.lastCurrentTargetText !== '') {
+        break;
+      }
+    }
+
+    if (waitResult.confirmed && containsNoBreakSpace(value)) {
+      this.warnIfNoBreakSpacesConverted(segment, value);
+    }
+
+    let reason: string | undefined;
+    if (!waitResult.confirmed) {
+      reason = activationFailure
+        ? `memoQ target activation failed: ${activationFailure} row=${segment.rowNumber ?? segment.domId} source="${this.truncateDiagnostic(segment.sourceRaw)}"`
+        : this.buildMemoqFillFailureReason({
+            segment,
+            value,
+            hiddenInput,
+            originalTargetBeforeText,
+            currentTargetBeforeText,
+            waitResult
+          });
+    }
+
+    if (reason) {
+      console.warn('[Phrase Bulk Fill] memoQ fill confirmation failed', reason);
+    }
+
+    return {
+      domId: segment.domId,
+      filled: waitResult.confirmed,
+      reason
+    };
+  }
+
+  private writeValueThroughHiddenInput(hiddenInput: HTMLInputElement, value: string): void {
     let pasteWasHandled = false;
     try {
       const clipboardData = new DataTransfer();
@@ -223,33 +361,6 @@ export class MemoqAdapter {
     this.helpers.dispatchInput(hiddenInput, value, true);
     this.helpers.dispatchChange(hiddenInput);
     this.helpers.dispatchBlur(hiddenInput);
-
-    const waitResult = await this.waitForCommittedTargetCellText(
-      target,
-      value,
-      segment.rowNumber
-    );
-
-    const reason = waitResult.confirmed
-      ? undefined
-      : this.buildMemoqFillFailureReason({
-          segment,
-          value,
-          hiddenInput,
-          originalTargetBeforeText,
-          currentTargetBeforeText,
-          waitResult
-        });
-
-    if (reason) {
-      console.warn('[Phrase Bulk Fill] memoQ fill confirmation failed', reason);
-    }
-
-    return {
-      domId: segment.domId,
-      filled: waitResult.confirmed,
-      reason
-    };
   }
 
   private findMemoqRowContainer(cell: HTMLElement): HTMLElement | null {
@@ -327,8 +438,8 @@ export class MemoqAdapter {
       const currentTargetCell = this.findCurrentMemoqTargetCellByRowNumber(rowNumber);
       rowLookupFound = currentTargetCell !== null;
       const committedTargetCell = currentTargetCell ?? targetCell;
-      const committedText = this.readMemoqElementText(committedTargetCell);
-      lastCurrentTargetText = currentTargetCell ? committedText : '';
+      const committedText = this.readMemoqElementRawText(committedTargetCell);
+      lastCurrentTargetText = currentTargetCell ? normalizeText(committedText) : '';
       lastOriginalTargetText = this.readMemoqElementText(targetCell);
 
       if (isMemoqCommittedTargetText(committedText, value)) {
@@ -457,8 +568,48 @@ export class MemoqAdapter {
     return `${activeElement.tagName.toLowerCase()}#${activeElement.id || ''}.${String(activeElement.className || '').replace(/\s+/g, '.')}:value="${this.truncateDiagnostic(value)}"`;
   }
 
+  private readMemoqElementRawText(element: HTMLElement): string {
+    return element.innerText || element.textContent || '';
+  }
+
+  // The accessibility textbox is the only channel exposing memoQ's actual
+  // stored text; the rendered cell shows plain and no-break spaces
+  // identically. Only compare when the textbox clearly holds this row's text.
+  private warnIfNoBreakSpacesConverted(segment: RuntimeSegment, value: string): void {
+    if (typeof document.querySelectorAll !== 'function') {
+      return;
+    }
+
+    const pair = chooseMemoqAccessibilityTextBoxes(
+      Array.from(
+        document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+          MEMOQ_ACCESSIBILITY_TEXTBOX_SELECTOR
+        )
+      )
+    );
+    const committed = pair ? pair.target.value || pair.target.textContent || '' : '';
+
+    if (!committed || normalizeText(committed) !== normalizeText(value)) {
+      return;
+    }
+
+    if (
+      normalizeTextPreservingNoBreakSpaces(committed) !==
+      normalizeTextPreservingNoBreakSpaces(value)
+    ) {
+      console.warn(
+        '[Phrase Bulk Fill] memoQ stored this segment without its no-break spaces',
+        {
+          row: segment.rowNumber ?? segment.domId,
+          expected: value,
+          committed
+        }
+      );
+    }
+  }
+
   private readMemoqElementText(element: HTMLElement): string {
-    return normalizeText(element.innerText || element.textContent || '');
+    return normalizeText(this.readMemoqElementRawText(element));
   }
 
   private truncateDiagnostic(value: string, maxLength = 120): string {
@@ -492,15 +643,27 @@ export class MemoqAdapter {
         continue;
       }
 
+      // The virtualized grid can keep a zero-size recycled node that still
+      // carries this row number; only a cell with a real rect is the live
+      // row, so keep scanning past invisible duplicates.
       const rowCells = Array.from(row.querySelectorAll<HTMLElement>(MEMOQ_CELL_SELECTOR))
+        .filter((rowCell) => this.hasClickableRect(rowCell))
         .sort((left, right) =>
           left.getBoundingClientRect().left - right.getBoundingClientRect().left
         );
 
-      return rowCells[rowCells.length - 1] ?? null;
+      const targetCell = rowCells[rowCells.length - 1];
+      if (targetCell) {
+        return targetCell;
+      }
     }
 
     return null;
+  }
+
+  private hasClickableRect(element: HTMLElement): boolean {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
   }
 
   private extractMemoqRowNumberWithoutScrollContext(row: HTMLElement): string | undefined {
@@ -771,11 +934,56 @@ export class MemoqAdapter {
     );
   }
 
-  private async activateTarget(targetElement: HTMLElement): Promise<void> {
-    targetElement.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+  private async activateTarget(resolveTarget: () => HTMLElement): Promise<HTMLElement> {
+    resolveTarget().scrollIntoView?.({ block: 'center', inline: 'nearest' });
     await delay(MEMOQ_ACTIVATION_DELAY_MS);
-    await this.dispatchTrustedMouseClick(targetElement);
+    // Scrolling makes the virtualized grid load and re-lay out rows
+    // asynchronously — and a re-render can swap the row's DOM node entirely.
+    // Re-resolve while waiting so coordinates come from the live node.
+    const target = await this.waitForClickableTarget(resolveTarget);
+    await this.dispatchTrustedMouseClick(target);
     await delay(MEMOQ_ACTIVATION_DELAY_MS);
+    return target;
+  }
+
+  // Resolves the target until it reports the same non-zero rect twice in a
+  // row. A zero rect is never "stable" — it means the node is detached or
+  // hidden, so keep re-resolving until the live replacement shows up.
+  private async waitForClickableTarget(resolveTarget: () => HTMLElement): Promise<HTMLElement> {
+    let previousKey: string | null = null;
+    let candidate = resolveTarget();
+
+    for (let check = 0; check < MEMOQ_LAYOUT_STABLE_MAX_CHECKS; check += 1) {
+      await delay(MEMOQ_LAYOUT_STABLE_CHECK_DELAY_MS);
+      candidate = resolveTarget();
+      const rect = candidate.getBoundingClientRect();
+      const key =
+        rect.width > 0 && rect.height > 0
+          ? `${rect.top}:${rect.left}:${rect.width}:${rect.height}`
+          : null;
+
+      if (key !== null && key === previousKey) {
+        return candidate;
+      }
+
+      previousKey = key;
+    }
+
+    return candidate;
+  }
+
+  // Attaches the tab debugger (or extends an existing attachment) so trusted
+  // clicks can be dispatched. Public so the fill run can attach once up
+  // front, before any segment snapshot is collected — the fresh-attachment
+  // infobar re-layout then happens before elements are captured.
+  async prepareTrustedInput(): Promise<void> {
+    const response = await runtimeSendMessage<BackgroundRequest, ApiResponse<null>>({
+      type: 'MEMOQ_DEBUGGER_PREPARE'
+    });
+
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
   }
 
   private async dispatchTrustedMouseClick(targetElement: HTMLElement): Promise<void> {

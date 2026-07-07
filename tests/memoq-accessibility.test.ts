@@ -131,6 +131,265 @@ test('memoQ accessibility text can be compared with rendered cell text', () => {
   );
 });
 
+const NBSP = String.fromCharCode(0x00a0);
+const NARROW_NBSP = String.fromCharCode(0x202f);
+const MIDDLE_DOT = String.fromCharCode(0x00b7);
+const DEGREE = String.fromCharCode(0x00b0);
+
+test('isMemoqCommittedTargetText accepts memoQ whitespace display marks in the cell text', () => {
+  // With "show whitespace marks" on, memoQ renders spaces as · and nbsp as °.
+  assert.equal(
+    isMemoqCommittedTargetText(
+      `Il·y·a·un·"Lord·Clink"·au·Marché.`.replace(/·/g, MIDDLE_DOT),
+      'Il y a un "Lord Clink" au Marché.'
+    ),
+    true
+  );
+  assert.equal(
+    isMemoqCommittedTargetText(
+      `Tu·n'as·pas·assez·de·pièces·d'or°?`
+        .replace(/·/g, MIDDLE_DOT)
+        .replace(/°/g, DEGREE),
+      `Tu n'as pas assez de pièces d'or${NBSP}?`
+    ),
+    true
+  );
+  // A genuine degree sign in the translation still matches.
+  assert.equal(
+    isMemoqCommittedTargetText(
+      `25${DEGREE}C·dehors`.replace(/·/g, MIDDLE_DOT),
+      `25${DEGREE}C dehors`
+    ),
+    true
+  );
+  // Different words still fail.
+  assert.equal(
+    isMemoqCommittedTargetText(
+      `Bonjour·le·monde`.replace(/·/g, MIDDLE_DOT),
+      'Bonsoir le monde'
+    ),
+    false
+  );
+  // Tag markup is still tolerated alongside display marks.
+  assert.equal(
+    isMemoqCommittedTargetText(
+      `Objectif·atteint1Récupérer`.replace(/·/g, MIDDLE_DOT),
+      'Objectif atteint<1>Récupérer'
+    ),
+    true
+  );
+});
+
+test('isMemoqCommittedTargetText treats rendered no-break spaces and plain spaces as equal', () => {
+  assert.equal(
+    isMemoqCommittedTargetText(`Bonjour${NBSP}!`, `Bonjour${NBSP}!`),
+    true
+  );
+  // Rendered cells show plain spaces for nbsp (and vice versa), so the
+  // commit check must not distinguish them.
+  assert.equal(
+    isMemoqCommittedTargetText('Bonjour !', `Bonjour${NBSP}!`),
+    true
+  );
+  assert.equal(
+    isMemoqCommittedTargetText(`Bonjour${NBSP}le monde${NARROW_NBSP}!`, 'Bonjour le monde !'),
+    true
+  );
+  assert.equal(
+    isMemoqCommittedTargetText(
+      `Objectif${NBSP}: 1atteint`,
+      `Objectif${NBSP}: <1>atteint`
+    ),
+    true
+  );
+});
+
+test('MemoqAdapter.fillSegment confirms when the rendered cell shows plain spaces for nbsp', async () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const restoreChrome = installTrustedClickRecorder();
+  const previousWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+  const value = `Bonjour${NBSP}le monde${NBSP}!`;
+  const swallowedValue = value.replace(new RegExp(NBSP, 'g'), ' ');
+  const targetCell = {
+    innerText: '',
+    textContent: '',
+    scrollIntoView: () => undefined,
+    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 260, height: 20, width: 120 }),
+    focus: () => undefined,
+    dispatchEvent: () => true
+  };
+  const hiddenInput = {
+    value: '',
+    textContent: '',
+    getBoundingClientRect: () => ({ top: 100, bottom: 120, height: 20 }),
+    focus: () => undefined,
+    dispatchEvent: () => true
+  };
+  const sourceTextBox = {
+    id: '',
+    disabled: true,
+    readOnly: false,
+    value: 'Hello world!',
+    textContent: ''
+  };
+  const targetTextBox = {
+    id: '',
+    disabled: false,
+    readOnly: false,
+    value: swallowedValue,
+    textContent: ''
+  };
+
+  globalThis.document = {
+    querySelector: () => hiddenInput,
+    querySelectorAll: (selector: string) =>
+      selector.includes('textarea') ? [sourceTextBox, targetTextBox] : [],
+    execCommand: (_command: string, _showDefaultUi?: boolean, insertedValue?: string) => {
+      const swallowed = (insertedValue ?? '').replace(new RegExp(NBSP, 'g'), ' ');
+      targetCell.innerText = swallowed;
+      targetCell.textContent = swallowed;
+      return true;
+    }
+  } as unknown as Document;
+  globalThis.window = { setTimeout } as unknown as Window & typeof globalThis;
+
+  try {
+    const adapter = new MemoqAdapter({
+      dispatchMouseSequence: () => undefined,
+      setNativeInputValue: (input: { value: string }, nextValue: string) => {
+        input.value = nextValue;
+      },
+      dispatchInput: () => undefined,
+      dispatchChange: () => undefined,
+      dispatchTabNavigation: () => undefined,
+      dispatchBlur: () => undefined
+    } as never);
+
+    const outcome = await adapter.fillSegment(
+      {
+        domId: '1',
+        rowNumber: '1',
+        sourceRaw: 'Hello world!',
+        sourceNormalized: 'Hello world!',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: [],
+        targetElement: targetCell as never,
+        platform: 'memoq'
+      },
+      value
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.equal(warnings.length, 1);
+    assert.equal(
+      /no-break spaces/.test(String(warnings[0]?.[0] ?? '')),
+      true
+    );
+  } finally {
+    console.warn = previousWarn;
+    restoreChrome();
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
+});
+
+test('MemoqAdapter.fillSegment confirms when memoQ preserves the no-break space', async () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const restoreChrome = installTrustedClickRecorder();
+  const previousWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+  const value = `Bonjour${NBSP}le monde${NBSP}!`;
+  const targetCell = {
+    innerText: '',
+    textContent: '',
+    scrollIntoView: () => undefined,
+    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 260, height: 20, width: 120 }),
+    focus: () => undefined,
+    dispatchEvent: () => true
+  };
+  const hiddenInput = {
+    value: '',
+    textContent: '',
+    getBoundingClientRect: () => ({ top: 100, bottom: 120, height: 20 }),
+    focus: () => undefined,
+    dispatchEvent: () => true
+  };
+  const sourceTextBox = {
+    id: '',
+    disabled: true,
+    readOnly: false,
+    value: 'Hello world!',
+    textContent: ''
+  };
+  const targetTextBox = {
+    id: '',
+    disabled: false,
+    readOnly: false,
+    value,
+    textContent: ''
+  };
+
+  globalThis.document = {
+    querySelector: () => hiddenInput,
+    querySelectorAll: (selector: string) =>
+      selector.includes('textarea') ? [sourceTextBox, targetTextBox] : [],
+    execCommand: (_command: string, _showDefaultUi?: boolean, insertedValue?: string) => {
+      targetCell.innerText = insertedValue ?? '';
+      targetCell.textContent = insertedValue ?? '';
+      return true;
+    }
+  } as unknown as Document;
+  globalThis.window = { setTimeout } as unknown as Window & typeof globalThis;
+
+  try {
+    const adapter = new MemoqAdapter({
+      dispatchMouseSequence: () => undefined,
+      setNativeInputValue: (input: { value: string }, nextValue: string) => {
+        input.value = nextValue;
+      },
+      dispatchInput: () => undefined,
+      dispatchChange: () => undefined,
+      dispatchTabNavigation: () => undefined,
+      dispatchBlur: () => undefined
+    } as never);
+
+    const outcome = await adapter.fillSegment(
+      {
+        domId: '1',
+        rowNumber: '1',
+        sourceRaw: 'Hello world!',
+        sourceNormalized: 'Hello world!',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: [],
+        targetElement: targetCell as never,
+        platform: 'memoq'
+      },
+      value
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.equal(warnings.length, 0);
+  } finally {
+    console.warn = previousWarn;
+    restoreChrome();
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
+});
+
 test('MemoqAdapter.fillSegment requires the normal memoQ hidden input', async () => {
   const previousDocument = globalThis.document;
   const previousWindow = globalThis.window;
@@ -596,10 +855,381 @@ test('MemoqAdapter.fillSegment activates memoQ targets through trusted backgroun
     assert.equal(calls.includes('synthetic-mouse'), false);
     assert.deepEqual(messages, [
       {
+        type: 'MEMOQ_DEBUGGER_PREPARE'
+      },
+      {
         type: 'MEMOQ_DEBUGGER_CLICK',
         payload: {
           x: 320,
           y: 110
+        }
+      }
+    ]);
+  } finally {
+    (globalThis as typeof globalThis & { chrome?: unknown }).chrome = previousChrome;
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
+});
+
+test('MemoqAdapter.fillSegment retries the trusted click once when the first write lands nowhere', async () => {
+  const previousChrome = (globalThis as typeof globalThis & { chrome?: unknown }).chrome;
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const messages: unknown[] = [];
+  let clickCount = 0;
+  const targetCell = {
+    innerText: '',
+    textContent: '',
+    matches: (selector: string) => selector === '.editor-cell',
+    querySelector: () => null,
+    scrollIntoView: () => undefined,
+    focus: () => undefined,
+    dispatchEvent: () => true,
+    getBoundingClientRect: () => ({
+      top: 100,
+      bottom: 120,
+      left: 260,
+      right: 380,
+      height: 20,
+      width: 120
+    })
+  };
+  const hiddenInput = {
+    value: '',
+    textContent: '',
+    focus: () => undefined,
+    dispatchEvent: () => true
+  };
+
+  (globalThis as typeof globalThis & { chrome?: unknown }).chrome = {
+    runtime: {
+      lastError: null,
+      sendMessage: (message: unknown, callback: (response: unknown) => void) => {
+        messages.push(message);
+        if ((message as { type?: string }).type === 'MEMOQ_DEBUGGER_CLICK') {
+          clickCount += 1;
+        }
+        callback({ ok: true, data: null });
+      }
+    }
+  };
+  globalThis.document = {
+    querySelector: (selector: string) =>
+      selector === '#editorHiddenInput' ? hiddenInput : null,
+    // The first click misses (grid shifted between measuring and clicking),
+    // so the first write goes nowhere; the retried click lands.
+    execCommand: (_command: string, _showDefaultUi?: boolean, value?: string) => {
+      if (clickCount >= 2) {
+        targetCell.innerText = value ?? '';
+        targetCell.textContent = value ?? '';
+      }
+      return true;
+    }
+  } as unknown as Document;
+  globalThis.window = {
+    setTimeout: (callback: () => void) => {
+      callback();
+      return 0;
+    }
+  } as unknown as Window & typeof globalThis;
+
+  try {
+    const adapter = new MemoqAdapter({
+      dispatchMouseSequence: () => undefined,
+      setNativeInputValue: (input: { value: string }, nextValue: string) => {
+        input.value = nextValue;
+      },
+      dispatchInput: () => undefined,
+      dispatchChange: () => undefined,
+      dispatchTabNavigation: () => undefined,
+      dispatchBlur: () => undefined
+    } as never);
+
+    const outcome = await adapter.fillSegment(
+      {
+        domId: '72',
+        rowNumber: '72',
+        sourceRaw: 'Retry Click',
+        sourceNormalized: 'Retry Click',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: [],
+        targetElement: targetCell as never,
+        platform: 'memoq'
+      },
+      'Clic réessayé'
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.equal(targetCell.innerText, 'Clic réessayé');
+    assert.deepEqual(messages, [
+      {
+        type: 'MEMOQ_DEBUGGER_PREPARE'
+      },
+      {
+        type: 'MEMOQ_DEBUGGER_CLICK',
+        payload: {
+          x: 320,
+          y: 110
+        }
+      },
+      {
+        type: 'MEMOQ_DEBUGGER_CLICK',
+        payload: {
+          x: 320,
+          y: 110
+        }
+      }
+    ]);
+  } finally {
+    (globalThis as typeof globalThis & { chrome?: unknown }).chrome = previousChrome;
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
+});
+
+test('MemoqAdapter.getCurrentEditableValue re-resolves the row instead of trusting the scanned element', () => {
+  const previousDocument = globalThis.document;
+  const staleTargetCell = {
+    innerText: 'Text from a recycled row',
+    textContent: 'Text from a recycled row',
+    childNodes: [],
+    matches: (selector: string) => selector === '.editor-cell',
+    querySelector: () => null
+  };
+  const currentTargetCell = {
+    innerText: '',
+    textContent: '',
+    childNodes: [],
+    parentElement: null as unknown,
+    matches: (selector: string) => selector === '.editor-cell',
+    querySelector: () => null,
+    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 260, height: 20, width: 120 })
+  };
+  const sourceCell = {
+    innerText: 'Relic Inheritor',
+    textContent: 'Relic Inheritor',
+    childNodes: [],
+    parentElement: null as unknown,
+    matches: (selector: string) => selector === '.editor-cell',
+    querySelector: () => null,
+    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 120, height: 20, width: 120 })
+  };
+  const rowNumberCell = {
+    innerText: '54.',
+    textContent: '54.',
+    matches: () => false,
+    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 40, height: 20, width: 40 })
+  };
+  const row = {
+    id: '',
+    parentElement: null as unknown,
+    children: [rowNumberCell, sourceCell, currentTargetCell],
+    querySelectorAll: (selector: string) =>
+      selector === '.editor-cell' ? [sourceCell, currentTargetCell] : [],
+    getAttribute: () => null
+  };
+  sourceCell.parentElement = row;
+  currentTargetCell.parentElement = row;
+
+  globalThis.document = {
+    body: {},
+    querySelectorAll: (selector: string) =>
+      selector === '.editor-cell' ? [sourceCell, currentTargetCell] : []
+  } as unknown as Document;
+
+  try {
+    const adapter = new MemoqAdapter({} as never);
+
+    // The stale element shows another row's text, but the actual row 54
+    // target cell is empty — the emptiness check must see the current cell.
+    assert.equal(
+      adapter.getCurrentEditableValue({
+        domId: '54',
+        rowNumber: '54',
+        sourceRaw: 'Relic Inheritor',
+        sourceNormalized: 'Relic Inheritor',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: [],
+        targetElement: staleTargetCell as never,
+        platform: 'memoq'
+      }),
+      ''
+    );
+
+    // Without a row number there is nothing to re-resolve by; the captured
+    // element is still used.
+    assert.equal(
+      adapter.getCurrentEditableValue({
+        domId: 'x',
+        rowNumber: undefined,
+        sourceRaw: 'Relic Inheritor',
+        sourceNormalized: 'Relic Inheritor',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: [],
+        targetElement: staleTargetCell as never,
+        platform: 'memoq'
+      }),
+      'Text from a recycled row'
+    );
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
+test('MemoqAdapter.fillSegment clicks the visible row when a zero-size recycled duplicate shares its row number', async () => {
+  const previousChrome = (globalThis as typeof globalThis & { chrome?: unknown }).chrome;
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const messages: unknown[] = [];
+
+  const makeCell = (
+    text: string,
+    rect: { top: number; bottom: number; left: number; height: number; width: number }
+  ) => ({
+    innerText: text,
+    textContent: text,
+    childNodes: [],
+    parentElement: null as unknown,
+    matches: (selector: string) => selector === '.editor-cell',
+    querySelector: () => null,
+    scrollIntoView: () => undefined,
+    focus: () => undefined,
+    dispatchEvent: () => true,
+    getBoundingClientRect: () => rect
+  });
+
+  // The recycled node sits earlier in document order and still carries row
+  // number 790, but every rect is zero — exactly what a detached virtual row
+  // reports.
+  const zeroRect = { top: 0, bottom: 0, left: 0, height: 0, width: 0 };
+  const staleSourceCell = makeCell('虽然你已经在所有难度', zeroRect);
+  const staleTargetCell = makeCell('', zeroRect);
+  const liveSourceCell = makeCell('虽然你已经在所有难度', {
+    top: 200,
+    bottom: 220,
+    left: 120,
+    height: 20,
+    width: 120
+  });
+  const liveTargetCell = makeCell('', {
+    top: 200,
+    bottom: 220,
+    left: 260,
+    height: 20,
+    width: 120
+  });
+
+  const makeRow = (
+    numberText: string,
+    cells: Array<ReturnType<typeof makeCell>>
+  ) => {
+    const rowNumberCell = {
+      innerText: numberText,
+      textContent: numberText,
+      matches: () => false,
+      getBoundingClientRect: () => ({ top: 0, bottom: 0, left: 0, height: 0, width: 0 })
+    };
+    const row = {
+      id: '',
+      parentElement: null as unknown,
+      children: [rowNumberCell, ...cells],
+      querySelectorAll: (selector: string) => (selector === '.editor-cell' ? cells : []),
+      getAttribute: () => null
+    };
+    for (const cell of cells) {
+      cell.parentElement = row;
+    }
+    return row;
+  };
+
+  makeRow('790.', [staleSourceCell, staleTargetCell]);
+  makeRow('790.', [liveSourceCell, liveTargetCell]);
+
+  const hiddenInput = {
+    value: '',
+    textContent: '',
+    focus: () => undefined,
+    dispatchEvent: () => true
+  };
+
+  (globalThis as typeof globalThis & { chrome?: unknown }).chrome = {
+    runtime: {
+      lastError: null,
+      sendMessage: (message: unknown, callback: (response: unknown) => void) => {
+        messages.push(message);
+        callback({ ok: true, data: null });
+      }
+    }
+  };
+  globalThis.document = {
+    body: {},
+    querySelector: (selector: string) =>
+      selector === '#editorHiddenInput' ? hiddenInput : null,
+    querySelectorAll: (selector: string) =>
+      selector === '.editor-cell'
+        ? [staleSourceCell, staleTargetCell, liveSourceCell, liveTargetCell]
+        : [],
+    execCommand: (_command: string, _showDefaultUi?: boolean, value?: string) => {
+      liveTargetCell.innerText = value ?? '';
+      liveTargetCell.textContent = value ?? '';
+      return true;
+    }
+  } as unknown as Document;
+  globalThis.window = {
+    setTimeout: (callback: () => void) => {
+      callback();
+      return 0;
+    }
+  } as unknown as Window & typeof globalThis;
+
+  try {
+    const adapter = new MemoqAdapter({
+      dispatchMouseSequence: () => undefined,
+      setNativeInputValue: (input: { value: string }, nextValue: string) => {
+        input.value = nextValue;
+      },
+      dispatchInput: () => undefined,
+      dispatchChange: () => undefined,
+      dispatchTabNavigation: () => undefined,
+      dispatchBlur: () => undefined
+    } as never);
+
+    const outcome = await adapter.fillSegment(
+      {
+        domId: '790',
+        rowNumber: '790',
+        sourceRaw: '虽然你已经在所有难度',
+        sourceNormalized: '虽然你已经在所有难度',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: [],
+        targetElement: staleTargetCell as never,
+        platform: 'memoq'
+      },
+      '译文文本'
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.equal(liveTargetCell.innerText, '译文文本');
+    // Coordinates must come from the live row's rect, not the zero-size
+    // recycled duplicate.
+    assert.deepEqual(messages, [
+      {
+        type: 'MEMOQ_DEBUGGER_PREPARE'
+      },
+      {
+        type: 'MEMOQ_DEBUGGER_CLICK',
+        payload: {
+          x: 320,
+          y: 210
         }
       }
     ]);

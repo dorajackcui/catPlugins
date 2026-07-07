@@ -129,6 +129,13 @@ class PlatformDomAdapter {
     }
   ): Promise<FillRunResult> {
     this.resetStopState();
+    // Attach the debugger before the first snapshot is collected: the fresh
+    // attachment's infobar resizes the page and re-lays out memoQ's grid, so
+    // it must happen before any element or coordinate is captured. Also lets
+    // one attachment survive the whole run instead of toggling per segment.
+    if (memoqAdapter.isActive()) {
+      await memoqAdapter.prepareTrustedInput();
+    }
     const entryLookup = createEntryLookup(entries);
     const previewItems: PreviewItem[] = [];
     const filledDomIds: string[] = [];
@@ -247,7 +254,7 @@ class PlatformDomAdapter {
 
   private getEditableValue(segment: RuntimeSegment): string {
     if (segment.platform === 'memoq') {
-      return memoqAdapter.getEditableValue(segment.targetElement as HTMLElement);
+      return memoqAdapter.getCurrentEditableValue(segment);
     }
 
     if (segment.platform === 'gientrans') {

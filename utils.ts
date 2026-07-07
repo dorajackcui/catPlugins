@@ -2,6 +2,21 @@ export function normalizeText(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
 }
 
+// U+00A0 no-break space, U+202F narrow no-break space (French punctuation spacing).
+const NO_BREAK_SPACE_CHARS = String.fromCharCode(0x00a0, 0x202f);
+const NO_BREAK_SPACE_PATTERN = new RegExp(`[${NO_BREAK_SPACE_CHARS}]`);
+const COLLAPSIBLE_WHITESPACE_PATTERN = new RegExp(`[^\\S${NO_BREAK_SPACE_CHARS}]+`, 'g');
+
+export function containsNoBreakSpace(value: string): boolean {
+  return NO_BREAK_SPACE_PATTERN.test(value);
+}
+
+export function normalizeTextPreservingNoBreakSpaces(value: string): string {
+  return value
+    .replace(COLLAPSIBLE_WHITESPACE_PATTERN, ' ')
+    .replace(/^ +| +$/g, '');
+}
+
 export function toText(value: unknown): string {
   if (value === null || value === undefined) {
     return '';

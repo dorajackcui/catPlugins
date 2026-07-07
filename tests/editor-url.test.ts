@@ -33,6 +33,14 @@ test('existing Phrase, memsource, and memoQ URL support is preserved', () => {
   );
 });
 
+test('memoQ webtrans URLs without the webpm segment are supported', () => {
+  const url =
+    'https://memoq.diezhi.net/memoqweb/webtrans/Translation.aspx?prj=482f20b9-a616-f011-94f4-005056bb3114&doc=3a086802-8779-4e27-b857-15ea2510daf7';
+
+  assert.equal(isMemoqUrl(url), true);
+  assert.equal(isSupportedEditorUrl(url), true);
+});
+
 test('non-editor URLs are rejected', () => {
   assert.equal(isSupportedEditorUrl('https://gentrans.genplus.cn/#/login'), false);
   assert.equal(isSupportedEditorUrl('https://example.com/'), false);

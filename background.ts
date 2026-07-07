@@ -244,36 +244,105 @@ function createSourceExportFileName(): string {
   return `memoq-sources-${date}.xlsx`;
 }
 
-async function withAttachedDebugger(
-  tabId: number,
-  callback: (target: { tabId: number }) => Promise<void>
-): Promise<void> {
-  const target = { tabId };
-  let attached = false;
+// Attaching/detaching the debugger per click makes the "extension is
+// debugging this browser" infobar pop in and out around every trusted click.
+// Each toggle resizes the page, and memoQ's virtualized grid re-lays out
+// right between coordinate measurement and the click — so the click lands on
+// the wrong row. Keep one attachment alive across the run: every debugger
+// message AND every run-progress report resets the idle timer, so the
+// attachment only drops once the run has actually gone quiet.
+const DEBUGGER_IDLE_DETACH_MS = 30000;
+const DEBUGGER_FRESH_ATTACH_SETTLE_MS = 600;
 
-  try {
+const debuggerAttachments = new Map<number, { idleTimer: ReturnType<typeof setTimeout> | null }>();
+// attach/detach must never overlap for a tab: an attach issued while the
+// idle detach is still in flight fails with "another debugger is already
+// attached". Chain every transition through this per-tab promise.
+const debuggerTransitions = new Map<number, Promise<void>>();
+
+chrome.debugger.onDetach.addListener((source: { tabId?: number }) => {
+  if (typeof source.tabId !== 'number') {
+    return;
+  }
+
+  const attachment = debuggerAttachments.get(source.tabId);
+  if (attachment?.idleTimer !== null && attachment?.idleTimer !== undefined) {
+    clearTimeout(attachment.idleTimer);
+  }
+  debuggerAttachments.delete(source.tabId);
+});
+
+function enqueueDebuggerTransition(tabId: number, operation: () => Promise<void>): Promise<void> {
+  const previous = debuggerTransitions.get(tabId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
+  debuggerTransitions.set(
+    tabId,
+    next.catch(() => undefined)
+  );
+  return next;
+}
+
+function scheduleDebuggerIdleDetach(tabId: number): void {
+  const attachment = debuggerAttachments.get(tabId);
+  if (!attachment) {
+    return;
+  }
+
+  if (attachment.idleTimer !== null) {
+    clearTimeout(attachment.idleTimer);
+  }
+
+  attachment.idleTimer = setTimeout(() => {
+    void enqueueDebuggerTransition(tabId, async () => {
+      if (!debuggerAttachments.has(tabId)) {
+        return;
+      }
+
+      debuggerAttachments.delete(tabId);
+      await new Promise<void>((resolve) => {
+        chrome.debugger.detach({ tabId }, () => {
+          void chrome.runtime.lastError;
+          resolve();
+        });
+      });
+    });
+  }, DEBUGGER_IDLE_DETACH_MS);
+}
+
+async function ensureDebuggerAttached(tabId: number): Promise<void> {
+  await enqueueDebuggerTransition(tabId, async () => {
+    if (debuggerAttachments.has(tabId)) {
+      scheduleDebuggerIdleDetach(tabId);
+      return;
+    }
+
     await new Promise<void>((resolve, reject) => {
-      chrome.debugger.attach(target, CHROME_DEBUGGER_PROTOCOL_VERSION, () => {
+      chrome.debugger.attach({ tabId }, CHROME_DEBUGGER_PROTOCOL_VERSION, () => {
         const error = chrome.runtime.lastError;
         if (error) {
           reject(new Error(error.message));
           return;
         }
 
-        attached = true;
         resolve();
       });
     });
 
-    await callback(target);
-  } finally {
-    if (attached) {
-      await new Promise<void>((resolve) => {
-        chrome.debugger.detach(target, () => {
-          resolve();
-        });
-      });
-    }
+    debuggerAttachments.set(tabId, { idleTimer: null });
+    scheduleDebuggerIdleDetach(tabId);
+
+    // The infobar shown by a fresh attachment resizes the page; wait for the
+    // editor layout to settle before callers measure coordinates.
+    await new Promise((resolve) => setTimeout(resolve, DEBUGGER_FRESH_ATTACH_SETTLE_MS));
+  });
+}
+
+// Progress reports flow throughout scanning even when no segment needs a
+// trusted click, so they keep the attachment alive across long stretches of
+// skipped rows. Never attaches — only extends an existing attachment.
+function keepDebuggerAttachmentAlive(tabId: number | undefined): void {
+  if (typeof tabId === 'number' && debuggerAttachments.has(tabId)) {
+    scheduleDebuggerIdleDetach(tabId);
   }
 }
 
@@ -313,9 +382,9 @@ async function dispatchTrustedTabClick(tabId: number, x: number, y: number): Pro
     throw new Error('Invalid memoQ click coordinates.');
   }
 
-  await withAttachedDebugger(tabId, async (target) => {
-    await dispatchTrustedMemoqClick(target, x, y);
-  });
+  await ensureDebuggerAttached(tabId);
+  await dispatchTrustedMemoqClick({ tabId }, x, y);
+  scheduleDebuggerIdleDetach(tabId);
 }
 
 async function dispatchTrustedTextWrite(
@@ -328,26 +397,27 @@ async function dispatchTrustedTextWrite(
     throw new Error('Invalid trusted write payload.');
   }
 
-  await withAttachedDebugger(tabId, async (target) => {
-    await dispatchTrustedMemoqClick(target, x, y);
+  await ensureDebuggerAttached(tabId);
+  const target = { tabId };
+  await dispatchTrustedMemoqClick(target, x, y);
 
-    await new Promise<void>((resolve, reject) => {
-      chrome.debugger.sendCommand(
-        target,
-        'Input.insertText',
-        { text },
-        () => {
-          const error = chrome.runtime.lastError;
-          if (error) {
-            reject(new Error(error.message));
-            return;
-          }
-
-          resolve();
+  await new Promise<void>((resolve, reject) => {
+    chrome.debugger.sendCommand(
+      target,
+      'Input.insertText',
+      { text },
+      () => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new Error(error.message));
+          return;
         }
-      );
-    });
+
+        resolve();
+      }
+    );
   });
+  scheduleDebuggerIdleDetach(tabId);
 }
 
 async function handleMessage(
@@ -594,6 +664,7 @@ async function handleMessage(
     }
 
     case 'REPORT_RUN_PROGRESS': {
+      keepDebuggerAttachmentAlive(sender?.tab?.id);
       const state = await readRuntimeState();
       if (
         !isRunActive(state.runState) ||
@@ -622,6 +693,16 @@ async function handleMessage(
         request.payload.y,
         request.payload.text
       );
+      return { ok: true, data: null };
+    }
+
+    case 'MEMOQ_DEBUGGER_PREPARE': {
+      const tabId = sender?.tab?.id;
+      if (typeof tabId !== 'number') {
+        throw new Error('memoQ trusted input requires a sender tab.');
+      }
+
+      await ensureDebuggerAttached(tabId);
       return { ok: true, data: null };
     }
 

@@ -1,4 +1,4 @@
-const MEMOQ_URL_RE = /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/webpm\/webtrans\//;
+const MEMOQ_URL_RE = /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/(?:webpm\/)?webtrans\//;
 const MEMSOURCE_JOB_URL_RE =
   /^https:\/\/cloud\.memsource\.com\/web\/job\/[^/]+\/translate(?:[/?#]|$)/;
 const MEMSOURCE_EDITOR_FRAME_URL_RE =

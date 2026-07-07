@@ -238,6 +238,10 @@ export interface ReportRunProgressRequest {
   };
 }
 
+export interface MemoqDebuggerPrepareRequest {
+  type: 'MEMOQ_DEBUGGER_PREPARE';
+}
+
 export interface MemoqDebuggerClickRequest {
   type: 'MEMOQ_DEBUGGER_CLICK';
   payload: {
@@ -273,6 +277,7 @@ export type BackgroundRequest =
   | GetStateRequest
   | SetFillOptionsRequest
   | ReportRunProgressRequest
+  | MemoqDebuggerPrepareRequest
   | MemoqDebuggerClickRequest
   | MemoqDebuggerWriteTextRequest
   | DebuggerWriteTextRequest;
