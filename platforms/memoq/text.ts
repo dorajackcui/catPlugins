@@ -1,4 +1,4 @@
-import { normalizeText } from './utils.ts';
+import { normalizeText } from '../../utils.ts';
 
 function stripMemoqInlineTagMarkup(value: string): string {
   return value

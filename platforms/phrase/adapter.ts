@@ -1,13 +1,13 @@
-import { runtimeSendMessage } from './chrome-api.ts';
-import { extractPlaceholderTokens } from './qa.ts';
-import type { ApiResponse, BackgroundRequest, FillOutcome } from './types.ts';
-import { delay, normalizeText, waitForNormalizedTextMatch } from './utils.ts';
+import { runtimeSendMessage } from '../../chrome-api.ts';
+import { extractPlaceholderTokens } from '../../qa.ts';
+import type { ApiResponse, BackgroundRequest, FillOutcome } from '../../types.ts';
+import { delay, normalizeText, waitForNormalizedTextMatch } from '../../utils.ts';
 import type {
   ContentScriptDomHelpers,
   EditableElement,
   RuntimeSegment,
   ScrollContext
-} from './content-script-dom.ts';
+} from '../../content-script-dom.ts';
 
 const ROW_SELECTORS = ['.segment-row[role="row"]', '.segment-row', '.twe_segment'];
 const SOURCE_ROW_SELECTORS = [

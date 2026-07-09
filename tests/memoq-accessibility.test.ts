@@ -6,7 +6,7 @@ import {
   chooseMemoqAccessibilityTextBoxes,
   MemoqAdapter,
   shouldUseMemoqAccessibilityTextBox
-} from '../memoq-adapter.ts';
+} from '../platforms/memoq/adapter.ts';
 import { fakeDocument, fakeElement } from './memoq-test-dom.ts';
 
 const NBSP = String.fromCharCode(0x00a0);

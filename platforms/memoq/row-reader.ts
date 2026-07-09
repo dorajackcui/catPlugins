@@ -1,13 +1,13 @@
-import { extractPlaceholderTokens } from './qa.ts';
-import { normalizeText } from './utils.ts';
+import { extractPlaceholderTokens } from '../../qa.ts';
+import { normalizeText } from '../../utils.ts';
 import type {
   ContentScriptDomHelpers,
   RuntimeSegment,
   ScrollContext
-} from './content-script-dom.ts';
-import { readMemoqAccessibilityTextBoxValue } from './memoq-accessibility-textbox.ts';
-import type { MemoqDomProfile } from './memoq-dom-profile.ts';
-import { serializeMemoqContent } from './memoq-text.ts';
+} from '../../content-script-dom.ts';
+import { readMemoqAccessibilityTextBoxValue } from './accessibility-textbox.ts';
+import type { MemoqDomProfile } from './dom-profile.ts';
+import { serializeMemoqContent } from './text.ts';
 
 const MEMOQ_ACCESSIBILITY_TEXTBOX_SELECTOR = 'textarea, input[type="text"]';
 const VISIBLE_SEGMENT_TOP_BUCKET_PX = 24;

@@ -4,11 +4,11 @@ import { ContentScriptDomHelpers } from './content-script-dom.ts';
 import type { RuntimeSegment, ScrollContext } from './content-script-dom.ts';
 import { normalizeFillOptions } from './fill-options.ts';
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFill } from './fill-throttle.ts';
-import { GientTransAdapter } from './gientrans-adapter.ts';
-import { describeMemoqFillDiagnostic } from './memoq-fill-diagnostics.ts';
-import { MemoqAdapter } from './memoq-adapter.ts';
-import { findMemoqStartTargetCell } from './memoq-dom-profile.ts';
-import { PhraseAdapter } from './phrase-adapter.ts';
+import { GientTransAdapter } from './platforms/gientrans/adapter.ts';
+import { describeMemoqFillDiagnostic } from './platforms/memoq/fill-diagnostics.ts';
+import { MemoqAdapter } from './platforms/memoq/adapter.ts';
+import { findMemoqStartTargetCell } from './platforms/memoq/dom-profile.ts';
+import { PhraseAdapter } from './platforms/phrase/adapter.ts';
 import {
   hasRepeatedSyntheticSignature,
   isRecentSyntheticDuplicate,

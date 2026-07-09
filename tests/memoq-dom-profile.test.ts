@@ -6,7 +6,7 @@ import {
   legacyWebtransMemoqProfile,
   modernEditorMemoqProfile,
   selectMemoqDomProfile
-} from '../memoq-dom-profile.ts';
+} from '../platforms/memoq/dom-profile.ts';
 import { fakeDocument, fakeElement } from './memoq-test-dom.ts';
 
 function asElement<T>(element: T): T & HTMLElement {

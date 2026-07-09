@@ -1,42 +1,42 @@
-import { runtimeSendMessage } from './chrome-api.ts';
+import { runtimeSendMessage } from '../../chrome-api.ts';
 import type {
   ContentScriptDomHelpers,
   RuntimeSegment,
   ScrollContext
-} from './content-script-dom.ts';
-import { describeMemoqFillDiagnostic } from './memoq-fill-diagnostics.ts';
-import { MemoqFillTransaction } from './memoq-fill-transaction.ts';
+} from '../../content-script-dom.ts';
+import { describeMemoqFillDiagnostic } from './fill-diagnostics.ts';
+import { MemoqFillTransaction } from './fill-transaction.ts';
 import {
   selectMemoqDomProfile,
   type MemoqDomProfile
-} from './memoq-dom-profile.ts';
+} from './dom-profile.ts';
 import {
   MemoqRowReader,
-} from './memoq-row-reader.ts';
+} from './row-reader.ts';
 import {
   chooseMemoqAccessibilityTextBoxes,
   readMemoqAccessibilityTextBoxValue
-} from './memoq-accessibility-textbox.ts';
-import { serializeMemoqContent } from './memoq-text.ts';
-import { writeTrustedTextToElement } from './trusted-text-writer.ts';
-import type { ApiResponse, BackgroundRequest, FillOutcome } from './types.ts';
+} from './accessibility-textbox.ts';
+import { serializeMemoqContent } from './text.ts';
+import { writeTrustedTextToElement } from '../../trusted-text-writer.ts';
+import type { ApiResponse, BackgroundRequest, FillOutcome } from '../../types.ts';
 import {
   containsNoBreakSpace,
   normalizeText,
   normalizeTextPreservingNoBreakSpaces
-} from './utils.ts';
+} from '../../utils.ts';
 
 export {
   chooseMemoqAccessibilityTextBoxes,
   readMemoqAccessibilityTextBoxValue,
   shouldUseMemoqAccessibilityTextBox
-} from './memoq-accessibility-textbox.ts';
+} from './accessibility-textbox.ts';
 export {
   formatMemoqInlineTag,
   isMemoqCommittedTargetText,
   memoQAccessibilityTextToRenderedText,
   serializeMemoqContent
-} from './memoq-text.ts';
+} from './text.ts';
 
 const MEMOQ_ACCESSIBILITY_TEXTBOX_SELECTOR = 'textarea, input[type="text"]';
 

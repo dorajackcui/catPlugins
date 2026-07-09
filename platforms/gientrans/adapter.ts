@@ -1,17 +1,17 @@
-import { extractPlaceholderTokens } from './qa.ts';
-import type { FillOutcome } from './types.ts';
-import { delay, normalizeText } from './utils.ts';
+import { extractPlaceholderTokens } from '../../qa.ts';
+import type { FillOutcome } from '../../types.ts';
+import { delay, normalizeText } from '../../utils.ts';
 import {
   findGientTransMarkupTokenAt,
   normalizeGientTransDomTagToken,
   normalizeGientTransInlineMarkup
-} from './gientrans-markup.ts';
-import type { GientTransMarkupToken } from './gientrans-markup.ts';
+} from './markup.ts';
+import type { GientTransMarkupToken } from './markup.ts';
 import type {
   ContentScriptDomHelpers,
   RuntimeSegment,
   ScrollContext
-} from './content-script-dom.ts';
+} from '../../content-script-dom.ts';
 
 const GIENTRANS_ROOT_SELECTOR = '#o-editor.online-editor';
 const GIENTRANS_TABLE_SELECTOR = '.editor__table';

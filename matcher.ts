@@ -10,7 +10,7 @@ import type {
 import {
   normalizeGientTransInlineMarkup,
   stripGientTransInlineMarkup
-} from './gientrans-markup.ts';
+} from './platforms/gientrans/markup.ts';
 import { normalizeText } from './utils.ts';
 
 export function buildMatchKey(sourceNormalized: string, occurrenceIndex: number): string {

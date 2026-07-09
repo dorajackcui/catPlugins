@@ -1,6 +1,6 @@
-import type { RuntimeSegment } from './content-script-dom.ts';
-import type { MemoqDomProfile } from './memoq-dom-profile.ts';
-import { isMemoqCommittedTargetText } from './memoq-text.ts';
+import type { RuntimeSegment } from '../../content-script-dom.ts';
+import type { MemoqDomProfile } from './dom-profile.ts';
+import { isMemoqCommittedTargetText } from './text.ts';
 import type {
   FillOutcome,
   MemoqFillDiagnostic,
@@ -8,8 +8,8 @@ import type {
   MemoqFillFailureDiagnostic,
   MemoqFillSuccessDiagnostic,
   MemoqVisibleRowSnapshot
-} from './types.ts';
-import { normalizeText } from './utils.ts';
+} from '../../types.ts';
+import { normalizeText } from '../../utils.ts';
 
 const MEMOQ_COMMIT_CONFIRM_ATTEMPTS = 14;
 const MEMOQ_COMMIT_CONFIRM_DELAY_MS = 150;

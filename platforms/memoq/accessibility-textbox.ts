@@ -1,4 +1,4 @@
-import { normalizeText } from './utils.ts';
+import { normalizeText } from '../../utils.ts';
 
 type MemoqAccessibilityTextBoxLike = Pick<
   HTMLInputElement | HTMLTextAreaElement,

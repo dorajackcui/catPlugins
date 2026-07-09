@@ -5,8 +5,8 @@ import { ContentScriptDomHelpers, type RuntimeSegment, type ScrollContext } from
 import {
   legacyWebtransMemoqProfile,
   modernEditorMemoqProfile
-} from '../memoq-dom-profile.ts';
-import { MemoqRowReader } from '../memoq-row-reader.ts';
+} from '../platforms/memoq/dom-profile.ts';
+import { MemoqRowReader } from '../platforms/memoq/row-reader.ts';
 import { fakeDocument, fakeElement, type FakeElement } from './memoq-test-dom.ts';
 
 function asElement<T>(element: T): T & HTMLElement {

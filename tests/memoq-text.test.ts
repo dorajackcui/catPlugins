@@ -6,7 +6,7 @@ import {
   isMemoqCommittedTargetText,
   memoQAccessibilityTextToRenderedText,
   serializeMemoqContent
-} from '../memoq-text.ts';
+} from '../platforms/memoq/text.ts';
 import { fakeElement, fakeText } from './memoq-test-dom.ts';
 
 const NBSP = String.fromCharCode(0x00a0);
