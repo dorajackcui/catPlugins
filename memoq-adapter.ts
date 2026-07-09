@@ -12,8 +12,11 @@ import {
 } from './memoq-dom-profile.ts';
 import {
   MemoqRowReader,
-  readMemoqAccessibilityTextBoxValue
 } from './memoq-row-reader.ts';
+import {
+  chooseMemoqAccessibilityTextBoxes,
+  readMemoqAccessibilityTextBoxValue
+} from './memoq-accessibility-textbox.ts';
 import { serializeMemoqContent } from './memoq-text.ts';
 import { writeTrustedTextToElement } from './trusted-text-writer.ts';
 import type { ApiResponse, BackgroundRequest, FillOutcome } from './types.ts';
@@ -24,52 +27,18 @@ import {
 } from './utils.ts';
 
 export {
+  chooseMemoqAccessibilityTextBoxes,
+  readMemoqAccessibilityTextBoxValue,
+  shouldUseMemoqAccessibilityTextBox
+} from './memoq-accessibility-textbox.ts';
+export {
   formatMemoqInlineTag,
   isMemoqCommittedTargetText,
   memoQAccessibilityTextToRenderedText,
   serializeMemoqContent
 } from './memoq-text.ts';
-export { readMemoqAccessibilityTextBoxValue } from './memoq-row-reader.ts';
 
 const MEMOQ_ACCESSIBILITY_TEXTBOX_SELECTOR = 'textarea, input[type="text"]';
-
-type MemoqAccessibilityTextBoxLike = Pick<
-  HTMLInputElement | HTMLTextAreaElement,
-  'id' | 'disabled' | 'readOnly' | 'value' | 'textContent'
->;
-
-export function shouldUseMemoqAccessibilityTextBox(
-  textBox: MemoqAccessibilityTextBoxLike,
-  options: { requireWritable: boolean }
-): boolean {
-  if (textBox.id === 'editorHiddenInput') {
-    return false;
-  }
-
-  if (options.requireWritable && (textBox.disabled || textBox.readOnly)) {
-    return false;
-  }
-
-  return true;
-}
-
-export function chooseMemoqAccessibilityTextBoxes<T extends MemoqAccessibilityTextBoxLike>(
-  textBoxes: T[]
-): { source: T; target: T } | null {
-  const readable = textBoxes.filter((textBox) =>
-    shouldUseMemoqAccessibilityTextBox(textBox, { requireWritable: false })
-  );
-  const source = readable.find((textBox) => textBox.disabled || textBox.readOnly);
-  const target = readable.find((textBox) =>
-    shouldUseMemoqAccessibilityTextBox(textBox, { requireWritable: true })
-  );
-
-  if (!source || !target) {
-    return null;
-  }
-
-  return { source, target };
-}
 
 export class MemoqAdapter {
   constructor(private readonly helpers: ContentScriptDomHelpers) {}

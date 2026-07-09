@@ -5,6 +5,7 @@ import type {
   RuntimeSegment,
   ScrollContext
 } from './content-script-dom.ts';
+import { readMemoqAccessibilityTextBoxValue } from './memoq-accessibility-textbox.ts';
 import type { MemoqDomProfile } from './memoq-dom-profile.ts';
 import { serializeMemoqContent } from './memoq-text.ts';
 
@@ -15,12 +16,6 @@ export interface MemoqVisibleRowDiagnostic {
   rowNumber?: string;
   source: string;
   target: string;
-}
-
-export function readMemoqAccessibilityTextBoxValue(
-  textBox: Pick<HTMLInputElement | HTMLTextAreaElement, 'value' | 'textContent'>
-): string {
-  return normalizeText(textBox.value || textBox.textContent || '');
 }
 
 export class MemoqRowReader {
