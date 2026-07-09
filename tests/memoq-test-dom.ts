@@ -50,14 +50,13 @@ export function fakeText(textContent: string): FakeTextNode {
 
 export function fakeElement(options: FakeElementOptions = {}): FakeElement {
   const classNames = (options.className ?? '').split(/\s+/).filter(Boolean);
+  const ownTextContent = options.textContent ?? '';
 
-  const element: FakeElement = {
+  const element = {
     nodeType: 1,
     tagName: options.tagName ?? 'DIV',
     id: options.id ?? '',
     className: options.className ?? '',
-    textContent: options.textContent ?? '',
-    innerText: options.textContent ?? '',
     parentElement: null,
     children: [],
     childNodes: [],
@@ -88,14 +87,23 @@ export function fakeElement(options: FakeElementOptions = {}): FakeElement {
       } as DOMRect;
     },
     scrollIntoView: () => undefined
-  };
+  } as unknown as FakeElement;
+
+  Object.defineProperties(element, {
+    textContent: {
+      get: () => aggregateElementTextContent(element, ownTextContent)
+    },
+    innerText: {
+      get: () => aggregateElementTextContent(element, ownTextContent)
+    }
+  });
 
   for (const child of options.children ?? []) {
     appendChild(element, child);
   }
 
-  if (element.children.length === 0 && element.textContent) {
-    const textNode = fakeText(element.textContent);
+  if (element.childNodes.length === 0 && ownTextContent) {
+    const textNode = fakeText(ownTextContent);
     textNode.parentElement = element;
     element.childNodes.push(textNode);
   }
@@ -140,7 +148,10 @@ function matchesSelector(element: FakeElement, selector: string): boolean {
   return selector
     .split(',')
     .map((part) => part.trim())
-    .some((part) => matchesSingleSelector(element, part));
+    .some((part) => {
+      assertSupportedSelector(part);
+      return matchesSingleSelector(element, part);
+    });
 }
 
 function matchesSingleSelector(element: FakeElement, selector: string): boolean {
@@ -176,4 +187,25 @@ function matchesSingleSelector(element: FakeElement, selector: string): boolean 
   }
 
   return true;
+}
+
+function aggregateElementTextContent(element: FakeElement, ownTextContent: string): string {
+  if (element.childNodes.length === 0) {
+    return ownTextContent;
+  }
+
+  return element.childNodes
+    .map((child) =>
+      child.nodeType === 3 ? child.textContent : child.textContent
+    )
+    .join('');
+}
+
+function assertSupportedSelector(selector: string): void {
+  const simpleSelectorPattern =
+    /^(?:\*|[a-zA-Z][a-zA-Z0-9-]*)?(?:\.[a-zA-Z0-9_-]+|\[[^"'=\]\s]+(?:="[^"]*")?\])*$/;
+
+  if (!selector || !simpleSelectorPattern.test(selector)) {
+    throw new Error(`Unsupported selector syntax: ${selector}`);
+  }
 }

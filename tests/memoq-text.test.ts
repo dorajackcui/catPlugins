@@ -125,3 +125,50 @@ test('serializeMemoqContent converts inline tag elements while ignoring input el
 
   assert.equal(serializeMemoqContent(root as unknown as HTMLElement), 'A{1>}B<1}C');
 });
+
+test('serializeMemoqContent uses aggregated descendant text for mixed nested content', () => {
+  const root = fakeElement({
+    children: [
+      fakeText('A'),
+      fakeElement({
+        className: 'tag inline-open editor-char',
+        children: [
+          fakeElement({
+            className: 'tag-content',
+            children: [fakeElement({ tagName: 'SPAN', children: [fakeText('1')] })]
+          })
+        ]
+      }),
+      fakeElement({
+        tagName: 'SPAN',
+        children: [fakeText('B'), fakeElement({ tagName: 'EM', children: [fakeText('C')] })]
+      }),
+      fakeElement({ tagName: 'INPUT', attributes: { value: 'ignored' } }),
+      fakeText('D')
+    ]
+  });
+
+  assert.equal(serializeMemoqContent(root as unknown as HTMLElement), 'A{1>}BCD');
+});
+
+test('fake DOM selector matcher throws on unsupported selector syntax', () => {
+  const root = fakeElement({
+    children: [fakeElement({ className: 'tag-content' })]
+  });
+
+  for (const selector of ['div .tag-content', '.tag-content > span']) {
+    let error: unknown;
+
+    try {
+      root.querySelector(selector);
+    } catch (nextError) {
+      error = nextError;
+    }
+
+    assert.equal(error instanceof Error, true);
+    assert.equal(
+      error instanceof Error ? /Unsupported selector syntax/.test(error.message) : false,
+      true
+    );
+  }
+});
