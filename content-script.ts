@@ -4,9 +4,14 @@ import { ContentScriptDomHelpers } from './content-script-dom.ts';
 import type { RuntimeSegment, ScrollContext } from './content-script-dom.ts';
 import { normalizeFillOptions } from './fill-options.ts';
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFill } from './fill-throttle.ts';
-import { GientTransAdapter } from './gientrans-adapter.ts';
-import { MemoqAdapter } from './memoq-adapter.ts';
-import { PhraseAdapter } from './phrase-adapter.ts';
+import { GientTransAdapter } from './platforms/gientrans/adapter.ts';
+import { describeMemoqFillDiagnostic } from './platforms/memoq/fill-diagnostics.ts';
+import { MemoqAdapter } from './platforms/memoq/adapter.ts';
+import {
+  findMemoqStartTargetCell,
+  readMemoqStartMarkerDomId
+} from './platforms/memoq/dom-profile.ts';
+import { PhraseAdapter } from './platforms/phrase/adapter.ts';
 import {
   hasRepeatedSyntheticSignature,
   isRecentSyntheticDuplicate,
@@ -14,8 +19,7 @@ import {
   shouldStopScanBeforeNextScroll
 } from './scan-dedupe.ts';
 import {
-  filterSegmentsFromStartMarker,
-  findStartSegmentIndex,
+  filterSegmentsFromPendingStartMarker,
   type StartMarker
 } from './start-marker.ts';
 import type {
@@ -55,7 +59,6 @@ const START_MARKER_MAX_AGE_MS = 30 * 60 * 1000;
 const GIENTRANS_START_TARGET_SELECTOR = 'td.target-cell pre.edit__input[editortype="target"]';
 const GIENTRANS_START_TARGET_CELL_SELECTOR = 'td.target-cell';
 const PHRASE_START_TARGET_SELECTOR = '.twe_target';
-const MEMOQ_START_CELL_SELECTOR = '.editor-cell';
 
 const helpers = new ContentScriptDomHelpers();
 const memoqAdapter = new MemoqAdapter(helpers);
@@ -265,6 +268,10 @@ class PlatformDomAdapter {
   }
 
   private describeMemoqStopReason(segment: RuntimeSegment, outcome: FillOutcome): string {
+    if (outcome.diagnostic?.outcome === 'failure') {
+      return describeMemoqFillDiagnostic(outcome.diagnostic);
+    }
+
     const rowLabel = segment.rowNumber ? `row ${segment.rowNumber}` : `segment ${segment.domId}`;
     const sourcePreview =
       segment.sourceRaw.length > 80
@@ -330,12 +337,14 @@ class PlatformDomAdapter {
         const countBefore = segments.length;
         let visibleSegments = this.collectVisibleSegments(scrollContext);
         if (shouldApplyStartMarker && startMarker) {
-          const startIndex = findStartSegmentIndex(visibleSegments, startMarker);
-          if (startIndex !== null) {
-            visibleSegments = filterSegmentsFromStartMarker(visibleSegments, startMarker);
-          }
+          const markerFilter = filterSegmentsFromPendingStartMarker(
+            visibleSegments,
+            startMarker
+          );
+          const startIndex = markerFilter.startIndex;
+          visibleSegments = markerFilter.segments;
           this.debugStartMarker(startMarker, startIndex, countBefore, visibleSegments);
-          shouldApplyStartMarker = false;
+          shouldApplyStartMarker = markerFilter.shouldKeepStartMarker;
         }
         let shouldSkipSyntheticPass = false;
         if (scrollContext.mode === 'synthetic') {
@@ -694,15 +703,20 @@ function resolveStartMarkerTargetElement(element: Element): Element | null {
     return phraseTarget;
   }
 
-  const memoqCell = element.closest<HTMLElement>(MEMOQ_START_CELL_SELECTOR);
-  if (memoqCell) {
-    return memoqCell;
+  const memoqTarget = findMemoqStartTargetCell(document, element);
+  if (memoqTarget) {
+    return memoqTarget;
   }
 
   return null;
 }
 
 function readLikelyTargetDomId(targetElement: Element): string | null {
+  const memoqRowId = readMemoqStartMarkerDomId(document, targetElement);
+  if (memoqRowId) {
+    return memoqRowId;
+  }
+
   const gientransTarget =
     targetElement.matches(GIENTRANS_START_TARGET_SELECTOR)
       ? targetElement
@@ -740,8 +754,8 @@ function firstNonEmptyAttribute(
 function isEditorSurfaceElement(element: Element): boolean {
   return Boolean(
     element.closest(
-      '#o-editor.online-editor, .editor__table, .segment-row, .twe_segment, .editor-cell'
-    )
+      '#o-editor.online-editor, .editor__table, .segment-row, .twe_segment'
+    ) || findMemoqStartTargetCell(document, element)
   );
 }
 

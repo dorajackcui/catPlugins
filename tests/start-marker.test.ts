@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   filterSegmentsFromStartMarker,
+  filterSegmentsFromPendingStartMarker,
   findStartSegmentIndex
 } from '../start-marker.ts';
 import type { RuntimeSegment } from '../content-script-dom.ts';
@@ -81,4 +82,25 @@ test('filterSegmentsFromStartMarker leaves segments unchanged when marker is mis
 
   assert.equal(findStartSegmentIndex(segments, { domId: 'missing' }), null);
   assert.deepEqual(filterSegmentsFromStartMarker(segments, { domId: 'missing' }), segments);
+});
+
+test('pending start marker suppresses segments until the marker is found', () => {
+  const firstPassSegments = [makeSegment('a'), makeSegment('b')];
+  const pending = filterSegmentsFromPendingStartMarker(firstPassSegments, { domId: 'c' });
+
+  assert.deepEqual(pending.segments, []);
+  assert.equal(pending.startIndex, null);
+  assert.equal(pending.matched, false);
+  assert.equal(pending.shouldKeepStartMarker, true);
+
+  const secondPassSegments = [makeSegment('b'), makeSegment('c'), makeSegment('d')];
+  const matched = filterSegmentsFromPendingStartMarker(secondPassSegments, { domId: 'c' });
+
+  assert.deepEqual(
+    matched.segments.map((segment: RuntimeSegment) => segment.domId),
+    ['c', 'd']
+  );
+  assert.equal(matched.startIndex, 1);
+  assert.equal(matched.matched, true);
+  assert.equal(matched.shouldKeepStartMarker, false);
 });

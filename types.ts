@@ -134,6 +134,7 @@ export interface MemoqFillDiagnosticBase {
   scanPass: number;
   scrollTop: number;
   scrollMode: 'native' | 'synthetic';
+  profileId?: 'legacy-webtrans' | 'modern-editor';
   domId: string;
   rowNumber?: string;
   locatingMethod: 'rowNumber' | 'singleVisibleSource' | 'none';
@@ -242,14 +243,6 @@ export interface MemoqDebuggerPrepareRequest {
   type: 'MEMOQ_DEBUGGER_PREPARE';
 }
 
-export interface MemoqDebuggerClickRequest {
-  type: 'MEMOQ_DEBUGGER_CLICK';
-  payload: {
-    x: number;
-    y: number;
-  };
-}
-
 export interface MemoqDebuggerWriteTextRequest {
   type: 'MEMOQ_DEBUGGER_WRITE_TEXT';
   payload: {
@@ -278,7 +271,6 @@ export type BackgroundRequest =
   | SetFillOptionsRequest
   | ReportRunProgressRequest
   | MemoqDebuggerPrepareRequest
-  | MemoqDebuggerClickRequest
   | MemoqDebuggerWriteTextRequest
   | DebuggerWriteTextRequest;
 

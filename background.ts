@@ -247,7 +247,7 @@ function createSourceExportFileName(): string {
 // Attaching/detaching the debugger per click makes the "extension is
 // debugging this browser" infobar pop in and out around every trusted click.
 // Each toggle resizes the page, and memoQ's virtualized grid re-lays out
-// right between coordinate measurement and the click — so the click lands on
+// right between coordinate measurement and the click, so the click lands on
 // the wrong row. Keep one attachment alive across the run: every debugger
 // message AND every run-progress report resets the idle timer, so the
 // attachment only drops once the run has actually gone quiet.
@@ -339,7 +339,7 @@ async function ensureDebuggerAttached(tabId: number): Promise<void> {
 
 // Progress reports flow throughout scanning even when no segment needs a
 // trusted click, so they keep the attachment alive across long stretches of
-// skipped rows. Never attaches — only extends an existing attachment.
+// skipped rows. Never attaches; only extends an existing attachment.
 function keepDebuggerAttachmentAlive(tabId: number | undefined): void {
   if (typeof tabId === 'number' && debuggerAttachments.has(tabId)) {
     scheduleDebuggerIdleDetach(tabId);
@@ -375,16 +375,6 @@ async function dispatchTrustedMemoqClick(
       );
     });
   }
-}
-
-async function dispatchTrustedTabClick(tabId: number, x: number, y: number): Promise<void> {
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    throw new Error('Invalid memoQ click coordinates.');
-  }
-
-  await ensureDebuggerAttached(tabId);
-  await dispatchTrustedMemoqClick({ tabId }, x, y);
-  scheduleDebuggerIdleDetach(tabId);
 }
 
 async function dispatchTrustedTextWrite(
@@ -703,16 +693,6 @@ async function handleMessage(
       }
 
       await ensureDebuggerAttached(tabId);
-      return { ok: true, data: null };
-    }
-
-    case 'MEMOQ_DEBUGGER_CLICK': {
-      const tabId = sender?.tab?.id;
-      if (typeof tabId !== 'number') {
-        throw new Error('memoQ trusted click requires a sender tab.');
-      }
-
-      await dispatchTrustedTabClick(tabId, request.payload.x, request.payload.y);
       return { ok: true, data: null };
     }
 

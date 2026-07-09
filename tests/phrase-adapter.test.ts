@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { PhraseAdapter } from '../phrase-adapter.ts';
+import { PhraseAdapter } from '../platforms/phrase/adapter.ts';
 
 class FakeElement {
   tagName = 'DIV';

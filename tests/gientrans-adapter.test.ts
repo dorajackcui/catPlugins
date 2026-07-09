@@ -6,7 +6,7 @@ import {
   GientTransAdapter,
   gientransTextToEditorHtml,
   normalizeGientTransEditorText
-} from '../gientrans-adapter.ts';
+} from '../platforms/gientrans/adapter.ts';
 
 const ROW_SELECTOR = '.editor__table tbody > tr.el-table__row';
 const TARGET_SELECTOR = 'td.target-cell pre.edit__input[editortype="target"]';

@@ -1,34 +1,59 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { ContentScriptDomHelpers } from '../content-script-dom.ts';
 import {
   chooseMemoqAccessibilityTextBoxes,
-  formatMemoqInlineTag,
-  isMemoqCommittedTargetText,
-  memoQAccessibilityTextToRenderedText,
   MemoqAdapter,
   shouldUseMemoqAccessibilityTextBox
-} from '../memoq-adapter.ts';
+} from '../platforms/memoq/adapter.ts';
+import { fakeDocument, fakeElement } from './memoq-test-dom.ts';
 
-function installTrustedClickRecorder(
-  messages: unknown[] = [],
-  onMessage?: (message: unknown) => void
+const NBSP = String.fromCharCode(0x00a0);
+
+type ScrollableElement = HTMLElement & {
+  scrollTop: number;
+  clientHeight: number;
+  scrollHeight: number;
+  scrollBy(input: { top: number }): void;
+  scrollTo(input: { top: number }): void;
+};
+
+function installChromeRecorder(
+  onMessage: (message: unknown) => void,
+  response: unknown = { ok: true, data: null }
 ): () => void {
   const previousChrome = (globalThis as typeof globalThis & { chrome?: unknown }).chrome;
 
   (globalThis as typeof globalThis & { chrome?: unknown }).chrome = {
     runtime: {
       lastError: null,
-      sendMessage: (message: unknown, callback: (response: unknown) => void) => {
-        messages.push(message);
-        onMessage?.(message);
-        callback({ ok: true, data: null });
+      sendMessage: (message: unknown, callback: (nextResponse: unknown) => void) => {
+        onMessage(message);
+        callback(response);
       }
     }
   };
 
   return () => {
     (globalThis as typeof globalThis & { chrome?: unknown }).chrome = previousChrome;
+  };
+}
+
+function installImmediateTimer(): () => void {
+  const previousWindow = globalThis.window;
+  globalThis.window = {
+    ...previousWindow,
+    innerHeight: 600,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', overflowY: 'auto' }),
+    setTimeout: (callback: () => void) => {
+      callback();
+      return 0;
+    }
+  } as unknown as Window & typeof globalThis;
+
+  return () => {
+    globalThis.window = previousWindow;
   };
 }
 
@@ -102,889 +127,172 @@ test('chooseMemoqAccessibilityTextBoxes pairs a disabled source with a writable 
   assert.equal(pair?.target.disabled, false);
 });
 
-test('formatMemoqInlineTag converts normal memoQ tag DOM classes to placeholder markup', () => {
-  assert.equal(formatMemoqInlineTag('tag inline-empty editor-char', '1'), '<1>');
-  assert.equal(formatMemoqInlineTag('tag inline-open editor-char', '2'), '{2>');
-  assert.equal(formatMemoqInlineTag('tag inline-close editor-char', '2'), '<2}');
-});
-
-test('memoQ accessibility text can be compared with rendered cell text', () => {
-  const target = 'Objectif de points atteint<1>Récupérer des récompenses';
-
-  assert.equal(
-    memoQAccessibilityTextToRenderedText(target),
-    'Objectif de points atteint1Récupérer des récompenses'
-  );
-  assert.equal(
-    isMemoqCommittedTargetText(
-      'Objectif de points atteint1Récupérer des récompenses',
-      target
-    ),
-    true
-  );
-  assert.equal(
-    isMemoqCommittedTargetText(
-      'Coffre de radiance Coffre de radiance',
-      'Coffre de radiance'
-    ),
-    false
-  );
-});
-
-const NBSP = String.fromCharCode(0x00a0);
-const NARROW_NBSP = String.fromCharCode(0x202f);
-const MIDDLE_DOT = String.fromCharCode(0x00b7);
-const DEGREE = String.fromCharCode(0x00b0);
-
-test('isMemoqCommittedTargetText accepts memoQ whitespace display marks in the cell text', () => {
-  // With "show whitespace marks" on, memoQ renders spaces as · and nbsp as °.
-  assert.equal(
-    isMemoqCommittedTargetText(
-      `Il·y·a·un·"Lord·Clink"·au·Marché.`.replace(/·/g, MIDDLE_DOT),
-      'Il y a un "Lord Clink" au Marché.'
-    ),
-    true
-  );
-  assert.equal(
-    isMemoqCommittedTargetText(
-      `Tu·n'as·pas·assez·de·pièces·d'or°?`
-        .replace(/·/g, MIDDLE_DOT)
-        .replace(/°/g, DEGREE),
-      `Tu n'as pas assez de pièces d'or${NBSP}?`
-    ),
-    true
-  );
-  // A genuine degree sign in the translation still matches.
-  assert.equal(
-    isMemoqCommittedTargetText(
-      `25${DEGREE}C·dehors`.replace(/·/g, MIDDLE_DOT),
-      `25${DEGREE}C dehors`
-    ),
-    true
-  );
-  // Different words still fail.
-  assert.equal(
-    isMemoqCommittedTargetText(
-      `Bonjour·le·monde`.replace(/·/g, MIDDLE_DOT),
-      'Bonsoir le monde'
-    ),
-    false
-  );
-  // Tag markup is still tolerated alongside display marks.
-  assert.equal(
-    isMemoqCommittedTargetText(
-      `Objectif·atteint1Récupérer`.replace(/·/g, MIDDLE_DOT),
-      'Objectif atteint<1>Récupérer'
-    ),
-    true
-  );
-});
-
-test('isMemoqCommittedTargetText treats rendered no-break spaces and plain spaces as equal', () => {
-  assert.equal(
-    isMemoqCommittedTargetText(`Bonjour${NBSP}!`, `Bonjour${NBSP}!`),
-    true
-  );
-  // Rendered cells show plain spaces for nbsp (and vice versa), so the
-  // commit check must not distinguish them.
-  assert.equal(
-    isMemoqCommittedTargetText('Bonjour !', `Bonjour${NBSP}!`),
-    true
-  );
-  assert.equal(
-    isMemoqCommittedTargetText(`Bonjour${NBSP}le monde${NARROW_NBSP}!`, 'Bonjour le monde !'),
-    true
-  );
-  assert.equal(
-    isMemoqCommittedTargetText(
-      `Objectif${NBSP}: 1atteint`,
-      `Objectif${NBSP}: <1>atteint`
-    ),
-    true
-  );
-});
-
-test('MemoqAdapter.fillSegment confirms when the rendered cell shows plain spaces for nbsp', async () => {
+test('MemoqAdapter.findScrollContext uses the modern memoQ profile scroll root', () => {
   const previousDocument = globalThis.document;
   const previousWindow = globalThis.window;
-  const restoreChrome = installTrustedClickRecorder();
-  const previousWarn = console.warn;
-  const warnings: unknown[][] = [];
-  console.warn = (...args: unknown[]) => {
-    warnings.push(args);
+  const table = fakeElement({
+    attributes: { role: 'table' },
+    children: [
+      fakeElement({
+        attributes: { role: 'row' },
+        children: [
+          fakeElement({
+            className: 'ProseMirror',
+            textContent: 'Source',
+            attributes: {
+              contenteditable: 'true',
+              role: 'gridcell',
+              'aria-label': 'row 48 source segment'
+            }
+          }),
+          fakeElement({
+            className: 'ProseMirror',
+            textContent: '',
+            attributes: {
+              contenteditable: 'true',
+              role: 'gridcell',
+              'aria-label': 'row 48 target segment'
+            }
+          })
+        ]
+      })
+    ]
+  }) as ReturnType<typeof fakeElement> & {
+    scrollTop: number;
+    clientHeight: number;
+    scrollHeight: number;
+    scrollBy(input: { top: number }): void;
+    scrollTo(input: { top: number }): void;
   };
-  const value = `Bonjour${NBSP}le monde${NBSP}!`;
-  const swallowedValue = value.replace(new RegExp(NBSP, 'g'), ' ');
-  const targetCell = {
-    innerText: '',
-    textContent: '',
-    scrollIntoView: () => undefined,
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 260, height: 20, width: 120 }),
-    focus: () => undefined,
-    dispatchEvent: () => true
-  };
-  const hiddenInput = {
-    value: '',
-    textContent: '',
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, height: 20 }),
-    focus: () => undefined,
-    dispatchEvent: () => true
-  };
-  const sourceTextBox = {
-    id: '',
-    disabled: true,
-    readOnly: false,
-    value: 'Hello world!',
-    textContent: ''
-  };
-  const targetTextBox = {
-    id: '',
-    disabled: false,
-    readOnly: false,
-    value: swallowedValue,
-    textContent: ''
-  };
-
-  globalThis.document = {
-    querySelector: () => hiddenInput,
-    querySelectorAll: (selector: string) =>
-      selector.includes('textarea') ? [sourceTextBox, targetTextBox] : [],
-    execCommand: (_command: string, _showDefaultUi?: boolean, insertedValue?: string) => {
-      const swallowed = (insertedValue ?? '').replace(new RegExp(NBSP, 'g'), ' ');
-      targetCell.innerText = swallowed;
-      targetCell.textContent = swallowed;
-      return true;
-    }
-  } as unknown as Document;
-  globalThis.window = { setTimeout } as unknown as Window & typeof globalThis;
-
-  try {
-    const adapter = new MemoqAdapter({
-      dispatchMouseSequence: () => undefined,
-      setNativeInputValue: (input: { value: string }, nextValue: string) => {
-        input.value = nextValue;
-      },
-      dispatchInput: () => undefined,
-      dispatchChange: () => undefined,
-      dispatchTabNavigation: () => undefined,
-      dispatchBlur: () => undefined
-    } as never);
-
-    const outcome = await adapter.fillSegment(
-      {
-        domId: '1',
-        rowNumber: '1',
-        sourceRaw: 'Hello world!',
-        sourceNormalized: 'Hello world!',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: [],
-        targetElement: targetCell as never,
-        platform: 'memoq'
-      },
-      value
-    );
-
-    assert.equal(outcome.filled, true);
-    assert.equal(warnings.length, 1);
-    assert.equal(
-      /no-break spaces/.test(String(warnings[0]?.[0] ?? '')),
-      true
-    );
-  } finally {
-    console.warn = previousWarn;
-    restoreChrome();
-    globalThis.document = previousDocument;
-    globalThis.window = previousWindow;
-  }
-});
-
-test('MemoqAdapter.fillSegment confirms when memoQ preserves the no-break space', async () => {
-  const previousDocument = globalThis.document;
-  const previousWindow = globalThis.window;
-  const restoreChrome = installTrustedClickRecorder();
-  const previousWarn = console.warn;
-  const warnings: unknown[][] = [];
-  console.warn = (...args: unknown[]) => {
-    warnings.push(args);
-  };
-  const value = `Bonjour${NBSP}le monde${NBSP}!`;
-  const targetCell = {
-    innerText: '',
-    textContent: '',
-    scrollIntoView: () => undefined,
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 260, height: 20, width: 120 }),
-    focus: () => undefined,
-    dispatchEvent: () => true
-  };
-  const hiddenInput = {
-    value: '',
-    textContent: '',
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, height: 20 }),
-    focus: () => undefined,
-    dispatchEvent: () => true
-  };
-  const sourceTextBox = {
-    id: '',
-    disabled: true,
-    readOnly: false,
-    value: 'Hello world!',
-    textContent: ''
-  };
-  const targetTextBox = {
-    id: '',
-    disabled: false,
-    readOnly: false,
-    value,
-    textContent: ''
-  };
-
-  globalThis.document = {
-    querySelector: () => hiddenInput,
-    querySelectorAll: (selector: string) =>
-      selector.includes('textarea') ? [sourceTextBox, targetTextBox] : [],
-    execCommand: (_command: string, _showDefaultUi?: boolean, insertedValue?: string) => {
-      targetCell.innerText = insertedValue ?? '';
-      targetCell.textContent = insertedValue ?? '';
-      return true;
-    }
-  } as unknown as Document;
-  globalThis.window = { setTimeout } as unknown as Window & typeof globalThis;
-
-  try {
-    const adapter = new MemoqAdapter({
-      dispatchMouseSequence: () => undefined,
-      setNativeInputValue: (input: { value: string }, nextValue: string) => {
-        input.value = nextValue;
-      },
-      dispatchInput: () => undefined,
-      dispatchChange: () => undefined,
-      dispatchTabNavigation: () => undefined,
-      dispatchBlur: () => undefined
-    } as never);
-
-    const outcome = await adapter.fillSegment(
-      {
-        domId: '1',
-        rowNumber: '1',
-        sourceRaw: 'Hello world!',
-        sourceNormalized: 'Hello world!',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: [],
-        targetElement: targetCell as never,
-        platform: 'memoq'
-      },
-      value
-    );
-
-    assert.equal(outcome.filled, true);
-    assert.equal(warnings.length, 0);
-  } finally {
-    console.warn = previousWarn;
-    restoreChrome();
-    globalThis.document = previousDocument;
-    globalThis.window = previousWindow;
-  }
-});
-
-test('MemoqAdapter.fillSegment requires the normal memoQ hidden input', async () => {
-  const previousDocument = globalThis.document;
-  const previousWindow = globalThis.window;
-  globalThis.document = { querySelector: () => null } as unknown as Document;
-  globalThis.window = { setTimeout } as unknown as Window & typeof globalThis;
-
-  try {
-    const adapter = new MemoqAdapter({
-      dispatchMouseSequence: () => undefined,
-      setNativeInputValue: () => undefined,
-      dispatchInput: () => undefined,
-      dispatchChange: () => undefined,
-      dispatchTabNavigation: () => undefined,
-      dispatchBlur: () => undefined
-    } as never);
-
-    const outcome = await adapter.fillSegment(
-      {
-        domId: '1',
-        rowNumber: '1',
-        sourceRaw: 'X-Server<1>PWR Rank',
-        sourceNormalized: 'X-Server<1>PWR Rank',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: ['<1>'],
-        targetElement: {
-          focus: () => undefined,
-          matches: () => false,
-          querySelectorAll: () => []
-        } as never,
-        platform: 'memoq'
-      },
-      'X-Server<1>Rang PWR'
-    );
-
-    assert.deepEqual(outcome, {
-      domId: '1',
-      filled: false,
-      reason: 'memoQ hidden input was not found.'
-    });
-  } finally {
-    globalThis.document = previousDocument;
-    globalThis.window = previousWindow;
-  }
-});
-
-test('MemoqAdapter.fillSegment writes through the normal memoQ hidden input', async () => {
-  const previousDocument = globalThis.document;
-  const previousWindow = globalThis.window;
-  const restoreChrome = installTrustedClickRecorder();
-  const calls: string[] = [];
-  const targetCell = {
-    innerText: '',
-    textContent: '',
-    scrollIntoView: () => undefined,
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 260, height: 20, width: 120 }),
-    focus: () => calls.push('focus'),
-    dispatchEvent: (event: Event) => {
-      calls.push(`target:${event.type}`);
-      return true;
-    }
-  };
-  const hiddenInput = {
-    value: '',
-    textContent: '',
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, height: 20 }),
-    focus: () => calls.push('hidden-focus'),
-    dispatchEvent: (event: Event) => {
-      calls.push(`hidden:${event.type}`);
-      return true;
-    }
-  };
-
-  globalThis.document = {
-    querySelector: () => hiddenInput,
-    execCommand: (command: string, _showDefaultUi?: boolean, value?: string) => {
-      calls.push(`execCommand:${command}`);
-      targetCell.innerText = value ?? '';
-      targetCell.textContent = value ?? '';
-      return true;
-    }
-  } as unknown as Document;
-  globalThis.window = { setTimeout } as unknown as Window & typeof globalThis;
-
-  try {
-    const adapter = new MemoqAdapter({
-      dispatchMouseSequence: () => calls.push('mouse'),
-      setNativeInputValue: (input: { value: string }, value: string) => {
-        calls.push('native-setter');
-        input.value = value;
-      },
-      dispatchInput: () => calls.push('input-helper'),
-      dispatchChange: () => calls.push('change-helper'),
-      dispatchTabNavigation: () => calls.push('tab-helper'),
-      dispatchBlur: () => calls.push('blur-helper')
-    } as never);
-
-    const outcome = await adapter.fillSegment(
-      {
-        domId: '1',
-        rowNumber: '1',
-        sourceRaw: 'X-Server<1>PWR Rank',
-        sourceNormalized: 'X-Server<1>PWR Rank',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: ['<1>'],
-        targetElement: targetCell as never,
-        platform: 'memoq'
-      },
-      'X-Server<1>Rang PWR'
-    );
-
-    assert.equal(outcome.filled, true);
-    assert.equal(calls.includes('execCommand:insertText'), true);
-    assert.equal(calls.includes('native-setter'), true);
-  } finally {
-    restoreChrome();
-    globalThis.document = previousDocument;
-    globalThis.window = previousWindow;
-  }
-});
-
-test('MemoqAdapter.fillSegment confirms against the current memoQ row after row DOM replacement', async () => {
-  const previousDocument = globalThis.document;
-  const previousWindow = globalThis.window;
-  const restoreChrome = installTrustedClickRecorder();
-  const calls: string[] = [];
-  const oldTargetCell = {
-    innerText: '',
-    textContent: '',
-    scrollIntoView: () => undefined,
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 260, height: 20, width: 120 }),
-    focus: () => calls.push('old-focus'),
-    dispatchEvent: (event: Event) => {
-      calls.push(`old:${event.type}`);
-      return true;
-    }
-  };
-  const currentTargetCell = {
-    innerText: '',
-    textContent: '',
-    parentElement: null as unknown,
-    matches: (selector: string) => selector === '.editor-cell',
-    querySelector: () => null,
-    scrollIntoView: () => undefined,
-    focus: () => calls.push('current-focus'),
-    dispatchEvent: (event: Event) => {
-      calls.push(`current:${event.type}`);
-      return true;
+  Object.assign(table, {
+    scrollTop: 40,
+    clientHeight: 300,
+    scrollHeight: 1200,
+    scrollBy: ({ top }: { top: number }) => {
+      table.scrollTop += top;
     },
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 260, height: 20, width: 120 })
-  };
-  const sourceCell = {
-    innerText: 'League Sponsor',
-    textContent: 'League Sponsor',
-    parentElement: null as unknown,
-    matches: (selector: string) => selector === '.editor-cell',
-    querySelector: () => null,
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 120, height: 20, width: 120 })
-  };
-  const rowNumberCell = {
-    innerText: '48.',
-    textContent: '48.',
-    matches: () => false,
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 40, height: 20, width: 40 })
-  };
-  const row = {
-    id: '',
-    parentElement: globalThis.document?.body ?? null,
-    children: [rowNumberCell, sourceCell, currentTargetCell],
-    querySelectorAll: (selector: string) =>
-      selector === '.editor-cell' ? [sourceCell, currentTargetCell] : [],
-    getAttribute: () => null
-  };
-  sourceCell.parentElement = row;
-  currentTargetCell.parentElement = row;
-
-  const hiddenInput = {
-    value: '',
-    textContent: '',
-    focus: () => calls.push('hidden-focus'),
-    dispatchEvent: (event: Event) => {
-      calls.push(`hidden:${event.type}`);
-      return true;
+    scrollTo: ({ top }: { top: number }) => {
+      table.scrollTop = top;
     }
-  };
-
-  globalThis.document = {
-    body: {},
-    querySelector: (selector: string) =>
-      selector === '#editorHiddenInput' ? hiddenInput : null,
-    querySelectorAll: (selector: string) =>
-      selector === '.editor-cell' ? [sourceCell, currentTargetCell] : [],
-    execCommand: (command: string, _showDefaultUi?: boolean, value?: string) => {
-      calls.push(`execCommand:${command}`);
-      currentTargetCell.innerText = value ?? '';
-      currentTargetCell.textContent = value ?? '';
-      return true;
-    }
-  } as unknown as Document;
-  globalThis.window = { setTimeout } as unknown as Window & typeof globalThis;
-
-  try {
-    const adapter = new MemoqAdapter({
-      dispatchMouseSequence: () => calls.push('mouse'),
-      setNativeInputValue: (input: { value: string }, value: string) => {
-        calls.push('native-setter');
-        input.value = value;
-      },
-      dispatchInput: () => calls.push('input-helper'),
-      dispatchChange: () => calls.push('change-helper'),
-      dispatchTabNavigation: () => calls.push('tab-helper'),
-      dispatchBlur: () => calls.push('blur-helper')
-    } as never);
-
-    const outcome = await adapter.fillSegment(
-      {
-        domId: '48',
-        rowNumber: '48',
-        sourceRaw: 'League Sponsor',
-        sourceNormalized: 'League Sponsor',
-        occurrenceIndex: 2,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: [],
-        targetElement: oldTargetCell as never,
-        platform: 'memoq'
-      },
-      'Sponsor de Ligue'
-    );
-
-    assert.equal(outcome.filled, true);
-    assert.equal(oldTargetCell.innerText, '');
-    assert.equal(currentTargetCell.innerText, 'Sponsor de Ligue');
-  } finally {
-    restoreChrome();
-    globalThis.document = previousDocument;
-    globalThis.window = previousWindow;
-  }
-});
-
-test('MemoqAdapter.fillSegment activates the current memoQ target cell when the scanned target is stale', async () => {
-  const previousDocument = globalThis.document;
-  const previousWindow = globalThis.window;
-  const calls: string[] = [];
-  let activatedCurrentTarget = false;
-  const restoreChrome = installTrustedClickRecorder([], () => {
-    activatedCurrentTarget = true;
   });
-  const oldTargetCell = {
-    innerText: '',
-    textContent: '',
-    scrollIntoView: () => undefined,
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 260, height: 20, width: 120 }),
-    focus: () => calls.push('old-focus'),
-    dispatchEvent: (event: Event) => {
-      calls.push(`old:${event.type}`);
-      return true;
-    }
-  };
-  const currentTargetCell = {
-    innerText: '',
-    textContent: '',
-    parentElement: null as unknown,
-    matches: (selector: string) => selector === '.editor-cell',
-    querySelector: () => null,
-    scrollIntoView: () => undefined,
-    focus: () => calls.push('current-focus'),
-    dispatchEvent: (event: Event) => {
-      calls.push(`current:${event.type}`);
-      if (event.type === 'click') {
-        activatedCurrentTarget = true;
-      }
-      return true;
-    },
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 260, height: 20, width: 120 })
-  };
-  const sourceCell = {
-    innerText: 'Relic Inheritor',
-    textContent: 'Relic Inheritor',
-    parentElement: null as unknown,
-    matches: (selector: string) => selector === '.editor-cell',
-    querySelector: () => null,
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 120, height: 20, width: 120 })
-  };
-  const rowNumberCell = {
-    innerText: '54.',
-    textContent: '54.',
-    matches: () => false,
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 40, height: 20, width: 40 })
-  };
-  const row = {
-    id: '',
-    parentElement: globalThis.document?.body ?? null,
-    children: [rowNumberCell, sourceCell, currentTargetCell],
-    querySelectorAll: (selector: string) =>
-      selector === '.editor-cell' ? [sourceCell, currentTargetCell] : [],
-    getAttribute: () => null
-  };
-  sourceCell.parentElement = row;
-  currentTargetCell.parentElement = row;
-
-  const hiddenInput = {
-    value: '',
-    textContent: '',
-    focus: () => calls.push('hidden-focus'),
-    dispatchEvent: (event: Event) => {
-      calls.push(`hidden:${event.type}`);
-      return true;
-    }
-  };
-
-  globalThis.document = {
-    body: {},
-    querySelector: (selector: string) =>
-      selector === '#editorHiddenInput' ? hiddenInput : null,
-    querySelectorAll: (selector: string) =>
-      selector === '.editor-cell' ? [sourceCell, currentTargetCell] : [],
-    execCommand: (command: string, _showDefaultUi?: boolean, value?: string) => {
-      calls.push(`execCommand:${command}`);
-      if (activatedCurrentTarget) {
-        currentTargetCell.innerText = value ?? '';
-        currentTargetCell.textContent = value ?? '';
-      }
-      return true;
-    }
-  } as unknown as Document;
-  globalThis.window = { setTimeout } as unknown as Window & typeof globalThis;
-
-  try {
-    const adapter = new MemoqAdapter({
-      dispatchMouseSequence: (target: { dispatchEvent: (event: Event) => boolean }) => {
-        for (const eventName of ['mousedown', 'mouseup', 'click']) {
-          target.dispatchEvent(new Event(eventName));
-        }
-      },
-      setNativeInputValue: (input: { value: string }, value: string) => {
-        calls.push('native-setter');
-        input.value = value;
-      },
-      dispatchInput: () => calls.push('input-helper'),
-      dispatchChange: () => calls.push('change-helper'),
-      dispatchTabNavigation: () => calls.push('tab-helper'),
-      dispatchBlur: () => calls.push('blur-helper')
-    } as never);
-
-    const outcome = await adapter.fillSegment(
-      {
-        domId: '54',
-        rowNumber: '54',
-        sourceRaw: 'Relic Inheritor',
-        sourceNormalized: 'Relic Inheritor',
-        occurrenceIndex: 2,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: [],
-        targetElement: oldTargetCell as never,
-        platform: 'memoq'
-      },
-      'Héritier des reliques'
-    );
-
-    assert.equal(outcome.filled, true);
-    assert.equal(activatedCurrentTarget, true);
-    assert.equal(currentTargetCell.innerText, 'Héritier des reliques');
-  } finally {
-    restoreChrome();
-    globalThis.document = previousDocument;
-    globalThis.window = previousWindow;
-  }
-});
-
-test('MemoqAdapter.fillSegment activates memoQ targets through trusted background input', async () => {
-  const previousChrome = (globalThis as typeof globalThis & { chrome?: unknown }).chrome;
-  const previousDocument = globalThis.document;
-  const previousWindow = globalThis.window;
-  const calls: string[] = [];
-  const messages: unknown[] = [];
-  const targetCell = {
-    innerText: '',
-    textContent: '',
-    parentElement: null as unknown,
-    matches: (selector: string) => selector === '.editor-cell',
-    querySelector: () => null,
-    scrollIntoView: () => undefined,
-    focus: () => calls.push('target-focus'),
-    dispatchEvent: (event: Event) => {
-      calls.push(`target:${event.type}`);
-      return true;
-    },
-    getBoundingClientRect: () => ({
-      top: 100,
-      bottom: 120,
-      left: 260,
-      right: 380,
-      height: 20,
-      width: 120
-    })
-  };
-  const hiddenInput = {
-    value: '',
-    textContent: '',
-    focus: () => calls.push('hidden-focus'),
-    dispatchEvent: (event: Event) => {
-      calls.push(`hidden:${event.type}`);
-      return true;
-    }
-  };
-
-  (globalThis as typeof globalThis & { chrome?: unknown }).chrome = {
-    runtime: {
-      lastError: null,
-      sendMessage: (message: unknown, callback: (response: unknown) => void) => {
-        messages.push(message);
-        callback({ ok: true, data: null });
-      }
-    }
-  };
-  globalThis.document = {
-    querySelector: (selector: string) =>
-      selector === '#editorHiddenInput' ? hiddenInput : null,
-    execCommand: (command: string, _showDefaultUi?: boolean, value?: string) => {
-      calls.push(`execCommand:${command}`);
-      targetCell.innerText = value ?? '';
-      targetCell.textContent = value ?? '';
-      return true;
-    }
-  } as unknown as Document;
-  globalThis.window = { setTimeout } as unknown as Window & typeof globalThis;
-
-  try {
-    const adapter = new MemoqAdapter({
-      dispatchMouseSequence: () => calls.push('synthetic-mouse'),
-      setNativeInputValue: (input: { value: string }, value: string) => {
-        calls.push('native-setter');
-        input.value = value;
-      },
-      dispatchInput: () => calls.push('input-helper'),
-      dispatchChange: () => calls.push('change-helper'),
-      dispatchTabNavigation: () => calls.push('tab-helper'),
-      dispatchBlur: () => calls.push('blur-helper')
-    } as never);
-
-    const outcome = await adapter.fillSegment(
-      {
-        domId: '65',
-        rowNumber: '65',
-        sourceRaw: 'Trusted Click',
-        sourceNormalized: 'Trusted Click',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: [],
-        targetElement: targetCell as never,
-        platform: 'memoq'
-      },
-      'Clic approuvé'
-    );
-
-    assert.equal(outcome.filled, true);
-    assert.equal(calls.includes('synthetic-mouse'), false);
-    assert.deepEqual(messages, [
-      {
-        type: 'MEMOQ_DEBUGGER_PREPARE'
-      },
-      {
-        type: 'MEMOQ_DEBUGGER_CLICK',
-        payload: {
-          x: 320,
-          y: 110
-        }
-      }
-    ]);
-  } finally {
-    (globalThis as typeof globalThis & { chrome?: unknown }).chrome = previousChrome;
-    globalThis.document = previousDocument;
-    globalThis.window = previousWindow;
-  }
-});
-
-test('MemoqAdapter.fillSegment retries the trusted click once when the first write lands nowhere', async () => {
-  const previousChrome = (globalThis as typeof globalThis & { chrome?: unknown }).chrome;
-  const previousDocument = globalThis.document;
-  const previousWindow = globalThis.window;
-  const messages: unknown[] = [];
-  let clickCount = 0;
-  const targetCell = {
-    innerText: '',
-    textContent: '',
-    matches: (selector: string) => selector === '.editor-cell',
-    querySelector: () => null,
-    scrollIntoView: () => undefined,
-    focus: () => undefined,
-    dispatchEvent: () => true,
-    getBoundingClientRect: () => ({
-      top: 100,
-      bottom: 120,
-      left: 260,
-      right: 380,
-      height: 20,
-      width: 120
-    })
-  };
-  const hiddenInput = {
-    value: '',
-    textContent: '',
-    focus: () => undefined,
-    dispatchEvent: () => true
-  };
-
-  (globalThis as typeof globalThis & { chrome?: unknown }).chrome = {
-    runtime: {
-      lastError: null,
-      sendMessage: (message: unknown, callback: (response: unknown) => void) => {
-        messages.push(message);
-        if ((message as { type?: string }).type === 'MEMOQ_DEBUGGER_CLICK') {
-          clickCount += 1;
-        }
-        callback({ ok: true, data: null });
-      }
-    }
-  };
-  globalThis.document = {
-    querySelector: (selector: string) =>
-      selector === '#editorHiddenInput' ? hiddenInput : null,
-    // The first click misses (grid shifted between measuring and clicking),
-    // so the first write goes nowhere; the retried click lands.
-    execCommand: (_command: string, _showDefaultUi?: boolean, value?: string) => {
-      if (clickCount >= 2) {
-        targetCell.innerText = value ?? '';
-        targetCell.textContent = value ?? '';
-      }
-      return true;
-    }
-  } as unknown as Document;
+  globalThis.document = fakeDocument(fakeElement({ children: [table] }));
   globalThis.window = {
-    setTimeout: (callback: () => void) => {
-      callback();
-      return 0;
+    innerHeight: 600,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', overflowY: 'auto' })
+  } as unknown as Window & typeof globalThis;
+
+  try {
+    const adapter = new MemoqAdapter(new ContentScriptDomHelpers());
+    const context = adapter.findScrollContext();
+
+    assert.equal(context?.mode, 'native');
+    assert.equal(context?.initialTop, 40);
+    assert.equal(context?.getTop(), 40);
+    context?.scrollBy(25);
+    assert.equal(context?.getTop(), 65);
+    context?.scrollToTop();
+    assert.equal(context?.getTop(), 0);
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
+});
+
+test('MemoqAdapter.findScrollContext falls back when the modern table is not scrollable', () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const sourceCell = fakeElement({
+    className: 'ProseMirror',
+    textContent: 'Source',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 49 source segment'
     }
+  });
+  const targetCell = fakeElement({
+    className: 'ProseMirror',
+    textContent: '',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 49 target segment'
+    }
+  });
+  const row = fakeElement({
+    attributes: { role: 'row' },
+    children: [sourceCell, targetCell]
+  });
+  const table = Object.assign(fakeElement({
+    attributes: { role: 'table' },
+    children: [row]
+  }), {
+    scrollTop: 0,
+    clientHeight: 320,
+    scrollHeight: 360,
+    scrollBy({ top }: { top: number }) {
+      this.scrollTop += top;
+    },
+    scrollTo({ top }: { top: number }) {
+      this.scrollTop = top;
+    }
+  });
+  const viewport = Object.assign(fakeElement({
+    className: 'memoq-viewport',
+    children: [table]
+  }), {
+    scrollTop: 72,
+    clientHeight: 300,
+    scrollHeight: 1400,
+    scrollBy({ top }: { top: number }) {
+      this.scrollTop += top;
+    },
+    scrollTo({ top }: { top: number }) {
+      this.scrollTop = top;
+    }
+  });
+  let selectedScrollRoot: HTMLElement | null = null;
+  let bestScrollTargets: HTMLElement[] | null = null;
+
+  globalThis.document = fakeDocument(fakeElement({ children: [viewport] }));
+  globalThis.window = {
+    innerHeight: 600,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', overflowY: 'auto' })
   } as unknown as Window & typeof globalThis;
 
   try {
     const adapter = new MemoqAdapter({
-      dispatchMouseSequence: () => undefined,
-      setNativeInputValue: (input: { value: string }, nextValue: string) => {
-        input.value = nextValue;
+      isElementVisible: () => true,
+      isScrollableContainer: (element: HTMLElement) =>
+        element === (viewport as unknown as HTMLElement),
+      findBestScrollContainer: (targets: HTMLElement[]) => {
+        bestScrollTargets = targets;
+        return viewport as unknown as HTMLElement;
       },
-      dispatchInput: () => undefined,
-      dispatchChange: () => undefined,
-      dispatchTabNavigation: () => undefined,
-      dispatchBlur: () => undefined
-    } as never);
-
-    const outcome = await adapter.fillSegment(
-      {
-        domId: '72',
-        rowNumber: '72',
-        sourceRaw: 'Retry Click',
-        sourceNormalized: 'Retry Click',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: [],
-        targetElement: targetCell as never,
-        platform: 'memoq'
-      },
-      'Clic réessayé'
-    );
-
-    assert.equal(outcome.filled, true);
-    assert.equal(targetCell.innerText, 'Clic réessayé');
-    assert.deepEqual(messages, [
-      {
-        type: 'MEMOQ_DEBUGGER_PREPARE'
-      },
-      {
-        type: 'MEMOQ_DEBUGGER_CLICK',
-        payload: {
-          x: 320,
-          y: 110
-        }
-      },
-      {
-        type: 'MEMOQ_DEBUGGER_CLICK',
-        payload: {
-          x: 320,
-          y: 110
-        }
+      toElementScrollContext: (container: HTMLElement) => {
+        selectedScrollRoot = container;
+        const scrollable = container as unknown as ScrollableElement;
+        return {
+          initialTop: scrollable.scrollTop,
+          mode: 'native',
+          getTop: () => scrollable.scrollTop,
+          getHeight: () => scrollable.clientHeight,
+          scrollBy: (delta: number) => scrollable.scrollBy({ top: delta }),
+          scrollToTop: () => scrollable.scrollTo({ top: 0 }),
+          isAtBottom: () =>
+            scrollable.scrollTop + scrollable.clientHeight >=
+            scrollable.scrollHeight - 8,
+          restore: () => undefined
+        };
       }
-    ]);
+    } as unknown as ContentScriptDomHelpers);
+    const context = adapter.findScrollContext();
+
+    assert.equal(selectedScrollRoot, viewport);
+    assert.equal(context?.initialTop, 72);
+    const scrollTargets: HTMLElement[] = bestScrollTargets ?? [];
+    assert.equal(scrollTargets.includes(targetCell as unknown as HTMLElement), true);
   } finally {
-    (globalThis as typeof globalThis & { chrome?: unknown }).chrome = previousChrome;
     globalThis.document = previousDocument;
     globalThis.window = previousWindow;
   }
@@ -1043,8 +351,6 @@ test('MemoqAdapter.getCurrentEditableValue re-resolves the row instead of trusti
   try {
     const adapter = new MemoqAdapter({} as never);
 
-    // The stale element shows another row's text, but the actual row 54
-    // target cell is empty — the emptiness check must see the current cell.
     assert.equal(
       adapter.getCurrentEditableValue({
         domId: '54',
@@ -1061,8 +367,6 @@ test('MemoqAdapter.getCurrentEditableValue re-resolves the row instead of trusti
       ''
     );
 
-    // Without a row number there is nothing to re-resolve by; the captured
-    // element is still used.
     assert.equal(
       adapter.getCurrentEditableValue({
         domId: 'x',
@@ -1083,299 +387,103 @@ test('MemoqAdapter.getCurrentEditableValue re-resolves the row instead of trusti
   }
 });
 
-test('MemoqAdapter.fillSegment clicks the visible row when a zero-size recycled duplicate shares its row number', async () => {
-  const previousChrome = (globalThis as typeof globalThis & { chrome?: unknown }).chrome;
+test('MemoqAdapter.fillSegment warns when memoQ stores NBSP as plain spaces after a successful fill', async () => {
   const previousDocument = globalThis.document;
-  const previousWindow = globalThis.window;
-  const messages: unknown[] = [];
-
-  const makeCell = (
-    text: string,
-    rect: { top: number; bottom: number; left: number; height: number; width: number }
-  ) => ({
-    innerText: text,
-    textContent: text,
-    childNodes: [],
-    parentElement: null as unknown,
-    matches: (selector: string) => selector === '.editor-cell',
-    querySelector: () => null,
-    scrollIntoView: () => undefined,
-    focus: () => undefined,
-    dispatchEvent: () => true,
-    getBoundingClientRect: () => rect
-  });
-
-  // The recycled node sits earlier in document order and still carries row
-  // number 790, but every rect is zero — exactly what a detached virtual row
-  // reports.
-  const zeroRect = { top: 0, bottom: 0, left: 0, height: 0, width: 0 };
-  const staleSourceCell = makeCell('虽然你已经在所有难度', zeroRect);
-  const staleTargetCell = makeCell('', zeroRect);
-  const liveSourceCell = makeCell('虽然你已经在所有难度', {
-    top: 200,
-    bottom: 220,
-    left: 120,
-    height: 20,
-    width: 120
-  });
-  const liveTargetCell = makeCell('', {
-    top: 200,
-    bottom: 220,
-    left: 260,
-    height: 20,
-    width: 120
-  });
-
-  const makeRow = (
-    numberText: string,
-    cells: Array<ReturnType<typeof makeCell>>
-  ) => {
-    const rowNumberCell = {
-      innerText: numberText,
-      textContent: numberText,
-      matches: () => false,
-      getBoundingClientRect: () => ({ top: 0, bottom: 0, left: 0, height: 0, width: 0 })
-    };
-    const row = {
-      id: '',
-      parentElement: null as unknown,
-      children: [rowNumberCell, ...cells],
-      querySelectorAll: (selector: string) => (selector === '.editor-cell' ? cells : []),
-      getAttribute: () => null
-    };
-    for (const cell of cells) {
-      cell.parentElement = row;
-    }
-    return row;
-  };
-
-  makeRow('790.', [staleSourceCell, staleTargetCell]);
-  makeRow('790.', [liveSourceCell, liveTargetCell]);
-
-  const hiddenInput = {
-    value: '',
-    textContent: '',
-    focus: () => undefined,
-    dispatchEvent: () => true
-  };
-
-  (globalThis as typeof globalThis & { chrome?: unknown }).chrome = {
-    runtime: {
-      lastError: null,
-      sendMessage: (message: unknown, callback: (response: unknown) => void) => {
-        messages.push(message);
-        callback({ ok: true, data: null });
-      }
-    }
-  };
-  globalThis.document = {
-    body: {},
-    querySelector: (selector: string) =>
-      selector === '#editorHiddenInput' ? hiddenInput : null,
-    querySelectorAll: (selector: string) =>
-      selector === '.editor-cell'
-        ? [staleSourceCell, staleTargetCell, liveSourceCell, liveTargetCell]
-        : [],
-    execCommand: (_command: string, _showDefaultUi?: boolean, value?: string) => {
-      liveTargetCell.innerText = value ?? '';
-      liveTargetCell.textContent = value ?? '';
-      return true;
-    }
-  } as unknown as Document;
-  globalThis.window = {
-    setTimeout: (callback: () => void) => {
-      callback();
-      return 0;
-    }
-  } as unknown as Window & typeof globalThis;
-
-  try {
-    const adapter = new MemoqAdapter({
-      dispatchMouseSequence: () => undefined,
-      setNativeInputValue: (input: { value: string }, nextValue: string) => {
-        input.value = nextValue;
-      },
-      dispatchInput: () => undefined,
-      dispatchChange: () => undefined,
-      dispatchTabNavigation: () => undefined,
-      dispatchBlur: () => undefined
-    } as never);
-
-    const outcome = await adapter.fillSegment(
-      {
-        domId: '790',
-        rowNumber: '790',
-        sourceRaw: '虽然你已经在所有难度',
-        sourceNormalized: '虽然你已经在所有难度',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: [],
-        targetElement: staleTargetCell as never,
-        platform: 'memoq'
-      },
-      '译文文本'
-    );
-
-    assert.equal(outcome.filled, true);
-    assert.equal(liveTargetCell.innerText, '译文文本');
-    // Coordinates must come from the live row's rect, not the zero-size
-    // recycled duplicate.
-    assert.deepEqual(messages, [
-      {
-        type: 'MEMOQ_DEBUGGER_PREPARE'
-      },
-      {
-        type: 'MEMOQ_DEBUGGER_CLICK',
-        payload: {
-          x: 320,
-          y: 210
-        }
-      }
-    ]);
-  } finally {
-    (globalThis as typeof globalThis & { chrome?: unknown }).chrome = previousChrome;
-    globalThis.document = previousDocument;
-    globalThis.window = previousWindow;
-  }
-});
-
-test('MemoqAdapter.fillSegment rejects unconfirmed memoQ writes without tabbing to the next row', async () => {
-  const previousDocument = globalThis.document;
-  const previousWindow = globalThis.window;
-  const previousHtmlInputElement = globalThis.HTMLInputElement;
-  const previousHtmlTextAreaElement = globalThis.HTMLTextAreaElement;
   const previousWarn = console.warn;
-  const restoreChrome = installTrustedClickRecorder();
-  const calls: string[] = [];
-  const warnings: unknown[][] = [];
-  const targetCell = {
-    innerText: '',
-    textContent: '',
-    childNodes: [],
-    classList: { contains: () => false },
-    parentElement: null as unknown,
-    matches: (selector: string) => selector === '.editor-cell',
-    querySelector: () => null,
-    querySelectorAll: () => [],
-    scrollIntoView: () => undefined,
-    focus: () => calls.push('target-focus'),
-    dispatchEvent: (event: Event) => {
-      calls.push(`target:${event.type}`);
-      return true;
+  const restoreTimer = installImmediateTimer();
+  const targetText = { nodeType: 3 as const, textContent: '', parentElement: undefined };
+  const sourceCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 42 source segment'
     },
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 260, height: 20, width: 120 })
-  };
-  const sourceCell = {
-    innerText: 'Guide',
-    textContent: 'Guide',
-    childNodes: [],
-    classList: { contains: () => false },
-    parentElement: null as unknown,
-    matches: (selector: string) => selector === '.editor-cell',
-    querySelector: () => null,
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 120, height: 20, width: 120 })
-  };
-  const rowNumberCell = {
-    innerText: '60.',
-    textContent: '60.',
-    matches: () => false,
-    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 40, height: 20, width: 40 })
-  };
-  const row = {
-    id: '',
-    parentElement: globalThis.document?.body ?? null,
-    children: [rowNumberCell, sourceCell, targetCell],
-    querySelectorAll: (selector: string) =>
-      selector === '.editor-cell' ? [sourceCell, targetCell] : [],
-    getAttribute: () => null
-  };
-  sourceCell.parentElement = row;
-  targetCell.parentElement = row;
-
-  class TestInput {
-    tagName = 'INPUT';
-    id = 'editorHiddenInput';
-    className = '';
-    value = '';
-    textContent = '';
-    focus(): void {
-      calls.push('hidden-focus');
+    textContent: 'Source text'
+  });
+  const targetCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 42 target segment'
+    },
+    children: [targetText]
+  });
+  const sourceTextBox = Object.assign(
+    fakeElement({
+      tagName: 'TEXTAREA',
+      textContent: 'Source text'
+    }),
+    {
+      disabled: true,
+      readOnly: false,
+      value: 'Source text'
     }
-    dispatchEvent(event: Event): boolean {
-      calls.push(`hidden:${event.type}`);
-      return true;
+  );
+  const targetTextBox = Object.assign(
+    fakeElement({
+      tagName: 'TEXTAREA',
+      textContent: 'Bonjour !'
+    }),
+    {
+      disabled: false,
+      readOnly: false,
+      value: 'Bonjour !'
     }
-  }
-  const hiddenInput = new TestInput();
-
-  globalThis.HTMLInputElement = TestInput as never;
-  globalThis.HTMLTextAreaElement = class TestTextArea extends TestInput {} as never;
-  globalThis.document = {
-    body: {},
-    activeElement: hiddenInput,
-    querySelector: (selector: string) =>
-      selector === '#editorHiddenInput' ? hiddenInput : null,
-    querySelectorAll: (selector: string) =>
-      selector === '.editor-cell' ? [sourceCell, targetCell] : [],
-    execCommand: (command: string, _showDefaultUi?: boolean, value?: string) => {
-      calls.push(`execCommand:${command}:${value ?? ''}`);
-      return true;
-    }
-  } as unknown as Document;
-  globalThis.window = {
-    setTimeout: (callback: () => void) => {
-      callback();
-      return 0;
-    }
-  } as unknown as Window & typeof globalThis;
+  );
+  const row = fakeElement({
+    attributes: { role: 'row' },
+    children: [sourceCell, targetCell]
+  });
+  const table = fakeElement({
+    attributes: { role: 'table' },
+    children: [row]
+  });
+  const warnings: unknown[][] = [];
+  const messages: unknown[] = [];
+  const restoreChrome = installChromeRecorder((message) => {
+    messages.push(message);
+    targetText.textContent = 'Bonjour !';
+  });
+  globalThis.document = fakeDocument(
+    fakeElement({ children: [table, sourceTextBox, targetTextBox] })
+  );
   console.warn = (...args: unknown[]) => {
     warnings.push(args);
   };
 
   try {
-    const adapter = new MemoqAdapter({
-      dispatchMouseSequence: () => calls.push('mouse'),
-      setNativeInputValue: (input: { value: string }, value: string) => {
-        calls.push('native-setter');
-        input.value = value;
-      },
-      dispatchInput: () => calls.push('input-helper'),
-      dispatchChange: () => calls.push('change-helper'),
-      dispatchTabNavigation: (input: { value: string }) => {
-        calls.push('tab-helper');
-        input.value = '';
-      },
-      dispatchBlur: () => calls.push('blur-helper')
-    } as never);
-
+    const adapter = new MemoqAdapter(new ContentScriptDomHelpers());
     const outcome = await adapter.fillSegment(
       {
-        domId: '60',
-        rowNumber: '60',
-        sourceRaw: 'Guide',
-        sourceNormalized: 'Guide',
-        occurrenceIndex: 1,
+        domId: '42',
+        rowNumber: '42',
+        sourceRaw: 'Source text',
+        sourceNormalized: 'Source text',
+        occurrenceIndex: 0,
         targetRaw: '',
         isEmptyTarget: true,
         placeholderTokens: [],
         targetElement: targetCell as never,
         platform: 'memoq'
       },
-      'Guide'
+      `Bonjour${NBSP}!`
     );
 
-    assert.equal(outcome.filled, false);
-    assert.equal(targetCell.innerText, '');
-    assert.equal(calls.includes('tab-helper'), false);
-    assert.equal(/Unable to confirm memoQ target update/.test(outcome.reason ?? ''), true);
+    assert.equal(outcome.filled, true);
+    assert.equal(messages.length, 1);
     assert.equal(warnings.length, 1);
+    assert.equal(warnings[0][0], '[Phrase Bulk Fill] memoQ stored this segment without its no-break spaces');
+    assert.deepEqual(warnings[0][1], {
+      row: '42',
+      expected: `Bonjour${NBSP}!`,
+      committed: 'Bonjour !'
+    });
   } finally {
-    restoreChrome();
     console.warn = previousWarn;
+    restoreChrome();
+    restoreTimer();
     globalThis.document = previousDocument;
-    globalThis.window = previousWindow;
-    globalThis.HTMLInputElement = previousHtmlInputElement;
-    globalThis.HTMLTextAreaElement = previousHtmlTextAreaElement;
   }
 });
