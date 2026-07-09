@@ -279,6 +279,86 @@ test('modern memoQ rows read row numbers from title and data attributes', () => 
   assert.equal(modernEditorMemoqProfile.readRowNumber(asElement(dataRow)), '512');
 });
 
+test('modern memoQ rows prefer explicit row attributes over match percentage titles', () => {
+  const sourceCell = fakeElement({
+    className: 'ProseMirror source-cell',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      title: '100% match'
+    },
+    rect: { left: 120 },
+    textContent: 'Source'
+  });
+  const targetCell = fakeElement({
+    className: 'ProseMirror target-cell',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell'
+    },
+    rect: { left: 260 },
+    textContent: 'Target'
+  });
+  const row = fakeElement({
+    attributes: { role: 'row', 'aria-rowindex': '48' },
+    children: [sourceCell, targetCell]
+  });
+
+  assert.equal(modernEditorMemoqProfile.readRowNumber(asElement(row)), '48');
+});
+
+test('modern memoQ rows only read data-index when the whole value is numeric', () => {
+  const numericDataIndexRow = fakeElement({
+    attributes: { role: 'row', 'data-index': '48' },
+    children: [
+      fakeElement({
+        className: 'ProseMirror original-cell',
+        attributes: {
+          contenteditable: 'true',
+          role: 'gridcell'
+        },
+        rect: { left: 120 },
+        textContent: 'Source'
+      }),
+      fakeElement({
+        className: 'ProseMirror target-cell',
+        attributes: {
+          contenteditable: 'true',
+          role: 'gridcell'
+        },
+        rect: { left: 260 },
+        textContent: 'Target'
+      })
+    ]
+  });
+  const textDataIndexRow = fakeElement({
+    attributes: { role: 'row', 'data-index': 'page 48' },
+    children: [
+      fakeElement({
+        className: 'ProseMirror original-cell',
+        attributes: {
+          contenteditable: 'true',
+          role: 'gridcell'
+        },
+        rect: { left: 120 },
+        textContent: 'Source'
+      }),
+      fakeElement({
+        className: 'ProseMirror target-cell',
+        attributes: {
+          contenteditable: 'true',
+          role: 'gridcell'
+        },
+        rect: { left: 260 },
+        textContent: 'Target'
+      })
+    ]
+  });
+
+  assert.equal(modernEditorMemoqProfile.readRowNumber(asElement(numericDataIndexRow)), '48');
+  assert.equal(modernEditorMemoqProfile.readRowNumber(asElement(textDataIndexRow)), undefined);
+});
+
 test('modern memoQ ignores read-only ProseMirror panes outside translation rows', () => {
   const readOnlyPane = fakeElement({
     className: 'ProseMirror',
