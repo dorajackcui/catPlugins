@@ -127,7 +127,7 @@ export class MemoqFillTransaction {
       };
     }
 
-    const confirmation = await this.confirmTargetText(target, value);
+    const confirmation = await this.confirmTargetText(target, rowNumber, value);
     if (!confirmation.ok) {
       const diagnostic = this.createDiagnostic({
         segment,
@@ -168,12 +168,18 @@ export class MemoqFillTransaction {
 
   private async confirmTargetText(
     target: HTMLElement,
+    rowNumber: string,
     value: string
   ): Promise<{ ok: boolean; attempts: number; targetAfter: string }> {
     let targetAfter = '';
 
     for (let attempt = 1; attempt <= MEMOQ_COMMIT_CONFIRM_ATTEMPTS; attempt += 1) {
-      targetAfter = this.options.readTargetText(target);
+      const currentTarget =
+        this.options.profile.findCurrentTargetByRowNumber(
+          globalThis.document as Document,
+          rowNumber
+        ) ?? target;
+      targetAfter = this.options.readTargetText(currentTarget);
       if (isMemoqCommittedTargetText(targetAfter, value)) {
         return {
           ok: true,

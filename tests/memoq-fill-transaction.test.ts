@@ -37,6 +37,15 @@ function createProfile(target: HTMLElement | null): MemoqDomProfile {
   };
 }
 
+function createMutableProfile(
+  resolveTarget: () => HTMLElement | null
+): MemoqDomProfile {
+  return {
+    ...createProfile(null),
+    findCurrentTargetByRowNumber: () => resolveTarget()
+  };
+}
+
 function installImmediateTimer(): () => void {
   const previousWindow = globalThis.window;
   globalThis.window = {
@@ -151,6 +160,102 @@ test('MemoqFillTransaction writes once and confirms same-row target text', async
     assert.equal(outcome.diagnostic?.profileId, 'modern-editor');
     assert.equal(outcome.diagnostic?.confirmation.ok, true);
     assert.equal(outcome.diagnostic?.targetAfter, 'Translated text');
+  } finally {
+    restoreTimer();
+  }
+});
+
+test('MemoqFillTransaction re-resolves the current target while confirming the write', async () => {
+  const restoreTimer = installImmediateTimer();
+  const originalTarget = {} as HTMLElement;
+  const replacementTarget = {} as HTMLElement;
+  let targetTextByElement = new Map<HTMLElement, string>([
+    [originalTarget, ''],
+    [replacementTarget, '']
+  ]);
+  let resolveReplacement = false;
+  const writes: Array<{ target: HTMLElement; value: string }> = [];
+  const transaction = new MemoqFillTransaction({
+    profile: createMutableProfile(() => (resolveReplacement ? replacementTarget : originalTarget)),
+    readTargetText: (target) => targetTextByElement.get(target) ?? '',
+    readSourceText: () => 'Source text',
+    collectNearbyRows: () => [
+      {
+        rowNumber: '42',
+        source: 'Source text',
+        target: targetTextByElement.get(replacementTarget) ?? ''
+      }
+    ],
+    writeTrustedText: async (writeTarget, value) => {
+      writes.push({ target: writeTarget, value });
+      targetTextByElement = new Map(targetTextByElement).set(replacementTarget, value);
+      resolveReplacement = true;
+    }
+  });
+
+  try {
+    const outcome = await transaction.fillSegment(createSegment(), 'Translated text');
+
+    assert.equal(outcome.filled, true);
+    assert.deepEqual(writes, [{ target: originalTarget, value: 'Translated text' }]);
+    assert.equal(targetTextByElement.get(originalTarget), '');
+    assert.equal(outcome.diagnostic?.confirmation.attempts, 1);
+    assert.equal(outcome.diagnostic?.targetAfter, 'Translated text');
+  } finally {
+    restoreTimer();
+  }
+});
+
+test('MemoqFillTransaction ignores a stale scanned target when locating the row to fill', async () => {
+  const restoreTimer = installImmediateTimer();
+  const scannedTarget = {} as HTMLElement;
+  const currentTarget = {} as HTMLElement;
+  let currentTargetText = '';
+  const writes: Array<{ target: HTMLElement; value: string }> = [];
+  const transaction = new MemoqFillTransaction({
+    profile: createProfile(currentTarget),
+    readTargetText: (target) => (target === currentTarget ? currentTargetText : 'Recycled text'),
+    readSourceText: () => 'Source text',
+    collectNearbyRows: () => [{ rowNumber: '42', source: 'Source text', target: currentTargetText }],
+    writeTrustedText: async (writeTarget, value) => {
+      writes.push({ target: writeTarget, value });
+      currentTargetText = value;
+    }
+  });
+
+  try {
+    const outcome = await transaction.fillSegment(
+      createSegment({ targetElement: scannedTarget }),
+      'Translated text'
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.deepEqual(writes, [{ target: currentTarget, value: 'Translated text' }]);
+    assert.equal(outcome.diagnostic?.targetBefore, '');
+    assert.equal(outcome.diagnostic?.targetAfter, 'Translated text');
+  } finally {
+    restoreTimer();
+  }
+});
+
+test('MemoqFillTransaction reports CONFIRM_TIMEOUT when the write is not observable', async () => {
+  const restoreTimer = installImmediateTimer();
+  let writes = 0;
+  const transaction = createTransaction({
+    writeTrustedText: async () => {
+      writes += 1;
+    }
+  });
+
+  try {
+    const outcome = await transaction.fillSegment(createSegment(), 'Translated text');
+
+    assert.equal(outcome.filled, false);
+    assert.equal(outcome.diagnostic?.failureCode, 'CONFIRM_TIMEOUT');
+    assert.equal(outcome.diagnostic?.confirmation.ok, false);
+    assert.equal(outcome.diagnostic?.confirmation.attempts, 14);
+    assert.equal(outcome.diagnostic?.targetAfter, '');
+    assert.equal(writes, 1);
   } finally {
     restoreTimer();
   }

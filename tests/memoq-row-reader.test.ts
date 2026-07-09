@@ -129,6 +129,36 @@ test('current target and source values are re-read by row number', () => {
   assert.equal(reader.getCurrentSourceValue(staleSegment), 'Current source');
 });
 
+test('current target lookup skips zero-size recycled duplicate rows', () => {
+  const recycledRow = legacyRow({
+    rowNumber: '21',
+    source: 'Recycled source',
+    target: 'Recycled target',
+    top: 72
+  });
+  const currentRow = legacyRow({
+    rowNumber: '21',
+    source: 'Current source',
+    target: 'Current target',
+    top: 96
+  });
+
+  for (const cell of recycledRow.querySelectorAll('.editor-cell')) {
+    const left = cell.getBoundingClientRect().left;
+    cell.getBoundingClientRect = () =>
+      ({ left, top: 72, width: 0, height: 0, right: left, bottom: 72 }) as DOMRect;
+  }
+
+  installDocument(fakeElement({ children: [recycledRow, currentRow] }));
+
+  const reader = new MemoqRowReader({
+    profile: legacyWebtransMemoqProfile,
+    helpers: new ContentScriptDomHelpers()
+  });
+
+  assert.equal(reader.findCurrentTargetByRowNumber('21')?.textContent, 'Current target');
+});
+
 test('modern row collection uses profile rows and ProseMirror gridcells', () => {
   const sourceCell = fakeElement({
     className: 'ProseMirror',

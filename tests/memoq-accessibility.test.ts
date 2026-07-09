@@ -9,6 +9,46 @@ import {
 } from '../memoq-adapter.ts';
 import { fakeDocument, fakeElement } from './memoq-test-dom.ts';
 
+const NBSP = String.fromCharCode(0x00a0);
+
+function installChromeRecorder(
+  onMessage: (message: unknown) => void,
+  response: unknown = { ok: true, data: null }
+): () => void {
+  const previousChrome = (globalThis as typeof globalThis & { chrome?: unknown }).chrome;
+
+  (globalThis as typeof globalThis & { chrome?: unknown }).chrome = {
+    runtime: {
+      lastError: null,
+      sendMessage: (message: unknown, callback: (nextResponse: unknown) => void) => {
+        onMessage(message);
+        callback(response);
+      }
+    }
+  };
+
+  return () => {
+    (globalThis as typeof globalThis & { chrome?: unknown }).chrome = previousChrome;
+  };
+}
+
+function installImmediateTimer(): () => void {
+  const previousWindow = globalThis.window;
+  globalThis.window = {
+    ...previousWindow,
+    innerHeight: 600,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', overflowY: 'auto' }),
+    setTimeout: (callback: () => void) => {
+      callback();
+      return 0;
+    }
+  } as unknown as Window & typeof globalThis;
+
+  return () => {
+    globalThis.window = previousWindow;
+  };
+}
+
 test('shouldUseMemoqAccessibilityTextBox accepts disabled source textboxes for reading', () => {
   assert.equal(
     shouldUseMemoqAccessibilityTextBox(
@@ -235,6 +275,107 @@ test('MemoqAdapter.getCurrentEditableValue re-resolves the row instead of trusti
       'Text from a recycled row'
     );
   } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
+test('MemoqAdapter.fillSegment warns when memoQ stores NBSP as plain spaces after a successful fill', async () => {
+  const previousDocument = globalThis.document;
+  const previousWarn = console.warn;
+  const restoreTimer = installImmediateTimer();
+  const targetText = { nodeType: 3 as const, textContent: '', parentElement: undefined };
+  const sourceCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 42 source segment'
+    },
+    textContent: 'Source text'
+  });
+  const targetCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 42 target segment'
+    },
+    children: [targetText]
+  });
+  const sourceTextBox = Object.assign(
+    fakeElement({
+      tagName: 'TEXTAREA',
+      textContent: 'Source text'
+    }),
+    {
+      disabled: true,
+      readOnly: false,
+      value: 'Source text'
+    }
+  );
+  const targetTextBox = Object.assign(
+    fakeElement({
+      tagName: 'TEXTAREA',
+      textContent: 'Bonjour !'
+    }),
+    {
+      disabled: false,
+      readOnly: false,
+      value: 'Bonjour !'
+    }
+  );
+  const row = fakeElement({
+    attributes: { role: 'row' },
+    children: [sourceCell, targetCell]
+  });
+  const table = fakeElement({
+    attributes: { role: 'table' },
+    children: [row]
+  });
+  const warnings: unknown[][] = [];
+  const messages: unknown[] = [];
+  const restoreChrome = installChromeRecorder((message) => {
+    messages.push(message);
+    targetText.textContent = 'Bonjour !';
+  });
+  globalThis.document = fakeDocument(
+    fakeElement({ children: [table, sourceTextBox, targetTextBox] })
+  );
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+
+  try {
+    const adapter = new MemoqAdapter(new ContentScriptDomHelpers());
+    const outcome = await adapter.fillSegment(
+      {
+        domId: '42',
+        rowNumber: '42',
+        sourceRaw: 'Source text',
+        sourceNormalized: 'Source text',
+        occurrenceIndex: 0,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: [],
+        targetElement: targetCell as never,
+        platform: 'memoq'
+      },
+      `Bonjour${NBSP}!`
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.equal(messages.length, 1);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0][0], '[Phrase Bulk Fill] memoQ stored this segment without its no-break spaces');
+    assert.deepEqual(warnings[0][1], {
+      row: '42',
+      expected: `Bonjour${NBSP}!`,
+      committed: 'Bonjour !'
+    });
+  } finally {
+    console.warn = previousWarn;
+    restoreChrome();
+    restoreTimer();
     globalThis.document = previousDocument;
   }
 });

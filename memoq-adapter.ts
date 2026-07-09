@@ -260,6 +260,10 @@ export class MemoqAdapter {
     const outcome = await transaction.fillSegment(segment, value);
 
     if (outcome.filled) {
+      if (containsNoBreakSpace(value)) {
+        this.warnIfNoBreakSpacesConverted(segment, value);
+      }
+
       return {
         domId: segment.domId,
         filled: true,
