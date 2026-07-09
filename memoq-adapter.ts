@@ -123,6 +123,19 @@ export class MemoqAdapter {
   }
 
   findScrollContext(): ScrollContext | null {
+    const profile = this.getProfile();
+    if (profile) {
+      const profileScrollRoot = profile.findScrollRoot(document);
+      if (profileScrollRoot) {
+        return this.helpers.toElementScrollContext(profileScrollRoot);
+      }
+
+      const syntheticTarget = profile.createSyntheticScrollTarget(document);
+      if (syntheticTarget) {
+        return this.createSyntheticScrollContext(syntheticTarget);
+      }
+    }
+
     const cells = Array.from(
       document.querySelectorAll<HTMLElement>(MEMOQ_CELL_SELECTOR)
     ).filter((cell) => this.helpers.isElementVisible(cell));

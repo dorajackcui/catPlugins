@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { ContentScriptDomHelpers } from '../content-script-dom.ts';
 import {
   chooseMemoqAccessibilityTextBoxes,
   MemoqAdapter,
   shouldUseMemoqAccessibilityTextBox
 } from '../memoq-adapter.ts';
+import { fakeDocument, fakeElement } from './memoq-test-dom.ts';
 
 function installTrustedClickRecorder(
   messages: unknown[] = [],
@@ -97,6 +99,77 @@ test('chooseMemoqAccessibilityTextBoxes pairs a disabled source with a writable 
 
   assert.equal(pair?.source.value, 'X-Server<1>PWR Rank');
   assert.equal(pair?.target.disabled, false);
+});
+
+test('MemoqAdapter.findScrollContext uses the modern memoQ profile scroll root', () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const table = fakeElement({
+    attributes: { role: 'table' },
+    children: [
+      fakeElement({
+        attributes: { role: 'row' },
+        children: [
+          fakeElement({
+            className: 'ProseMirror',
+            textContent: 'Source',
+            attributes: {
+              contenteditable: 'true',
+              role: 'gridcell',
+              'aria-label': 'row 48 source segment'
+            }
+          }),
+          fakeElement({
+            className: 'ProseMirror',
+            textContent: '',
+            attributes: {
+              contenteditable: 'true',
+              role: 'gridcell',
+              'aria-label': 'row 48 target segment'
+            }
+          })
+        ]
+      })
+    ]
+  }) as ReturnType<typeof fakeElement> & {
+    scrollTop: number;
+    clientHeight: number;
+    scrollHeight: number;
+    scrollBy(input: { top: number }): void;
+    scrollTo(input: { top: number }): void;
+  };
+  Object.assign(table, {
+    scrollTop: 40,
+    clientHeight: 300,
+    scrollHeight: 1200,
+    scrollBy: ({ top }: { top: number }) => {
+      table.scrollTop += top;
+    },
+    scrollTo: ({ top }: { top: number }) => {
+      table.scrollTop = top;
+    }
+  });
+  globalThis.document = fakeDocument(fakeElement({ children: [table] }));
+  globalThis.window = {
+    innerHeight: 600,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', overflowY: 'auto' })
+  } as unknown as Window & typeof globalThis;
+
+  try {
+    const adapter = new MemoqAdapter(new ContentScriptDomHelpers());
+    const context = adapter.findScrollContext();
+
+    assert.equal(context?.mode, 'native');
+    assert.equal(context?.initialTop, 40);
+    assert.equal(context?.getTop(), 40);
+    context?.scrollBy(25);
+    assert.equal(context?.getTop(), 65);
+    context?.scrollToTop();
+    assert.equal(context?.getTop(), 0);
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
 });
 
 const NBSP = String.fromCharCode(0x00a0);
