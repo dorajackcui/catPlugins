@@ -64,6 +64,63 @@ function legacyRow({
   });
 }
 
+function modernRow({
+  rowNumber,
+  source,
+  target,
+  top
+}: {
+  rowNumber: string;
+  source: string;
+  target: string;
+  top: number;
+}): FakeElement {
+  const sourceCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': `row ${rowNumber} source segment`
+    },
+    rect: { left: 120, top, width: 160, height: 28 },
+    textContent: source
+  });
+  const targetCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': `row ${rowNumber} target segment`
+    },
+    rect: { left: 320, top, width: 160, height: 28 },
+    textContent: target
+  });
+
+  return fakeElement({
+    attributes: { role: 'row' },
+    children: [sourceCell, targetCell]
+  });
+}
+
+function modernFixture(row: FakeElement): FakeElement {
+  const readOnlyPane = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'false',
+      role: 'gridcell',
+      'aria-label': 'row 1123 target preview'
+    },
+    rect: { left: 16, top: 24, width: 480, height: 28 },
+    textContent: 'Read-only external pane'
+  });
+  const table = fakeElement({
+    attributes: { role: 'table' },
+    children: [row]
+  });
+
+  return fakeElement({ children: [readOnlyPane, table] });
+}
+
 test('legacy row collection reads source and target, row number, and preserves dedupe replacement', () => {
   const emptyDuplicate = legacyRow({
     rowNumber: '8',
@@ -160,35 +217,14 @@ test('current target lookup skips zero-size recycled duplicate rows', () => {
 });
 
 test('modern row collection uses profile rows and ProseMirror gridcells', () => {
-  const sourceCell = fakeElement({
-    className: 'ProseMirror',
-    attributes: {
-      contenteditable: 'true',
-      role: 'gridcell',
-      'aria-label': 'row 1123 source segment'
-    },
-    rect: { left: 120, top: 96, width: 160, height: 28 },
-    textContent: 'Modern source'
+  const row = modernRow({
+    rowNumber: '1123',
+    source: 'Modern source',
+    target: 'Modern target',
+    top: 96
   });
-  const targetCell = fakeElement({
-    className: 'ProseMirror',
-    attributes: {
-      contenteditable: 'true',
-      role: 'gridcell',
-      'aria-label': 'row 1123 target segment'
-    },
-    rect: { left: 320, top: 96, width: 160, height: 28 },
-    textContent: 'Modern target'
-  });
-  const row = fakeElement({
-    attributes: { role: 'row' },
-    children: [sourceCell, targetCell]
-  });
-  const table = fakeElement({
-    attributes: { role: 'table' },
-    children: [row]
-  });
-  installDocument(fakeElement({ children: [table] }));
+  const cells = modernEditorMemoqProfile.findCells(asElement(row));
+  installDocument(modernFixture(row));
 
   const reader = new MemoqRowReader({
     profile: modernEditorMemoqProfile,
@@ -202,5 +238,37 @@ test('modern row collection uses profile rows and ProseMirror gridcells', () => 
   assert.equal(segments[0].domId, '1123');
   assert.equal(segments[0].sourceRaw, 'Modern source');
   assert.equal(segments[0].targetRaw, 'Modern target');
-  assert.equal(segments[0].targetElement, targetCell);
+  assert.equal(segments[0].targetElement, cells?.target);
+});
+
+test('modern current cell lookup re-reads source and target through the profile', () => {
+  const row = modernRow({
+    rowNumber: '1124',
+    source: 'Current modern source',
+    target: 'Current modern target',
+    top: 128
+  });
+  installDocument(modernFixture(row));
+
+  const reader = new MemoqRowReader({
+    profile: modernEditorMemoqProfile,
+    helpers: new ContentScriptDomHelpers()
+  });
+  const staleSegment = {
+    domId: '1124',
+    rowNumber: '1124',
+    sourceRaw: 'Stale source',
+    sourceNormalized: 'Stale source',
+    occurrenceIndex: 0,
+    targetRaw: '',
+    isEmptyTarget: true,
+    placeholderTokens: [],
+    targetElement: asElement(fakeElement({ className: 'ProseMirror', textContent: 'Stale target' })),
+    platform: 'memoq'
+  } satisfies RuntimeSegment;
+  const cells = reader.findCurrentCellsByRowNumber('1124');
+
+  assert.equal(reader.findCurrentTargetByRowNumber('1124'), cells?.target);
+  assert.equal(reader.getCurrentEditableValue(staleSegment), 'Current modern target');
+  assert.equal(reader.getCurrentSourceValue(staleSegment), 'Current modern source');
 });

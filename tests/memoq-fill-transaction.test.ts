@@ -299,6 +299,47 @@ test('MemoqFillTransaction ignores a stale scanned target when locating the row 
   }
 });
 
+test('MemoqFillTransaction writes through modern current target semantics and reports profile id', async () => {
+  const restoreTimer = installImmediateTimer();
+  const scannedTarget = {} as HTMLElement;
+  const currentTarget = {} as HTMLElement;
+  const writeTarget = {} as HTMLElement;
+  let currentTargetText = '';
+  const writes: Array<{ target: HTMLElement; value: string }> = [];
+  const modernProfile: MemoqDomProfile = {
+    ...createProfile(null),
+    id: 'modern-editor',
+    findCurrentTargetByRowNumber: () => currentTarget,
+    getWriteTarget: (targetCell) => (targetCell === currentTarget ? writeTarget : targetCell)
+  };
+  const transaction = new MemoqFillTransaction({
+    profile: modernProfile,
+    readTargetText: (target) => (target === currentTarget ? currentTargetText : 'stale text'),
+    readSourceText: () => 'Source text',
+    collectNearbyRows: () => [{ rowNumber: '42', source: 'Source text', target: currentTargetText }],
+    writeTrustedText: async (target, value) => {
+      writes.push({ target, value });
+      currentTargetText = value;
+    }
+  });
+
+  try {
+    const outcome = await transaction.fillSegment(
+      createSegment({ targetElement: scannedTarget }),
+      'Translated text'
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.deepEqual(writes, [{ target: writeTarget, value: 'Translated text' }]);
+    assert.equal(outcome.diagnostic?.profileId, 'modern-editor');
+    assert.equal(outcome.diagnostic?.locatingMethod, 'rowNumber');
+    assert.equal(outcome.diagnostic?.targetBefore, '');
+    assert.equal(outcome.diagnostic?.targetAfter, 'Translated text');
+  } finally {
+    restoreTimer();
+  }
+});
+
 test('MemoqFillTransaction reports CONFIRM_TIMEOUT when the write is not observable', async () => {
   const restoreTimer = installImmediateTimer();
   let writes = 0;
