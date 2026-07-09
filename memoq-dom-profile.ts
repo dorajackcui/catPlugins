@@ -21,8 +21,9 @@ const LEGACY_CONTENT_SELECTOR = '.content-container';
 const MODERN_CELL_SELECTOR = '.ProseMirror[contenteditable="true"][role="gridcell"]';
 const MODERN_ROW_SELECTOR = '[role="row"]';
 const MODERN_TABLE_SELECTOR = '[role="table"]';
-const SOURCE_LABEL_RE = /source/i;
-const TARGET_LABEL_RE = /target/i;
+const SOURCE_LABEL_RE = /source|original|\u539f\u6587/i;
+const TARGET_LABEL_RE = /target|\u76ee\u6807/i;
+const MODERN_ROW_NUMBER_RE = /(?:row|line|\u884c)\s*(\d+)|(\d+)/i;
 
 function queryAll(root: ParentNode | HTMLElement, selector: string): HTMLElement[] {
   if (typeof root.querySelectorAll !== 'function') {
@@ -105,13 +106,8 @@ function getAccessibleLabel(element: HTMLElement): string {
 }
 
 function readModernRowNumberFromLabel(label: string): string | undefined {
-  const scopedMatch = label.match(/\b(?:row|line)\s+(\d+)\b/i);
-  if (scopedMatch) {
-    return scopedMatch[1];
-  }
-
-  const anyDigitsMatch = label.match(/(\d+)/);
-  return anyDigitsMatch?.[1];
+  const match = label.match(MODERN_ROW_NUMBER_RE);
+  return match?.[1] ?? match?.[2];
 }
 
 function hasAncestorTable(element: HTMLElement): boolean {
@@ -288,11 +284,15 @@ export const modernEditorMemoqProfile: MemoqDomProfile = {
 };
 
 export function selectMemoqDomProfile(root: ParentNode = document): MemoqDomProfile | null {
-  for (const profile of [modernEditorMemoqProfile, legacyWebtransMemoqProfile]) {
-    if (profile.matches(root)) {
+  const matches = [modernEditorMemoqProfile, legacyWebtransMemoqProfile].filter((profile) =>
+    profile.matches(root)
+  );
+
+  for (const profile of matches) {
+    if (profile.findVisibleRows(root).length > 0) {
       return profile;
     }
   }
 
-  return null;
+  return matches[0] ?? null;
 }

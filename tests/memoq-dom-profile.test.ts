@@ -12,6 +12,10 @@ function asElement<T>(element: T): T & HTMLElement {
   return element as T & HTMLElement;
 }
 
+const LOCALIZED_ROW_WORD = String.fromCharCode(0x884c);
+const LOCALIZED_SOURCE_WORD = String.fromCharCode(0x539f, 0x6587);
+const LOCALIZED_TARGET_WORD = String.fromCharCode(0x76ee, 0x6807);
+
 test('legacy memoQ rows are detected and selected when only legacy cells exist', () => {
   const sourceCell = fakeElement({
     className: 'editor-cell',
@@ -141,6 +145,46 @@ test('modern memoQ rows read row numbers and distinguish source and target cells
   assert.equal(modernEditorMemoqProfile.getWriteTarget(asElement(targetCell)), targetCell);
 });
 
+test('modern memoQ rows support localized accessible labels', () => {
+  const sourceCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': `${LOCALIZED_ROW_WORD} 88 ${LOCALIZED_SOURCE_WORD}`
+    },
+    rect: { left: 120 },
+    textContent: 'Source'
+  });
+  const targetCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': `${LOCALIZED_ROW_WORD} 88 ${LOCALIZED_TARGET_WORD}`
+    },
+    rect: { left: 260 },
+    textContent: 'Target'
+  });
+  const row = fakeElement({
+    attributes: { role: 'row' },
+    children: [sourceCell, targetCell]
+  });
+  const table = fakeElement({
+    attributes: { role: 'table' },
+    children: [row]
+  });
+  const documentRoot = fakeDocument(fakeElement({ children: [table] }));
+
+  assert.deepEqual(modernEditorMemoqProfile.findVisibleRows(documentRoot), [row]);
+  assert.deepEqual(modernEditorMemoqProfile.findCells(asElement(row)), {
+    source: sourceCell,
+    target: targetCell
+  });
+  assert.equal(modernEditorMemoqProfile.readRowNumber(asElement(row)), '88');
+  assert.equal(modernEditorMemoqProfile.findCurrentTargetByRowNumber(documentRoot, '88'), targetCell);
+});
+
 test('modern memoQ ignores read-only ProseMirror panes outside translation rows', () => {
   const readOnlyPane = fakeElement({
     className: 'ProseMirror',
@@ -184,6 +228,38 @@ test('modern memoQ ignores read-only ProseMirror panes outside translation rows'
 
   assert.deepEqual(modernEditorMemoqProfile.findVisibleRows(documentRoot), [row]);
   assert.equal(modernEditorMemoqProfile.findCurrentTargetByRowNumber(documentRoot, '77'), targetCell);
+});
+
+test('legacy profile wins selection when modern only has a transient gridcell', () => {
+  const transientModernCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 1123 source segment'
+    },
+    textContent: 'Source'
+  });
+  const legacySourceCell = fakeElement({
+    className: 'editor-cell',
+    rect: { left: 120 },
+    textContent: 'Legacy source'
+  });
+  const legacyTargetCell = fakeElement({
+    className: 'editor-cell',
+    rect: { left: 260 },
+    textContent: 'Legacy target'
+  });
+  const legacyRow = fakeElement({
+    attributes: { 'aria-rowindex': '48' },
+    children: [fakeElement({ textContent: '48.' }), legacySourceCell, legacyTargetCell]
+  });
+  const documentRoot = fakeDocument(
+    fakeElement({ children: [transientModernCell, legacyRow] })
+  );
+
+  assert.equal(modernEditorMemoqProfile.matches(documentRoot), true);
+  assert.equal(selectMemoqDomProfile(documentRoot)?.id, 'legacy-webtrans');
 });
 
 test('legacy memoQ profile ignores rows without two visible editor cells', () => {
