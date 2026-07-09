@@ -11,6 +11,14 @@ import { fakeDocument, fakeElement } from './memoq-test-dom.ts';
 
 const NBSP = String.fromCharCode(0x00a0);
 
+type ScrollableElement = HTMLElement & {
+  scrollTop: number;
+  clientHeight: number;
+  scrollHeight: number;
+  scrollBy(input: { top: number }): void;
+  scrollTo(input: { top: number }): void;
+};
+
 function installChromeRecorder(
   onMessage: (message: unknown) => void,
   response: unknown = { ok: true, data: null }
@@ -184,6 +192,106 @@ test('MemoqAdapter.findScrollContext uses the modern memoQ profile scroll root',
     assert.equal(context?.getTop(), 65);
     context?.scrollToTop();
     assert.equal(context?.getTop(), 0);
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
+});
+
+test('MemoqAdapter.findScrollContext falls back when the modern table is not scrollable', () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const sourceCell = fakeElement({
+    className: 'ProseMirror',
+    textContent: 'Source',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 49 source segment'
+    }
+  });
+  const targetCell = fakeElement({
+    className: 'ProseMirror',
+    textContent: '',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 49 target segment'
+    }
+  });
+  const row = fakeElement({
+    attributes: { role: 'row' },
+    children: [sourceCell, targetCell]
+  });
+  const table = Object.assign(fakeElement({
+    attributes: { role: 'table' },
+    children: [row]
+  }), {
+    scrollTop: 0,
+    clientHeight: 320,
+    scrollHeight: 360,
+    scrollBy({ top }: { top: number }) {
+      this.scrollTop += top;
+    },
+    scrollTo({ top }: { top: number }) {
+      this.scrollTop = top;
+    }
+  });
+  const viewport = Object.assign(fakeElement({
+    className: 'memoq-viewport',
+    children: [table]
+  }), {
+    scrollTop: 72,
+    clientHeight: 300,
+    scrollHeight: 1400,
+    scrollBy({ top }: { top: number }) {
+      this.scrollTop += top;
+    },
+    scrollTo({ top }: { top: number }) {
+      this.scrollTop = top;
+    }
+  });
+  let selectedScrollRoot: HTMLElement | null = null;
+  let bestScrollTargets: HTMLElement[] | null = null;
+
+  globalThis.document = fakeDocument(fakeElement({ children: [viewport] }));
+  globalThis.window = {
+    innerHeight: 600,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', overflowY: 'auto' })
+  } as unknown as Window & typeof globalThis;
+
+  try {
+    const adapter = new MemoqAdapter({
+      isElementVisible: () => true,
+      isScrollableContainer: (element: HTMLElement) =>
+        element === (viewport as unknown as HTMLElement),
+      findBestScrollContainer: (targets: HTMLElement[]) => {
+        bestScrollTargets = targets;
+        return viewport as unknown as HTMLElement;
+      },
+      toElementScrollContext: (container: HTMLElement) => {
+        selectedScrollRoot = container;
+        const scrollable = container as unknown as ScrollableElement;
+        return {
+          initialTop: scrollable.scrollTop,
+          mode: 'native',
+          getTop: () => scrollable.scrollTop,
+          getHeight: () => scrollable.clientHeight,
+          scrollBy: (delta: number) => scrollable.scrollBy({ top: delta }),
+          scrollToTop: () => scrollable.scrollTo({ top: 0 }),
+          isAtBottom: () =>
+            scrollable.scrollTop + scrollable.clientHeight >=
+            scrollable.scrollHeight - 8,
+          restore: () => undefined
+        };
+      }
+    } as unknown as ContentScriptDomHelpers);
+    const context = adapter.findScrollContext();
+
+    assert.equal(selectedScrollRoot, viewport);
+    assert.equal(context?.initialTop, 72);
+    const scrollTargets: HTMLElement[] = bestScrollTargets ?? [];
+    assert.equal(scrollTargets.includes(targetCell as unknown as HTMLElement), true);
   } finally {
     globalThis.document = previousDocument;
     globalThis.window = previousWindow;

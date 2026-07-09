@@ -375,6 +375,22 @@ export function findMemoqStartTargetCell(
   root: ParentNode,
   element: Element
 ): HTMLElement | null {
+  const match = findMemoqStartRow(root, element);
+  return match ? match.profile.findCells(match.row)?.target ?? null : null;
+}
+
+export function readMemoqStartMarkerDomId(
+  root: ParentNode,
+  element: Element
+): string | null {
+  const match = findMemoqStartRow(root, element);
+  return match ? match.profile.readRowNumber(match.row) ?? null : null;
+}
+
+function findMemoqStartRow(
+  root: ParentNode,
+  element: Element
+): { profile: MemoqDomProfile; row: HTMLElement } | null {
   const profile = selectMemoqDomProfile(root);
   if (!profile) {
     return null;
@@ -385,7 +401,7 @@ export function findMemoqStartTargetCell(
       continue;
     }
 
-    return profile.findCells(row)?.target ?? null;
+    return { profile, row };
   }
 
   return null;

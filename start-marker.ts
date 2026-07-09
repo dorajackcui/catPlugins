@@ -6,6 +6,13 @@ export interface StartMarker {
   setAt?: number;
 }
 
+export interface PendingStartMarkerFilterResult<T extends RuntimeSegment> {
+  segments: T[];
+  startIndex: number | null;
+  matched: boolean;
+  shouldKeepStartMarker: boolean;
+}
+
 export function findStartSegmentIndex(
   segments: RuntimeSegment[],
   marker: StartMarker | null | undefined
@@ -40,6 +47,37 @@ export function filterSegmentsFromStartMarker<T extends RuntimeSegment>(
 ): T[] {
   const startIndex = findStartSegmentIndex(segments, marker);
   return startIndex === null ? segments : segments.slice(startIndex);
+}
+
+export function filterSegmentsFromPendingStartMarker<T extends RuntimeSegment>(
+  segments: T[],
+  marker: StartMarker | null | undefined
+): PendingStartMarkerFilterResult<T> {
+  if (!marker) {
+    return {
+      segments,
+      startIndex: null,
+      matched: false,
+      shouldKeepStartMarker: false
+    };
+  }
+
+  const startIndex = findStartSegmentIndex(segments, marker);
+  if (startIndex === null) {
+    return {
+      segments: [],
+      startIndex,
+      matched: false,
+      shouldKeepStartMarker: true
+    };
+  }
+
+  return {
+    segments: segments.slice(startIndex),
+    startIndex,
+    matched: true,
+    shouldKeepStartMarker: false
+  };
 }
 
 function elementsOverlap(left: Element, right: Element): boolean {

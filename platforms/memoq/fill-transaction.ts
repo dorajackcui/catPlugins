@@ -32,9 +32,9 @@ export class MemoqFillTransaction {
 
   async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
     const rowNumber = segment.rowNumber ?? '';
-    const target =
-      this.resolveCurrentTarget(segment) ??
-      (segment.targetElement as HTMLElement | null);
+    const currentTarget = this.resolveCurrentTarget(segment);
+    const target = currentTarget ??
+      (segment.rowNumber ? null : segment.targetElement as HTMLElement | null);
 
     if (!target) {
       const diagnostic = this.createDiagnostic({

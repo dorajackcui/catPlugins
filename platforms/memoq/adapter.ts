@@ -63,19 +63,22 @@ export class MemoqAdapter {
     }
 
     const profileScrollRoot = profile.findScrollRoot(document);
-    if (profileScrollRoot) {
+    if (
+      profileScrollRoot &&
+      this.helpers.isScrollableContainer(profileScrollRoot, true)
+    ) {
       return this.helpers.toElementScrollContext(profileScrollRoot);
-    }
-
-    const syntheticTarget = profile.createSyntheticScrollTarget(document);
-    if (syntheticTarget) {
-      return this.createSyntheticScrollContext(syntheticTarget);
     }
 
     const visibleTargets = this.getVisibleProfileTargets(profile);
     const scrollContainer = this.helpers.findBestScrollContainer(visibleTargets);
     if (scrollContainer) {
       return this.helpers.toElementScrollContext(scrollContainer);
+    }
+
+    const syntheticTarget = profile.createSyntheticScrollTarget(document);
+    if (syntheticTarget) {
+      return this.createSyntheticScrollContext(syntheticTarget);
     }
 
     const interactionTarget = this.findSharedAncestor(visibleTargets);

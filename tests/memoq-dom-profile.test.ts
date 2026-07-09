@@ -5,6 +5,7 @@ import {
   findMemoqStartTargetCell,
   legacyWebtransMemoqProfile,
   modernEditorMemoqProfile,
+  readMemoqStartMarkerDomId,
   selectMemoqDomProfile
 } from '../platforms/memoq/dom-profile.ts';
 import { fakeDocument, fakeElement } from './memoq-test-dom.ts';
@@ -165,6 +166,8 @@ test('modern memoQ start marker resolves the row target through the profile', ()
 
   assert.equal(findMemoqStartTargetCell(documentRoot, asElement(targetCell)), targetCell);
   assert.equal(findMemoqStartTargetCell(documentRoot, asElement(sourceCell)), targetCell);
+  assert.equal(readMemoqStartMarkerDomId(documentRoot, asElement(targetCell)), '1123');
+  assert.equal(readMemoqStartMarkerDomId(documentRoot, asElement(sourceCell)), '1123');
 });
 
 test('modern memoQ rows support localized accessible labels', () => {
@@ -461,4 +464,6 @@ test('legacy memoQ start marker resolves the row target through the profile', ()
 
   assert.equal(findMemoqStartTargetCell(documentRoot, asElement(targetCell)), targetCell);
   assert.equal(findMemoqStartTargetCell(documentRoot, asElement(sourceCell)), targetCell);
+  assert.equal(readMemoqStartMarkerDomId(documentRoot, asElement(targetCell)), '48');
+  assert.equal(readMemoqStartMarkerDomId(documentRoot, asElement(sourceCell)), '48');
 });

@@ -7,7 +7,10 @@ import { BULK_FILL_PAUSE_MS, shouldPauseBulkFill } from './fill-throttle.ts';
 import { GientTransAdapter } from './platforms/gientrans/adapter.ts';
 import { describeMemoqFillDiagnostic } from './platforms/memoq/fill-diagnostics.ts';
 import { MemoqAdapter } from './platforms/memoq/adapter.ts';
-import { findMemoqStartTargetCell } from './platforms/memoq/dom-profile.ts';
+import {
+  findMemoqStartTargetCell,
+  readMemoqStartMarkerDomId
+} from './platforms/memoq/dom-profile.ts';
 import { PhraseAdapter } from './platforms/phrase/adapter.ts';
 import {
   hasRepeatedSyntheticSignature,
@@ -16,8 +19,7 @@ import {
   shouldStopScanBeforeNextScroll
 } from './scan-dedupe.ts';
 import {
-  filterSegmentsFromStartMarker,
-  findStartSegmentIndex,
+  filterSegmentsFromPendingStartMarker,
   type StartMarker
 } from './start-marker.ts';
 import type {
@@ -335,12 +337,14 @@ class PlatformDomAdapter {
         const countBefore = segments.length;
         let visibleSegments = this.collectVisibleSegments(scrollContext);
         if (shouldApplyStartMarker && startMarker) {
-          const startIndex = findStartSegmentIndex(visibleSegments, startMarker);
-          if (startIndex !== null) {
-            visibleSegments = filterSegmentsFromStartMarker(visibleSegments, startMarker);
-          }
+          const markerFilter = filterSegmentsFromPendingStartMarker(
+            visibleSegments,
+            startMarker
+          );
+          const startIndex = markerFilter.startIndex;
+          visibleSegments = markerFilter.segments;
           this.debugStartMarker(startMarker, startIndex, countBefore, visibleSegments);
-          shouldApplyStartMarker = false;
+          shouldApplyStartMarker = markerFilter.shouldKeepStartMarker;
         }
         let shouldSkipSyntheticPass = false;
         if (scrollContext.mode === 'synthetic') {
@@ -708,6 +712,11 @@ function resolveStartMarkerTargetElement(element: Element): Element | null {
 }
 
 function readLikelyTargetDomId(targetElement: Element): string | null {
+  const memoqRowId = readMemoqStartMarkerDomId(document, targetElement);
+  if (memoqRowId) {
+    return memoqRowId;
+  }
+
   const gientransTarget =
     targetElement.matches(GIENTRANS_START_TARGET_SELECTOR)
       ? targetElement

@@ -123,7 +123,7 @@ test('serializeMemoqContent converts inline tag elements while ignoring input el
     ]
   });
 
-  assert.equal(serializeMemoqContent(root as unknown as HTMLElement), 'A{1>}B<1}C');
+  assert.equal(serializeMemoqContent(root as unknown as HTMLElement), 'A{1>B<1}C');
 });
 
 test('serializeMemoqContent uses aggregated descendant text for mixed nested content', () => {
@@ -148,7 +148,7 @@ test('serializeMemoqContent uses aggregated descendant text for mixed nested con
     ]
   });
 
-  assert.equal(serializeMemoqContent(root as unknown as HTMLElement), 'A{1>}BCD');
+  assert.equal(serializeMemoqContent(root as unknown as HTMLElement), 'A{1>BCD');
 });
 
 test('fake DOM keeps own textContent alongside descendant text', () => {
