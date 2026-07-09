@@ -370,3 +370,48 @@ export function selectMemoqDomProfile(root: ParentNode = document): MemoqDomProf
 
   return matches[0] ?? null;
 }
+
+export function findMemoqStartTargetCell(
+  root: ParentNode,
+  element: Element
+): HTMLElement | null {
+  const profile = selectMemoqDomProfile(root);
+  if (!profile) {
+    return null;
+  }
+
+  for (const row of profile.findVisibleRows(root)) {
+    if (!elementsOverlap(row, element)) {
+      continue;
+    }
+
+    return profile.findCells(row)?.target ?? null;
+  }
+
+  return null;
+}
+
+function elementsOverlap(left: Element, right: Element): boolean {
+  return (
+    left === right ||
+    safelyContains(left, right) ||
+    safelyContains(right, left)
+  );
+}
+
+function safelyContains(parent: Element, child: Element): boolean {
+  if (typeof parent.contains === 'function' && parent.contains(child)) {
+    return true;
+  }
+
+  let cursor = (child as HTMLElement).parentElement;
+  while (cursor) {
+    if (cursor === parent) {
+      return true;
+    }
+
+    cursor = cursor.parentElement;
+  }
+
+  return false;
+}

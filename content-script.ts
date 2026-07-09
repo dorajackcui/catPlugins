@@ -7,6 +7,7 @@ import { BULK_FILL_PAUSE_MS, shouldPauseBulkFill } from './fill-throttle.ts';
 import { GientTransAdapter } from './gientrans-adapter.ts';
 import { describeMemoqFillDiagnostic } from './memoq-fill-diagnostics.ts';
 import { MemoqAdapter } from './memoq-adapter.ts';
+import { findMemoqStartTargetCell } from './memoq-dom-profile.ts';
 import { PhraseAdapter } from './phrase-adapter.ts';
 import {
   hasRepeatedSyntheticSignature,
@@ -56,7 +57,6 @@ const START_MARKER_MAX_AGE_MS = 30 * 60 * 1000;
 const GIENTRANS_START_TARGET_SELECTOR = 'td.target-cell pre.edit__input[editortype="target"]';
 const GIENTRANS_START_TARGET_CELL_SELECTOR = 'td.target-cell';
 const PHRASE_START_TARGET_SELECTOR = '.twe_target';
-const MEMOQ_START_CELL_SELECTOR = '.editor-cell';
 
 const helpers = new ContentScriptDomHelpers();
 const memoqAdapter = new MemoqAdapter(helpers);
@@ -699,9 +699,9 @@ function resolveStartMarkerTargetElement(element: Element): Element | null {
     return phraseTarget;
   }
 
-  const memoqCell = element.closest<HTMLElement>(MEMOQ_START_CELL_SELECTOR);
-  if (memoqCell) {
-    return memoqCell;
+  const memoqTarget = findMemoqStartTargetCell(document, element);
+  if (memoqTarget) {
+    return memoqTarget;
   }
 
   return null;
@@ -745,8 +745,8 @@ function firstNonEmptyAttribute(
 function isEditorSurfaceElement(element: Element): boolean {
   return Boolean(
     element.closest(
-      '#o-editor.online-editor, .editor__table, .segment-row, .twe_segment, .editor-cell'
-    )
+      '#o-editor.online-editor, .editor__table, .segment-row, .twe_segment'
+    ) || findMemoqStartTargetCell(document, element)
   );
 }
 

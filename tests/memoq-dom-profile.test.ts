@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  findMemoqStartTargetCell,
   legacyWebtransMemoqProfile,
   modernEditorMemoqProfile,
   selectMemoqDomProfile
@@ -157,6 +158,13 @@ test('modern memoQ keeps source and target stable when DOM order is target then 
 
   assert.equal(cells?.source.textContent, 'Source');
   assert.equal(cells?.target.textContent, 'Target');
+});
+
+test('modern memoQ start marker resolves the row target through the profile', () => {
+  const { documentRoot, sourceCell, targetCell } = modernMemoqFixture();
+
+  assert.equal(findMemoqStartTargetCell(documentRoot, asElement(targetCell)), targetCell);
+  assert.equal(findMemoqStartTargetCell(documentRoot, asElement(sourceCell)), targetCell);
 });
 
 test('modern memoQ rows support localized accessible labels', () => {
@@ -432,4 +440,25 @@ test('legacy memoQ profile ignores rows without two visible editor cells', () =>
 
   assert.deepEqual(legacyWebtransMemoqProfile.findVisibleRows(documentRoot), []);
   assert.equal(legacyWebtransMemoqProfile.findCurrentTargetByRowNumber(documentRoot, '1'), null);
+});
+
+test('legacy memoQ start marker resolves the row target through the profile', () => {
+  const sourceCell = fakeElement({
+    className: 'editor-cell',
+    rect: { left: 120 },
+    textContent: 'Legacy source'
+  });
+  const targetCell = fakeElement({
+    className: 'editor-cell',
+    rect: { left: 260 },
+    textContent: 'Legacy target'
+  });
+  const row = fakeElement({
+    attributes: { 'aria-rowindex': '48' },
+    children: [fakeElement({ textContent: '48.' }), sourceCell, targetCell]
+  });
+  const documentRoot = fakeDocument(fakeElement({ children: [row] }));
+
+  assert.equal(findMemoqStartTargetCell(documentRoot, asElement(targetCell)), targetCell);
+  assert.equal(findMemoqStartTargetCell(documentRoot, asElement(sourceCell)), targetCell);
 });
