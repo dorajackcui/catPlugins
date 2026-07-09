@@ -57,6 +57,62 @@ test('writeTrustedTextToElement sends memoQ debugger text write with center coor
   ]);
 });
 
+test('writeTrustedTextToElement re-resolves the target after settling', async () => {
+  const previousWindow = globalThis.window;
+  const messages: unknown[] = [];
+  const restoreChrome = installChromeRecorder(messages);
+  const staleTarget = {
+    scrollIntoView: () => undefined,
+    getBoundingClientRect: () => ({
+      left: 10,
+      top: 20,
+      width: 80,
+      height: 40
+    })
+  } as unknown as HTMLElement;
+  const currentTarget = {
+    scrollIntoView: () => undefined,
+    getBoundingClientRect: () => ({
+      left: 100,
+      top: 200,
+      width: 50,
+      height: 20
+    })
+  } as unknown as HTMLElement;
+  let resolveCount = 0;
+  globalThis.window = {
+    setTimeout: (callback: () => void) => {
+      callback();
+      return 0;
+    }
+  } as unknown as Window & typeof globalThis;
+
+  try {
+    await writeTrustedTextToElement(staleTarget, 'Bonjour', {
+      requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
+      settleMs: 20,
+      resolveElement: () => {
+        resolveCount += 1;
+        return resolveCount === 1 ? staleTarget : currentTarget;
+      }
+    });
+  } finally {
+    restoreChrome();
+    globalThis.window = previousWindow;
+  }
+
+  assert.deepEqual(messages, [
+    {
+      type: 'MEMOQ_DEBUGGER_WRITE_TEXT',
+      payload: {
+        x: 125,
+        y: 210,
+        text: 'Bonjour'
+      }
+    }
+  ]);
+});
+
 test('writeTrustedTextToElement rejects zero-size targets', async () => {
   const target = {
     scrollIntoView: () => undefined,

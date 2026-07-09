@@ -5,6 +5,7 @@ import type { RuntimeSegment, ScrollContext } from './content-script-dom.ts';
 import { normalizeFillOptions } from './fill-options.ts';
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFill } from './fill-throttle.ts';
 import { GientTransAdapter } from './gientrans-adapter.ts';
+import { describeMemoqFillDiagnostic } from './memoq-fill-diagnostics.ts';
 import { MemoqAdapter } from './memoq-adapter.ts';
 import { PhraseAdapter } from './phrase-adapter.ts';
 import {
@@ -265,6 +266,10 @@ class PlatformDomAdapter {
   }
 
   private describeMemoqStopReason(segment: RuntimeSegment, outcome: FillOutcome): string {
+    if (outcome.diagnostic?.outcome === 'failure') {
+      return describeMemoqFillDiagnostic(outcome.diagnostic);
+    }
+
     const rowLabel = segment.rowNumber ? `row ${segment.rowNumber}` : `segment ${segment.domId}`;
     const sourcePreview =
       segment.sourceRaw.length > 80

@@ -206,6 +206,67 @@ test('MemoqFillTransaction re-resolves the current target while confirming the w
   }
 });
 
+test('MemoqFillTransaction falls back to the scanned target without a row number', async () => {
+  const restoreTimer = installImmediateTimer();
+  const scannedTarget = {} as HTMLElement;
+  let targetText = '';
+  const writes: Array<{ target: HTMLElement; value: string }> = [];
+  const transaction = new MemoqFillTransaction({
+    profile: createProfile(null),
+    readTargetText: () => targetText,
+    readSourceText: () => 'Source text',
+    collectNearbyRows: () => [],
+    writeTrustedText: async (writeTarget, value) => {
+      writes.push({ target: writeTarget, value });
+      targetText = value;
+    }
+  });
+
+  try {
+    const outcome = await transaction.fillSegment(
+      createSegment({ rowNumber: undefined, targetElement: scannedTarget }),
+      'Translated text'
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.deepEqual(writes, [{ target: scannedTarget, value: 'Translated text' }]);
+    assert.equal(outcome.diagnostic?.locatingMethod, 'none');
+  } finally {
+    restoreTimer();
+  }
+});
+
+test('MemoqFillTransaction re-resolves the current target before writing', async () => {
+  const restoreTimer = installImmediateTimer();
+  const staleTarget = {} as HTMLElement;
+  const currentTarget = {} as HTMLElement;
+  let lookupCount = 0;
+  let currentTargetText = '';
+  const writes: Array<{ target: HTMLElement; value: string }> = [];
+  const transaction = new MemoqFillTransaction({
+    profile: createMutableProfile(() => {
+      lookupCount += 1;
+      return lookupCount === 1 ? staleTarget : currentTarget;
+    }),
+    readTargetText: (target) => (target === currentTarget ? currentTargetText : ''),
+    readSourceText: () => 'Source text',
+    collectNearbyRows: () => [{ rowNumber: '42', source: 'Source text', target: currentTargetText }],
+    writeTrustedText: async (writeTarget, value) => {
+      writes.push({ target: writeTarget, value });
+      currentTargetText = value;
+    }
+  });
+
+  try {
+    const outcome = await transaction.fillSegment(createSegment(), 'Translated text');
+
+    assert.equal(outcome.filled, true);
+    assert.deepEqual(writes, [{ target: currentTarget, value: 'Translated text' }]);
+  } finally {
+    restoreTimer();
+  }
+});
+
 test('MemoqFillTransaction ignores a stale scanned target when locating the row to fill', async () => {
   const restoreTimer = installImmediateTimer();
   const scannedTarget = {} as HTMLElement;

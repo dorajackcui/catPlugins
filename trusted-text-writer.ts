@@ -6,6 +6,7 @@ export type TrustedTextWriteRequestType = 'MEMOQ_DEBUGGER_WRITE_TEXT' | 'DEBUGGE
 export interface TrustedTextWriteOptions {
   requestType: TrustedTextWriteRequestType;
   settleMs?: number;
+  resolveElement?: () => HTMLElement | null | undefined;
 }
 
 type TrustedTextWriteRequest = Extract<BackgroundRequest, { type: TrustedTextWriteRequestType }>;
@@ -30,10 +31,12 @@ export async function writeTrustedTextToElement(
   text: string,
   options: TrustedTextWriteOptions
 ): Promise<void> {
-  targetElement.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+  const scrollTarget = options.resolveElement?.() ?? targetElement;
+  scrollTarget.scrollIntoView?.({ block: 'center', inline: 'nearest' });
   await delay(options.settleMs ?? 0);
 
-  const rect = targetElement.getBoundingClientRect();
+  const measureTarget = options.resolveElement?.() ?? scrollTarget;
+  const rect = measureTarget.getBoundingClientRect();
   const x = rect.left + rect.width / 2;
   const y = rect.top + rect.height / 2;
 

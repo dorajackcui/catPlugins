@@ -254,7 +254,11 @@ export class MemoqAdapter {
       writeTrustedText: (target, text) =>
         writeTrustedTextToElement(target, text, {
           requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
-          settleMs: 20
+          settleMs: 20,
+          resolveElement: () => {
+            const currentTarget = reader.findCurrentTargetByRowNumber(segment.rowNumber);
+            return currentTarget ? profile.getWriteTarget(currentTarget) : null;
+          }
         })
     });
     const outcome = await transaction.fillSegment(segment, value);

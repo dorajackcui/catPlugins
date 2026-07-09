@@ -32,10 +32,9 @@ export class MemoqFillTransaction {
 
   async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
     const rowNumber = segment.rowNumber ?? '';
-    const target = this.options.profile.findCurrentTargetByRowNumber(
-      globalThis.document as Document,
-      rowNumber
-    );
+    const target =
+      this.resolveCurrentTarget(segment) ??
+      (segment.targetElement as HTMLElement | null);
 
     if (!target) {
       const diagnostic = this.createDiagnostic({
@@ -101,8 +100,9 @@ export class MemoqFillTransaction {
     }
 
     try {
+      const currentTarget = this.resolveCurrentTarget(segment) ?? target;
       await this.options.writeTrustedText(
-        this.options.profile.getWriteTarget(target),
+        this.options.profile.getWriteTarget(currentTarget),
         value
       );
     } catch (error) {
@@ -175,10 +175,12 @@ export class MemoqFillTransaction {
 
     for (let attempt = 1; attempt <= MEMOQ_COMMIT_CONFIRM_ATTEMPTS; attempt += 1) {
       const currentTarget =
-        this.options.profile.findCurrentTargetByRowNumber(
-          globalThis.document as Document,
-          rowNumber
-        ) ?? target;
+        rowNumber
+          ? this.options.profile.findCurrentTargetByRowNumber(
+              globalThis.document as Document,
+              rowNumber
+            ) ?? target
+          : target;
       targetAfter = this.options.readTargetText(currentTarget);
       if (isMemoqCommittedTargetText(targetAfter, value)) {
         return {
@@ -198,6 +200,17 @@ export class MemoqFillTransaction {
       attempts: MEMOQ_COMMIT_CONFIRM_ATTEMPTS,
       targetAfter
     };
+  }
+
+  private resolveCurrentTarget(segment: RuntimeSegment): HTMLElement | null {
+    if (!segment.rowNumber) {
+      return null;
+    }
+
+    return this.options.profile.findCurrentTargetByRowNumber(
+      globalThis.document as Document,
+      segment.rowNumber
+    );
   }
 
   private createDiagnostic({
