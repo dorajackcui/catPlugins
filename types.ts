@@ -134,6 +134,7 @@ export interface MemoqFillDiagnosticBase {
   scanPass: number;
   scrollTop: number;
   scrollMode: 'native' | 'synthetic';
+  profileId?: 'legacy-webtrans' | 'modern-editor';
   domId: string;
   rowNumber?: string;
   locatingMethod: 'rowNumber' | 'singleVisibleSource' | 'none';

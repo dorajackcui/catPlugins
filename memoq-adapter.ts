@@ -1,6 +1,8 @@
 import { runtimeSendMessage } from './chrome-api.ts';
 import { extractPlaceholderTokens } from './qa.ts';
 import type { ApiResponse, BackgroundRequest, FillOutcome } from './types.ts';
+import { describeMemoqFillDiagnostic } from './memoq-fill-diagnostics.ts';
+import { MemoqFillTransaction } from './memoq-fill-transaction.ts';
 import {
   containsNoBreakSpace,
   delay,
@@ -25,6 +27,7 @@ import {
   selectMemoqDomProfile,
   type MemoqDomProfile
 } from './memoq-dom-profile.ts';
+import { writeTrustedTextToElement } from './trusted-text-writer.ts';
 
 export {
   formatMemoqInlineTag,
@@ -226,106 +229,51 @@ export class MemoqAdapter {
   }
 
   async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
-    const originalTarget = segment.targetElement as HTMLElement;
-    const hiddenInput = document.querySelector<HTMLInputElement>(MEMOQ_HIDDEN_INPUT_SELECTOR);
-    if (!hiddenInput) {
+    return this.fillSegmentWithTransaction(segment, value);
+  }
+
+  private async fillSegmentWithTransaction(
+    segment: RuntimeSegment,
+    value: string
+  ): Promise<FillOutcome> {
+    const profile = this.getProfile();
+    if (!profile) {
       return {
         domId: segment.domId,
         filled: false,
-        reason: 'memoQ hidden input was not found.'
+        reason: 'memoQ editor profile was not found.'
       };
     }
 
-    // Attach the debugger before resolving or measuring anything: a fresh
-    // attachment shows the debugging infobar, which resizes the page and
-    // re-lays out memoQ's virtualized grid, invalidating any element or
-    // coordinate captured earlier.
-    try {
-      await this.prepareTrustedInput();
-    } catch (error) {
+    const reader = new MemoqRowReader({ profile, helpers: this.helpers });
+    const transaction = new MemoqFillTransaction({
+      profile,
+      readTargetText: (target) => reader.getEditableValue(target),
+      readSourceText: (currentSegment) => reader.getCurrentSourceValue(currentSegment),
+      collectNearbyRows: (rowNumber) => reader.collectVisibleRowDiagnostics(rowNumber),
+      writeTrustedText: (target, text) =>
+        writeTrustedTextToElement(target, text, {
+          requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
+          settleMs: 20
+        })
+    });
+    const outcome = await transaction.fillSegment(segment, value);
+
+    if (outcome.filled) {
       return {
         domId: segment.domId,
-        filled: false,
-        reason: `memoQ trusted input is unavailable: ${describeError(error)}`
+        filled: true,
+        diagnostic: outcome.diagnostic
       };
-    }
-
-    const currentTargetBefore = this.findCurrentMemoqTargetCellByRowNumber(segment.rowNumber);
-    const originalTargetBeforeText = this.readMemoqElementText(originalTarget);
-    const currentTargetBeforeText = currentTargetBefore
-      ? this.readMemoqElementText(currentTargetBefore)
-      : '';
-
-    let waitResult: MemoqCommitWaitResult = {
-      confirmed: false,
-      lastCurrentTargetText: '',
-      lastOriginalTargetText: '',
-      rowLookupFound: false
-    };
-    let activationFailure: string | undefined;
-
-    // Resolved lazily and repeatedly: the virtualized grid can replace the
-    // row's DOM node at any moment (scroll, commit, infobar re-layout), so a
-    // reference is only trustworthy at the instant it is measured.
-    const resolveTarget = (): HTMLElement =>
-      this.findCurrentMemoqTargetCellByRowNumber(segment.rowNumber) ?? originalTarget;
-
-    for (let attempt = 0; attempt < MEMOQ_FILL_ATTEMPTS; attempt += 1) {
-      let target: HTMLElement;
-      try {
-        target = await this.activateTarget(resolveTarget);
-        activationFailure = undefined;
-      } catch (error) {
-        activationFailure = describeError(error);
-        continue;
-      }
-
-      hiddenInput.focus();
-      this.writeValueThroughHiddenInput(hiddenInput, value);
-
-      waitResult = await this.waitForCommittedTargetCellText(
-        target,
-        value,
-        segment.rowNumber
-      );
-
-      if (waitResult.confirmed) {
-        break;
-      }
-
-      // Retry only while the row still shows nothing â€” if partial or foreign
-      // text landed there, a second insert could duplicate content.
-      if (waitResult.lastCurrentTargetText !== '') {
-        break;
-      }
-    }
-
-    if (waitResult.confirmed && containsNoBreakSpace(value)) {
-      this.warnIfNoBreakSpacesConverted(segment, value);
-    }
-
-    let reason: string | undefined;
-    if (!waitResult.confirmed) {
-      reason = activationFailure
-        ? `memoQ target activation failed: ${activationFailure} row=${segment.rowNumber ?? segment.domId} source="${this.truncateDiagnostic(segment.sourceRaw)}"`
-        : this.buildMemoqFillFailureReason({
-            segment,
-            value,
-            hiddenInput,
-            originalTargetBeforeText,
-            currentTargetBeforeText,
-            waitResult
-          });
-    }
-
-    if (reason) {
-      console.warn('[Phrase Bulk Fill] memoQ fill confirmation failed', reason);
     }
 
     return {
       domId: segment.domId,
-      filled: waitResult.confirmed,
-      reason
+      filled: false,
+      reason: outcome.diagnostic
+        ? describeMemoqFillDiagnostic(outcome.diagnostic)
+        : undefined,
+      diagnostic: outcome.diagnostic
     };
   }
 
@@ -903,7 +851,7 @@ export class MemoqAdapter {
     resolveTarget().scrollIntoView?.({ block: 'center', inline: 'nearest' });
     await delay(MEMOQ_ACTIVATION_DELAY_MS);
     // Scrolling makes the virtualized grid load and re-lay out rows
-    // asynchronously â€” and a re-render can swap the row's DOM node entirely.
+    // asynchronously â€?and a re-render can swap the row's DOM node entirely.
     // Re-resolve while waiting so coordinates come from the live node.
     const target = await this.waitForClickableTarget(resolveTarget);
     await this.dispatchTrustedMouseClick(target);
@@ -912,7 +860,7 @@ export class MemoqAdapter {
   }
 
   // Resolves the target until it reports the same non-zero rect twice in a
-  // row. A zero rect is never "stable" â€” it means the node is detached or
+  // row. A zero rect is never "stable" â€?it means the node is detached or
   // hidden, so keep re-resolving until the live replacement shows up.
   private async waitForClickableTarget(resolveTarget: () => HTMLElement): Promise<HTMLElement> {
     let previousKey: string | null = null;
@@ -939,7 +887,7 @@ export class MemoqAdapter {
 
   // Attaches the tab debugger (or extends an existing attachment) so trusted
   // clicks can be dispatched. Public so the fill run can attach once up
-  // front, before any segment snapshot is collected â€” the fresh-attachment
+  // front, before any segment snapshot is collected â€?the fresh-attachment
   // infobar re-layout then happens before elements are captured.
   async prepareTrustedInput(): Promise<void> {
     const response = await runtimeSendMessage<BackgroundRequest, ApiResponse<null>>({
