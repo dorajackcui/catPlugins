@@ -185,6 +185,100 @@ test('modern memoQ rows support localized accessible labels', () => {
   assert.equal(modernEditorMemoqProfile.findCurrentTargetByRowNumber(documentRoot, '88'), targetCell);
 });
 
+test('modern memoQ rows distinguish source and target cells from class names', () => {
+  const sourceCell = fakeElement({
+    className: 'ProseMirror memoq-source-cell',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'segment editor'
+    },
+    rect: { left: 120 },
+    textContent: 'Source'
+  });
+  const targetCell = fakeElement({
+    className: 'ProseMirror memoq-target-cell',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'segment editor'
+    },
+    rect: { left: 260 },
+    textContent: 'Target'
+  });
+  const row = fakeElement({
+    attributes: { role: 'row', 'aria-label': 'row 302' },
+    children: [sourceCell, targetCell]
+  });
+  const table = fakeElement({
+    attributes: { role: 'table' },
+    children: [row]
+  });
+  const documentRoot = fakeDocument(fakeElement({ children: [table] }));
+
+  assert.deepEqual(modernEditorMemoqProfile.findVisibleRows(documentRoot), [row]);
+  assert.deepEqual(modernEditorMemoqProfile.findCells(asElement(row)), {
+    source: sourceCell,
+    target: targetCell
+  });
+  assert.equal(modernEditorMemoqProfile.findCurrentTargetByRowNumber(documentRoot, '302'), targetCell);
+});
+
+test('modern memoQ rows read row numbers from title and data attributes', () => {
+  const titledSourceCell = fakeElement({
+    className: 'ProseMirror source-cell',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      title: 'line 4096'
+    },
+    rect: { left: 120 },
+    textContent: 'Source'
+  });
+  const targetCell = fakeElement({
+    className: 'ProseMirror target-cell',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell'
+    },
+    rect: { left: 260 },
+    textContent: 'Target'
+  });
+  const titleRow = fakeElement({
+    attributes: { role: 'row' },
+    children: [titledSourceCell, targetCell]
+  });
+
+  assert.equal(modernEditorMemoqProfile.readRowNumber(asElement(titleRow)), '4096');
+
+  const dataRow = fakeElement({
+    attributes: { role: 'row', 'data-row-number': '512' },
+    children: [
+      fakeElement({
+        className: 'ProseMirror original-cell',
+        attributes: {
+          contenteditable: 'true',
+          role: 'gridcell'
+        },
+        rect: { left: 120 },
+        textContent: 'Source'
+      }),
+      fakeElement({
+        className: 'ProseMirror target-cell',
+        attributes: {
+          contenteditable: 'true',
+          role: 'gridcell',
+          'data-index': 'not the row number'
+        },
+        rect: { left: 260 },
+        textContent: 'Target'
+      })
+    ]
+  });
+
+  assert.equal(modernEditorMemoqProfile.readRowNumber(asElement(dataRow)), '512');
+});
+
 test('modern memoQ ignores read-only ProseMirror panes outside translation rows', () => {
   const readOnlyPane = fakeElement({
     className: 'ProseMirror',

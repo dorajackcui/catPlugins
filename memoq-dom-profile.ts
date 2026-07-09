@@ -24,6 +24,17 @@ const MODERN_TABLE_SELECTOR = '[role="table"]';
 const SOURCE_LABEL_RE = /source|original|\u539f\u6587/i;
 const TARGET_LABEL_RE = /target|\u76ee\u6807/i;
 const MODERN_ROW_NUMBER_RE = /(?:row|line|\u884c)\s*(\d+)|(\d+)/i;
+const MODERN_ROW_NUMBER_ATTRIBUTES = [
+  'aria-label',
+  'aria-description',
+  'title',
+  'aria-rowindex',
+  'data-row',
+  'data-rowindex',
+  'data-row-index',
+  'data-row-number',
+  'data-index'
+];
 
 function queryAll(root: ParentNode | HTMLElement, selector: string): HTMLElement[] {
   if (typeof root.querySelectorAll !== 'function') {
@@ -105,9 +116,29 @@ function getAccessibleLabel(element: HTMLElement): string {
   ).trim();
 }
 
+function getModernCellClassificationText(element: HTMLElement): string {
+  return `${getAccessibleLabel(element)} ${element.className || ''}`.trim();
+}
+
 function readModernRowNumberFromLabel(label: string): string | undefined {
   const match = label.match(MODERN_ROW_NUMBER_RE);
   return match?.[1] ?? match?.[2];
+}
+
+function readModernRowNumberFromAttributes(element: HTMLElement): string | undefined {
+  for (const attributeName of MODERN_ROW_NUMBER_ATTRIBUTES) {
+    const value = element.getAttribute?.(attributeName)?.trim();
+    if (!value) {
+      continue;
+    }
+
+    const rowNumber = readModernRowNumberFromLabel(value);
+    if (rowNumber) {
+      return rowNumber;
+    }
+  }
+
+  return undefined;
 }
 
 function hasAncestorTable(element: HTMLElement): boolean {
@@ -144,8 +175,8 @@ function findModernCells(row: HTMLElement): MemoqProfileCells | null {
     return null;
   }
 
-  const source = cells.find((cell) => SOURCE_LABEL_RE.test(getAccessibleLabel(cell)));
-  const target = cells.find((cell) => TARGET_LABEL_RE.test(getAccessibleLabel(cell)));
+  const source = cells.find((cell) => SOURCE_LABEL_RE.test(getModernCellClassificationText(cell)));
+  const target = cells.find((cell) => TARGET_LABEL_RE.test(getModernCellClassificationText(cell)));
 
   if (!source || !target) {
     return null;
@@ -155,9 +186,13 @@ function findModernCells(row: HTMLElement): MemoqProfileCells | null {
 }
 
 function readModernRowNumber(row: HTMLElement): string | undefined {
+  const rowAttributeNumber = readModernRowNumberFromAttributes(row);
+  if (rowAttributeNumber) {
+    return rowAttributeNumber;
+  }
+
   for (const cell of queryAll(row, MODERN_CELL_SELECTOR)) {
-    const label = getAccessibleLabel(cell);
-    const rowNumber = readModernRowNumberFromLabel(label);
+    const rowNumber = readModernRowNumberFromAttributes(cell);
     if (rowNumber) {
       return rowNumber;
     }
