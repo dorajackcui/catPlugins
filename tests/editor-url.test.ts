@@ -41,6 +41,14 @@ test('memoQ webtrans URLs without the webpm segment are supported', () => {
   assert.equal(isSupportedEditorUrl(url), true);
 });
 
+test('modern memoQ editor document URLs are supported', () => {
+  const url =
+    'https://memoq.example.net/memoqweb/editor/projects/project-123/docs/doc-456/?view=translation#row-12';
+
+  assert.equal(isMemoqUrl(url), true);
+  assert.equal(isSupportedEditorUrl(url), true);
+});
+
 test('non-editor URLs are rejected', () => {
   assert.equal(isSupportedEditorUrl('https://gentrans.genplus.cn/#/login'), false);
   assert.equal(isSupportedEditorUrl('https://example.com/'), false);
