@@ -17,6 +17,14 @@ import {
   memoQAccessibilityTextToRenderedText,
   serializeMemoqContent
 } from './memoq-text.ts';
+import {
+  MemoqRowReader,
+  readMemoqAccessibilityTextBoxValue
+} from './memoq-row-reader.ts';
+import {
+  selectMemoqDomProfile,
+  type MemoqDomProfile
+} from './memoq-dom-profile.ts';
 
 export {
   formatMemoqInlineTag,
@@ -24,6 +32,7 @@ export {
   memoQAccessibilityTextToRenderedText,
   serializeMemoqContent
 } from './memoq-text.ts';
+export { readMemoqAccessibilityTextBoxValue } from './memoq-row-reader.ts';
 
 const MEMOQ_CELL_SELECTOR = '.editor-cell';
 const MEMOQ_CONTENT_SELECTOR = '.content-container';
@@ -75,12 +84,6 @@ export function shouldUseMemoqAccessibilityTextBox(
   return true;
 }
 
-export function readMemoqAccessibilityTextBoxValue(
-  textBox: Pick<HTMLInputElement | HTMLTextAreaElement, 'value' | 'textContent'>
-): string {
-  return normalizeText(textBox.value || textBox.textContent || '');
-}
-
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -106,8 +109,17 @@ export function chooseMemoqAccessibilityTextBoxes<T extends MemoqAccessibilityTe
 export class MemoqAdapter {
   constructor(private readonly helpers: ContentScriptDomHelpers) {}
 
+  private getProfile(): MemoqDomProfile | null {
+    return selectMemoqDomProfile(document);
+  }
+
+  private getRowReader(): MemoqRowReader | null {
+    const profile = this.getProfile();
+    return profile ? new MemoqRowReader({ profile, helpers: this.helpers }) : null;
+  }
+
   isActive(): boolean {
-    return document.querySelector(MEMOQ_CELL_SELECTOR) !== null;
+    return selectMemoqDomProfile(document) !== null;
   }
 
   findScrollContext(): ScrollContext | null {
@@ -132,6 +144,15 @@ export class MemoqAdapter {
   }
 
   collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[] {
+    const reader = this.getRowReader();
+    if (reader) {
+      return reader.collectVisibleSegments(scrollContext);
+    }
+
+    return [];
+  }
+
+  private collectVisibleSegmentsLegacy(scrollContext: ScrollContext): RuntimeSegment[] {
     const cells = this.helpers.sortByVisualPosition(
       Array.from(document.querySelectorAll<HTMLElement>(MEMOQ_CELL_SELECTOR))
         .filter((cell) => this.helpers.isElementVisible(cell)),
@@ -160,6 +181,11 @@ export class MemoqAdapter {
   }
 
   getEditableValue(targetElement: HTMLElement): string {
+    const reader = this.getRowReader();
+    if (reader) {
+      return reader.getEditableValue(targetElement);
+    }
+
     if (targetElement.matches(MEMOQ_ACCESSIBILITY_TEXTBOX_SELECTOR)) {
       return readMemoqAccessibilityTextBoxValue(
         targetElement as HTMLInputElement | HTMLTextAreaElement
@@ -175,6 +201,11 @@ export class MemoqAdapter {
   // different row, so pre-fill emptiness checks must re-resolve by row
   // number.
   getCurrentEditableValue(segment: RuntimeSegment): string {
+    const reader = this.getRowReader();
+    if (reader) {
+      return reader.getCurrentEditableValue(segment);
+    }
+
     const currentTargetCell = this.findCurrentMemoqTargetCellByRowNumber(segment.rowNumber);
     return this.getEditableValue(
       (currentTargetCell ?? segment.targetElement) as HTMLElement
@@ -458,6 +489,11 @@ export class MemoqAdapter {
     targetRowNumber?: string,
     radius = 2
   ): MemoqVisibleRowDiagnostic[] {
+    const reader = this.getRowReader();
+    if (reader) {
+      return reader.collectVisibleRowDiagnostics(targetRowNumber, radius);
+    }
+
     if (typeof document.querySelectorAll !== 'function') {
       return [];
     }
@@ -568,6 +604,11 @@ export class MemoqAdapter {
   }
 
   private findCurrentMemoqTargetCellByRowNumber(rowNumber?: string): HTMLElement | null {
+    const reader = this.getRowReader();
+    if (reader) {
+      return reader.findCurrentTargetByRowNumber(rowNumber);
+    }
+
     if (!rowNumber) {
       return null;
     }
