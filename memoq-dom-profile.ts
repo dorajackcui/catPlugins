@@ -237,7 +237,7 @@ export const legacyWebtransMemoqProfile: MemoqDomProfile = {
 export const modernEditorMemoqProfile: MemoqDomProfile = {
   id: 'modern-editor',
   matches(root) {
-    return modernEditorMemoqProfile.findVisibleRows(root).length > 0;
+    return queryAll(root, MODERN_CELL_SELECTOR).length > 0;
   },
   findVisibleRows(root) {
     const rows: HTMLElement[] = [];

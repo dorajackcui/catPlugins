@@ -84,6 +84,22 @@ test('modern memoQ rows are detected and preferred when present', () => {
   assert.equal(modernEditorMemoqProfile.createSyntheticScrollTarget(documentRoot), table);
 });
 
+test('modern memoQ profile matches a transient contenteditable gridcell before a full row is available', () => {
+  const transientCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 1123 source segment'
+    },
+    textContent: 'Source'
+  });
+  const documentRoot = fakeDocument(fakeElement({ children: [transientCell] }));
+
+  assert.equal(modernEditorMemoqProfile.matches(documentRoot), true);
+  assert.deepEqual(modernEditorMemoqProfile.findVisibleRows(documentRoot), []);
+});
+
 test('modern memoQ rows read row numbers and distinguish source and target cells from labels', () => {
   const sourceCell = fakeElement({
     className: 'ProseMirror',
