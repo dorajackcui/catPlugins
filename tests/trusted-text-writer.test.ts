@@ -1,0 +1,117 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { writeTrustedTextToElement } from '../trusted-text-writer.ts';
+
+function installChromeRecorder(
+  messages: unknown[],
+  response: unknown = { ok: true, data: null }
+): () => void {
+  const previousChrome = (globalThis as typeof globalThis & { chrome?: unknown }).chrome;
+
+  (globalThis as typeof globalThis & { chrome?: unknown }).chrome = {
+    runtime: {
+      lastError: null,
+      sendMessage: (message: unknown, callback: (nextResponse: unknown) => void) => {
+        messages.push(message);
+        callback(response);
+      }
+    }
+  };
+
+  return () => {
+    (globalThis as typeof globalThis & { chrome?: unknown }).chrome = previousChrome;
+  };
+}
+
+test('writeTrustedTextToElement sends memoQ debugger text write with center coordinates', async () => {
+  const messages: unknown[] = [];
+  const restoreChrome = installChromeRecorder(messages);
+  const target = {
+    scrollIntoView: () => undefined,
+    getBoundingClientRect: () => ({
+      left: 10,
+      top: 20,
+      width: 80,
+      height: 40
+    })
+  } as unknown as HTMLElement;
+
+  try {
+    await writeTrustedTextToElement(target, 'Bonjour', {
+      requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT'
+    });
+  } finally {
+    restoreChrome();
+  }
+
+  assert.deepEqual(messages, [
+    {
+      type: 'MEMOQ_DEBUGGER_WRITE_TEXT',
+      payload: {
+        x: 50,
+        y: 40,
+        text: 'Bonjour'
+      }
+    }
+  ]);
+});
+
+test('writeTrustedTextToElement rejects zero-size targets', async () => {
+  const target = {
+    scrollIntoView: () => undefined,
+    getBoundingClientRect: () => ({
+      left: 10,
+      top: 20,
+      width: 0,
+      height: 40
+    })
+  } as unknown as HTMLElement;
+
+  let error: unknown;
+
+  try {
+    await writeTrustedTextToElement(target, 'Bonjour', {
+      requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT'
+    });
+  } catch (nextError) {
+    error = nextError;
+  }
+
+  assert.equal(error instanceof Error, true);
+  assert.equal(
+    /target element is not visible enough to write/.test((error as Error).message),
+    true
+  );
+});
+
+test('writeTrustedTextToElement surfaces background write errors', async () => {
+  const messages: unknown[] = [];
+  const restoreChrome = installChromeRecorder(messages, { ok: false, error: 'debugger failed' });
+  const target = {
+    scrollIntoView: () => undefined,
+    getBoundingClientRect: () => ({
+      left: 10,
+      top: 20,
+      width: 80,
+      height: 40
+    })
+  } as unknown as HTMLElement;
+
+  try {
+    let error: unknown;
+
+    try {
+      await writeTrustedTextToElement(target, 'Bonjour', {
+        requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT'
+      });
+    } catch (nextError) {
+      error = nextError;
+    }
+
+    assert.equal(error instanceof Error, true);
+    assert.equal(/debugger failed/.test((error as Error).message), true);
+  } finally {
+    restoreChrome();
+  }
+});
