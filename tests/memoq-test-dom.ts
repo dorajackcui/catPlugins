@@ -50,7 +50,6 @@ export function fakeText(textContent: string): FakeTextNode {
 
 export function fakeElement(options: FakeElementOptions = {}): FakeElement {
   const classNames = (options.className ?? '').split(/\s+/).filter(Boolean);
-  const ownTextContent = options.textContent ?? '';
 
   const element = {
     nodeType: 1,
@@ -91,21 +90,21 @@ export function fakeElement(options: FakeElementOptions = {}): FakeElement {
 
   Object.defineProperties(element, {
     textContent: {
-      get: () => aggregateElementTextContent(element, ownTextContent)
+      get: () => aggregateElementTextContent(element)
     },
     innerText: {
-      get: () => aggregateElementTextContent(element, ownTextContent)
+      get: () => aggregateElementTextContent(element)
     }
   });
 
-  for (const child of options.children ?? []) {
-    appendChild(element, child);
-  }
-
-  if (element.childNodes.length === 0 && ownTextContent) {
-    const textNode = fakeText(ownTextContent);
+  if (options.textContent) {
+    const textNode = fakeText(options.textContent);
     textNode.parentElement = element;
     element.childNodes.push(textNode);
+  }
+
+  for (const child of options.children ?? []) {
+    appendChild(element, child);
   }
 
   return element;
@@ -145,13 +144,15 @@ function querySelectorAll(root: FakeElement, selector: string): FakeElement[] {
 }
 
 function matchesSelector(element: FakeElement, selector: string): boolean {
-  return selector
+  const parts = selector
     .split(',')
-    .map((part) => part.trim())
-    .some((part) => {
-      assertSupportedSelector(part);
-      return matchesSingleSelector(element, part);
-    });
+    .map((part) => part.trim());
+
+  for (const part of parts) {
+    assertSupportedSelector(part);
+  }
+
+  return parts.some((part) => matchesSingleSelector(element, part));
 }
 
 function matchesSingleSelector(element: FakeElement, selector: string): boolean {
@@ -189,11 +190,7 @@ function matchesSingleSelector(element: FakeElement, selector: string): boolean 
   return true;
 }
 
-function aggregateElementTextContent(element: FakeElement, ownTextContent: string): string {
-  if (element.childNodes.length === 0) {
-    return ownTextContent;
-  }
-
+function aggregateElementTextContent(element: FakeElement): string {
   return element.childNodes
     .map((child) =>
       child.nodeType === 3 ? child.textContent : child.textContent

@@ -151,12 +151,28 @@ test('serializeMemoqContent uses aggregated descendant text for mixed nested con
   assert.equal(serializeMemoqContent(root as unknown as HTMLElement), 'A{1>}BCD');
 });
 
+test('fake DOM keeps own textContent alongside descendant text', () => {
+  const root = fakeElement({
+    textContent: 'A',
+    children: [fakeElement({ textContent: 'B' })]
+  });
+
+  assert.equal(root.textContent, 'AB');
+  assert.equal(root.innerText, 'AB');
+  assert.equal(serializeMemoqContent(root as unknown as HTMLElement), 'AB');
+});
+
 test('fake DOM selector matcher throws on unsupported selector syntax', () => {
   const root = fakeElement({
     children: [fakeElement({ className: 'tag-content' })]
   });
 
-  for (const selector of ['div .tag-content', '.tag-content > span']) {
+  for (const selector of [
+    'div .tag-content',
+    '.tag-content > span',
+    '.tag-content, div .broken',
+    '.tag-content, '
+  ]) {
     let error: unknown;
 
     try {
