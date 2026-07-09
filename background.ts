@@ -377,16 +377,6 @@ async function dispatchTrustedMemoqClick(
   }
 }
 
-async function dispatchTrustedTabClick(tabId: number, x: number, y: number): Promise<void> {
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    throw new Error('Invalid memoQ click coordinates.');
-  }
-
-  await ensureDebuggerAttached(tabId);
-  await dispatchTrustedMemoqClick({ tabId }, x, y);
-  scheduleDebuggerIdleDetach(tabId);
-}
-
 async function dispatchTrustedTextWrite(
   tabId: number,
   x: number,
@@ -703,16 +693,6 @@ async function handleMessage(
       }
 
       await ensureDebuggerAttached(tabId);
-      return { ok: true, data: null };
-    }
-
-    case 'MEMOQ_DEBUGGER_CLICK': {
-      const tabId = sender?.tab?.id;
-      if (typeof tabId !== 'number') {
-        throw new Error('memoQ trusted click requires a sender tab.');
-      }
-
-      await dispatchTrustedTabClick(tabId, request.payload.x, request.payload.y);
       return { ok: true, data: null };
     }
 
