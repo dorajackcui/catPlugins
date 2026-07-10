@@ -119,6 +119,7 @@ class PlatformDomAdapter {
         targetElement: _targetElement,
         scanElement: _scanElement,
         scanFingerprint: _scanFingerprint,
+        phraseUsesTagMarkup: _phraseUsesTagMarkup,
         ...segment
       }) => segment
     );

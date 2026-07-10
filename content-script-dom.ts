@@ -34,6 +34,7 @@ export interface RuntimeSegment {
   placeholderTokens: string[];
   targetElement: EditableElement;
   platform: 'memoq' | 'gientrans' | 'phrase' | 'generic';
+  phraseUsesTagMarkup?: boolean;
   scanElement?: Element;
   scanFingerprint?: string;
 }

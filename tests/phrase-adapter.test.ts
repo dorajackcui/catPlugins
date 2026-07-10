@@ -325,6 +325,114 @@ test('PhraseAdapter.fillSegment uses trusted debugger text input even when synth
   }
 });
 
+test('PhraseAdapter.fillSegment keeps plaintext tag tokens in trusted text input', async () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousHTMLInputElement = globalThis.HTMLInputElement;
+  const previousHTMLTextAreaElement = globalThis.HTMLTextAreaElement;
+  const messages: unknown[] = [];
+
+  const target = new FakeElement('flex-row twe_target twe_textarea_wrapper', {
+    top: 100,
+    left: 260,
+    width: 140,
+    height: 20
+  });
+  const textContainer = new FakeElement('te_text_container');
+  target.children = [textContainer];
+  const insertTagButton = new FakeElement('twe-toolbar-button', {
+    top: 30,
+    left: 20,
+    width: 20,
+    height: 20
+  });
+
+  const restoreChrome = installChromeRecorder(messages, (message) => {
+    if (
+      typeof message === 'object' &&
+      message !== null &&
+      'type' in message &&
+      message.type === 'DEBUGGER_WRITE_TEXT'
+    ) {
+      textContainer.textContent = String(
+        (message as { payload?: { text?: string } }).payload?.text ?? ''
+      );
+    }
+  });
+
+  globalThis.HTMLElement = FakeElement as never;
+  globalThis.HTMLInputElement = FakeInputElement as never;
+  globalThis.HTMLTextAreaElement = class FakeTextAreaElement extends FakeElement {} as never;
+  globalThis.document = {
+    querySelector: (selector: string) =>
+      selector.includes('aria-label="插入标记"')
+        ? insertTagButton
+        : null,
+    body: {
+      querySelector: () => null
+    }
+  } as unknown as Document;
+  globalThis.window = {
+    setTimeout: (callback: () => void) => {
+      callback();
+      return 0;
+    }
+  } as unknown as Window & typeof globalThis;
+
+  try {
+    const adapter = new PhraseAdapter({
+      dispatchMouseSequence: () => undefined,
+      readTextBySelectors: () => textContainer.textContent,
+      isElementVisible: () => true,
+      setEditableValue: () => undefined,
+      dispatchInput: () => undefined,
+      dispatchChange: () => undefined,
+      dispatchBlur: () => undefined,
+      dispatchTabNavigation: () => undefined
+    } as never);
+
+    const outcome = await adapter.fillSegment(
+      {
+        domId: 'segment-position-plaintext-color',
+        sourceRaw: '<color=#FFFFFF>Unlocks after <color=#EF{a}>{b} days</color>',
+        sourceNormalized: '<color=#FFFFFF>Unlocks after <color=#EF{a}>{b} days</color>',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: [
+          '<color=#FFFFFF>',
+          '<color=#EF{a}>',
+          '{b}',
+          '</color>'
+        ],
+        targetElement: target as never,
+        platform: 'phrase'
+      },
+      '<color=#FFFFFF>Se débloque après <color=#EF{a}>{b} jours</color>'
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.deepEqual(messages, [
+      {
+        type: 'DEBUGGER_WRITE_TEXT',
+        payload: {
+          x: 330,
+          y: 110,
+          text: '<color=#FFFFFF>Se débloque après <color=#EF{a}>{b} jours</color>'
+        }
+      }
+    ]);
+  } finally {
+    restoreChrome();
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+    globalThis.HTMLElement = previousHTMLElement;
+    globalThis.HTMLInputElement = previousHTMLInputElement;
+    globalThis.HTMLTextAreaElement = previousHTMLTextAreaElement;
+  }
+});
+
 test('PhraseAdapter.fillSegment confirms Phrase tag clip echoes against plain placeholder text', async () => {
   const previousDocument = globalThis.document;
   const previousWindow = globalThis.window;
@@ -400,7 +508,8 @@ test('PhraseAdapter.fillSegment confirms Phrase tag clip echoes against plain pl
         isEmptyTarget: true,
         placeholderTokens: ['{1}'],
         targetElement: target as never,
-        platform: 'phrase'
+        platform: 'phrase',
+        phraseUsesTagMarkup: true
       },
       '有効範囲が{1}m増加する。'
     );
@@ -521,7 +630,8 @@ test('PhraseAdapter.fillSegment confirms Phrase numbered color tag clip echoes a
           '</color>'
         ],
         targetElement: target as never,
-        platform: 'phrase'
+        platform: 'phrase',
+        phraseUsesTagMarkup: true
       },
       'ブラッド・ミラーが<color=#fa7000>ポストターン後</color>、ターンの勢いを利用して素早くフック<color=#fa7000>シュート</color>を決める。'
     );
@@ -664,7 +774,8 @@ test('PhraseAdapter.fillSegment confirms repeated identical placeholders with di
         isEmptyTarget: true,
         placeholderTokens: ['{1}', '{1}'],
         targetElement: target as never,
-        platform: 'phrase'
+        platform: 'phrase',
+        phraseUsesTagMarkup: true
       },
       'オフボール移動速度+{1}m/s、ドリブル移動速度+{1}m/s'
     );

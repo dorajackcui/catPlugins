@@ -34,6 +34,28 @@ const TARGET_ACTIVATION_SELECTORS = [
   '.twe_target .te_textarea_container',
   '.twe_target'
 ];
+const TAG_MARKUP_SCOPE_SELECTORS = [
+  ...SOURCE_ROW_SELECTORS,
+  ...TARGET_ROW_SELECTORS
+];
+const TAG_CHIP_SELECTORS = [
+  '[contenteditable="false"]',
+  'input[type="tag"]',
+  '[class*="tag"]',
+  '[class*="Tag"]',
+  '[data-testid*="tag"]',
+  '[data-testid*="Tag"]',
+  '[data-test*="tag"]',
+  '[data-test*="Tag"]',
+  '[data-qa*="tag"]',
+  '[data-qa*="Tag"]',
+  '[aria-label*="tag"]',
+  '[aria-label*="Tag"]',
+  '[aria-label*="标记"]',
+  '[title*="tag"]',
+  '[title*="Tag"]',
+  '[title*="标记"]'
+];
 const INSERT_TAG_BUTTON_SELECTORS = [
   'button[aria-label="插入标记"]',
   'button[aria-label="Insert tag"]',
@@ -112,7 +134,11 @@ export class PhraseAdapter {
     if (target instanceof HTMLElement && target.matches('.twe_target')) {
       await this.activateTarget(target);
       try {
-        await this.dispatchPhraseWrite(target, value);
+        await this.dispatchPhraseWrite(
+          target,
+          value,
+          segment.phraseUsesTagMarkup === true
+        );
       } catch (error) {
         return {
           domId: segment.domId,
@@ -204,7 +230,8 @@ export class PhraseAdapter {
       isEmptyTarget: normalizeText(targetRaw) === '',
       placeholderTokens: extractPlaceholderTokens(sourceRaw),
       targetElement,
-      platform: 'phrase'
+      platform: 'phrase',
+      phraseUsesTagMarkup: this.hasPhraseTagMarkup(row)
     };
   }
 
@@ -273,8 +300,20 @@ export class PhraseAdapter {
     }
   }
 
-  private async dispatchPhraseWrite(targetElement: HTMLElement, text: string): Promise<void> {
-    const operations = this.buildPhraseInputOperations(text);
+  private async dispatchPhraseWrite(
+    targetElement: HTMLElement,
+    text: string,
+    useTagInsertion: boolean
+  ): Promise<void> {
+    const operations: DebuggerInputOperation[] =
+      useTagInsertion
+        ? this.buildPhraseInputOperations(text)
+        : [
+            {
+              type: 'text',
+              text
+            }
+          ];
 
     if (!operations.some((operation) => operation.type === 'click')) {
       await this.dispatchTrustedTextWrite(targetElement, text);
@@ -376,5 +415,20 @@ export class PhraseAdapter {
     }
 
     return false;
+  }
+
+  private hasPhraseTagMarkup(row: HTMLElement): boolean {
+    const scopedRoots = Array.from(
+      row.querySelectorAll<HTMLElement>(TAG_MARKUP_SCOPE_SELECTORS.join(','))
+    );
+    const roots = scopedRoots.length > 0 ? scopedRoots : [row];
+
+    return roots.some((root) => this.hasVisibleTagChip(root));
+  }
+
+  private hasVisibleTagChip(root: HTMLElement): boolean {
+    return Array.from(
+      root.querySelectorAll<HTMLElement>(TAG_CHIP_SELECTORS.join(','))
+    ).some((element) => this.helpers.isElementVisible(element));
   }
 }
