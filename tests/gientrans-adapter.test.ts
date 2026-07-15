@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { ScrollContext } from '../content-script-dom.ts';
+import { GientTransAdapter } from '../platforms/gientrans/adapter.ts';
 import {
-  GientTransAdapter,
   gientransTextToEditorHtml,
   normalizeGientTransEditorText
-} from '../platforms/gientrans/adapter.ts';
+} from '../platforms/gientrans/editor-text.ts';
 
 const ROW_SELECTOR = '.editor__table tbody > tr.el-table__row';
 const TARGET_SELECTOR = 'td.target-cell pre.edit__input[editortype="target"]';
