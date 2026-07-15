@@ -327,6 +327,46 @@ test('BackgroundRequestHandler keeps memoQ full-scan Fill options and final prog
   );
 });
 
+test('BackgroundRequestHandler keeps non-memoQ Fill on default scan limits', async () => {
+  const fillResult: FillRunResult = {
+    preview: makePreview(),
+    filledCount: 1,
+    filledDomIds: ['segment-1'],
+    stoppedByAutoStop: false,
+    autoStopAfterFilledCount: null
+  };
+  const harness = createHarness({
+    state: makeRuntimeState({
+      translationEntries: [ENTRY],
+      previewResult: makePreview()
+    }),
+    tab: {
+      id: 77,
+      url: 'https://gentrans.genplus.cn/#/olEditor'
+    },
+    responses: [{ ok: true, data: fillResult } satisfies ApiResponse<FillRunResult>]
+  });
+
+  await harness.handler.handle({
+    type: 'RUN_FILL',
+    payload: {
+      fillOptions: {
+        autoStopAfterFilledCount: null,
+        validatePlaceholders: true
+      }
+    }
+  });
+
+  const message = harness.tabMessages[0]?.message as Extract<
+    ContentRequest,
+    { type: 'CONTENT_FILL' }
+  >;
+  assert.equal(message.type, 'CONTENT_FILL');
+  assert.equal(message.payload.maxPasses, undefined);
+  assert.equal(message.payload.maxSegments, undefined);
+  assert.equal(message.payload.scanFromTop, undefined);
+});
+
 test('BackgroundRequestHandler exports all scanned sources with a stable date', async () => {
   const harness = createHarness({
     responses: [{ ok: true, data: [SEGMENT] } satisfies ApiResponse<PageSegment[]>]
