@@ -3,6 +3,7 @@ import {
   isRunActive,
   normalizeRunState
 } from '../domain/run-state.ts';
+import { describeRunFailure } from '../domain/run-stop.ts';
 import type { BackgroundRequest } from '../shared/message-types.ts';
 import type {
   ExportSourcesResult,
@@ -16,7 +17,6 @@ import type {
   StatusKind
 } from '../shared/state-types.ts';
 
-const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 const REFRESH_INTERVAL_MS = 1000;
 
 export interface PopupFile {
@@ -305,10 +305,7 @@ export class PopupController {
   }
 
   private renderOperationError(error: unknown, fallback: string): void {
-    const message = error instanceof Error ? error.message : fallback;
-    this.port.view.renderStatus(
-      message === STOP_ERROR_MESSAGE ? 'Stopped.' : message,
-      message === STOP_ERROR_MESSAGE ? 'default' : 'error'
-    );
+    const failure = describeRunFailure(error, fallback);
+    this.port.view.renderStatus(failure.message, failure.statusKind);
   }
 }

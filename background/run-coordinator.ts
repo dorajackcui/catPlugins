@@ -1,13 +1,7 @@
 import { normalizeFillOptions } from '../domain/fill-options.ts';
 import { normalizePlannedFillCount } from '../domain/fill-throttle.ts';
 import { applyMemoqPreviewCorrection, buildPreview } from '../domain/matcher.ts';
-import {
-  createFinishedRunState,
-  createRunningRunState,
-  DEFAULT_RUN_STATE,
-  isRunActive,
-  normalizeRunState
-} from '../domain/run-state.ts';
+import { isRunActive } from '../domain/run-state.ts';
 import type {
   ApiResponse,
   BackgroundRequest
@@ -17,35 +11,32 @@ import type {
   FillRunResult,
   PageSegment
 } from '../shared/translation-types.ts';
-import type {
-  RuntimeState,
-  StatusKind
-} from '../shared/state-types.ts';
 import {
   BackgroundEditorSession,
   type BackgroundEditorSessionPort
 } from './editor-session.ts';
 import { isMemoqUrl } from './editor-url.ts';
 import { buildSourceExportWorkbook } from './excel.ts';
-import type { RuntimeStateUpdate } from './storage.ts';
+import {
+  BackgroundRunLifecycle,
+  type BackgroundRunLifecyclePort
+} from './run-lifecycle.ts';
 
-const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 const EXPORT_SCAN_MAX_PASSES = 1200;
 const EXPORT_SCAN_MAX_SEGMENTS = 10000;
 
 export interface BackgroundRunCoordinatorPort
-  extends BackgroundEditorSessionPort {
-  readRuntimeState(): Promise<RuntimeState>;
-  writeRuntimeState(update: RuntimeStateUpdate): Promise<void>;
-  now(): Date;
-}
+  extends BackgroundEditorSessionPort,
+    BackgroundRunLifecyclePort {}
 
-/** Coordinates Preview, Export, Fill, and Stop run lifecycles. */
+/** Coordinates Preview, Export, Fill, and Stop workflows. */
 export class BackgroundRunCoordinator {
   private readonly editorSession: BackgroundEditorSession;
+  private readonly lifecycle: BackgroundRunLifecycle;
 
   constructor(private readonly port: BackgroundRunCoordinatorPort) {
     this.editorSession = new BackgroundEditorSession(port);
+    this.lifecycle = new BackgroundRunLifecycle(port);
   }
 
   async runPreview(
@@ -63,10 +54,8 @@ export class BackgroundRunCoordinator {
     );
 
     const tab = await this.editorSession.prepare();
-    const runState = createRunningRunState('preview', tab);
-    await this.port.writeRuntimeState({
-      fillOptions,
-      runState
+    const runState = await this.lifecycle.start('preview', tab, {
+      fillOptions
     });
 
     try {
@@ -88,17 +77,17 @@ export class BackgroundRunCoordinator {
         previewResult: preview,
         fillOptions
       });
-      await this.finalizeRunState(runState.runId ?? '', {
+      await this.lifecycle.finish(runState.runId ?? '', {
         message: `Preview ready. ${preview.readyToFill} segment(s) can be filled.`,
         scannedCount: preview.totalSegments
       });
       return { ok: true, data: preview };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Preview failed.';
-      await this.finalizeRunState(runState.runId ?? '', {
-        message: message === STOP_ERROR_MESSAGE ? 'Stopped.' : message,
-        statusKind: message === STOP_ERROR_MESSAGE ? 'default' : 'error'
-      });
+      await this.lifecycle.finishFailure(
+        runState.runId ?? '',
+        error,
+        'Preview failed.'
+      );
       throw error;
     }
   }
@@ -110,8 +99,7 @@ export class BackgroundRunCoordinator {
     }
 
     const tab = await this.editorSession.prepare();
-    const runState = createRunningRunState('export', tab);
-    await this.port.writeRuntimeState({ runState });
+    const runState = await this.lifecycle.start('export', tab);
 
     try {
       const segments = await this.editorSession.request<PageSegment[]>(
@@ -134,18 +122,18 @@ export class BackgroundRunCoordinator {
         segmentCount: segments.length
       };
 
-      await this.finalizeRunState(runState.runId ?? '', {
+      await this.lifecycle.finish(runState.runId ?? '', {
         message: `Exported ${result.segmentCount} source segment(s).`,
         scannedCount: result.segmentCount
       });
 
       return { ok: true, data: result };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Export failed.';
-      await this.finalizeRunState(runState.runId ?? '', {
-        message: message === STOP_ERROR_MESSAGE ? 'Stopped.' : message,
-        statusKind: message === STOP_ERROR_MESSAGE ? 'default' : 'error'
-      });
+      await this.lifecycle.finishFailure(
+        runState.runId ?? '',
+        error,
+        'Export failed.'
+      );
       throw error;
     }
   }
@@ -168,12 +156,9 @@ export class BackgroundRunCoordinator {
     );
 
     const tab = await this.editorSession.prepare();
-    const runState = createRunningRunState('fill', tab, {
-      plannedFillCount
-    });
-    await this.port.writeRuntimeState({
+    const runState = await this.lifecycle.start('fill', tab, {
       fillOptions,
-      runState
+      plannedFillCount
     });
 
     try {
@@ -203,7 +188,7 @@ export class BackgroundRunCoordinator {
         previewResult: result.preview,
         fillOptions
       });
-      await this.finalizeRunState(runState.runId ?? '', {
+      await this.lifecycle.finish(runState.runId ?? '', {
         message:
           result.stopReason
             ? result.stopReason
@@ -216,12 +201,12 @@ export class BackgroundRunCoordinator {
       });
       return { ok: true, data: result };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Fill failed.';
-      await this.finalizeRunState(runState.runId ?? '', {
-        message: message === STOP_ERROR_MESSAGE ? 'Stopped.' : message,
-        statusKind: message === STOP_ERROR_MESSAGE ? 'default' : 'error',
-        plannedFillCount
-      });
+      await this.lifecycle.finishFailure(
+        runState.runId ?? '',
+        error,
+        'Fill failed.',
+        { plannedFillCount }
+      );
       throw error;
     }
   }
@@ -232,14 +217,7 @@ export class BackgroundRunCoordinator {
       return { ok: true, data: null };
     }
 
-    await this.port.writeRuntimeState({
-      runState: normalizeRunState({
-        ...state.runState,
-        phase: 'stopping',
-        statusKind: 'default',
-        lastUpdatedAt: this.port.now().toISOString()
-      })
-    });
+    await this.lifecycle.markStopping(state.runState);
     await this.editorSession.stop(state.runState);
     return { ok: true, data: null };
   }
@@ -262,27 +240,6 @@ export class BackgroundRunCoordinator {
     preview: ReturnType<typeof buildPreview>
   ): ReturnType<typeof buildPreview> {
     return isMemoqUrl(url) ? applyMemoqPreviewCorrection(preview) : preview;
-  }
-
-  private async finalizeRunState(
-    runId: string,
-    options: {
-      message: string;
-      statusKind?: StatusKind;
-      scannedCount?: number;
-      filledCount?: number;
-      plannedFillCount?: number | null;
-    }
-  ): Promise<void> {
-    const latestState = await this.port.readRuntimeState();
-    const currentRunState =
-      latestState.runState.runId === runId
-        ? latestState.runState
-        : DEFAULT_RUN_STATE;
-
-    await this.port.writeRuntimeState({
-      runState: createFinishedRunState(currentRunState, options)
-    });
   }
 
   private createSourceExportFileName(): string {

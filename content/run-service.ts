@@ -18,8 +18,9 @@ import type {
   PageSegment,
   TranslationEntry
 } from '../shared/translation-types.ts';
+import { RUN_STOP_ERROR_MESSAGE } from '../domain/run-stop.ts';
 
-export const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
+export { RUN_STOP_ERROR_MESSAGE as STOP_ERROR_MESSAGE } from '../domain/run-stop.ts';
 
 export interface ContentScanOptions {
   maxPasses?: number;
@@ -144,7 +145,7 @@ export class ContentRunService {
 
   private assertNotStopped(): void {
     if (this.port.isStopRequested()) {
-      throw new Error(STOP_ERROR_MESSAGE);
+      throw new Error(RUN_STOP_ERROR_MESSAGE);
     }
   }
 

@@ -51,11 +51,15 @@ domain modules.
 
 - `background/request-handler.ts` routes extension messages to state, run, workbook, and debugger services.
 - `background/run-coordinator.ts` owns Preview, Export, Fill, and Stop lifecycle rules and user-facing status updates.
+- `background/run-lifecycle.ts` owns persisted start, finish, failure, and stopping state transitions shared by every run kind.
 - `background/editor-session.ts` is the single owner of active-tab validation, content-script injection, Phrase iframe selection, content response unwrapping, and stop-message routing.
 
 Run workflows should use `BackgroundEditorSession` rather than selecting frames or constructing
 `sendTabMessage` options themselves. Stored run targets retain their original tab and frame so Stop
 does not reinject the content script or drift to a newly focused tab.
+
+`domain/run-stop.ts` defines the cross-context user-stop error and its display mapping. Content,
+background, and popup code must use this contract so an intentional stop never appears as a failure.
 
 ## memoQ DOM profiles
 
