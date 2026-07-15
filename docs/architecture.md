@@ -129,3 +129,7 @@ retain `segid` target re-resolution so virtualized table rows are not written th
 - Phrase uses trusted debugger input, preserves tag-button insertion order, and stops on a failed fill.
 
 Changes to these invariants require explicit behavior tests in addition to the full test, typecheck, and build gates.
+
+Run `npm run check:architecture` to enforce the root-entrypoint layout, focused shared-contract imports,
+shared-layer neutrality, platform isolation, popup dependency direction, domain browser independence,
+and reader/adapter DOM boundary.
