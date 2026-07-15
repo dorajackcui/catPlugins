@@ -12,6 +12,7 @@ import type {
 } from '../shared/types.ts';
 
 type RawState = Partial<Record<(typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS], unknown>>;
+export type RuntimeStateUpdate = Partial<RuntimeState>;
 
 export async function readRuntimeState(): Promise<RuntimeState> {
   const stored = await storageGet<RawState>(Object.values(STORAGE_KEYS));
@@ -30,7 +31,7 @@ export async function readRuntimeState(): Promise<RuntimeState> {
 }
 
 export async function writeRuntimeState(
-  partial: Partial<RuntimeState>
+  partial: RuntimeStateUpdate
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
 
