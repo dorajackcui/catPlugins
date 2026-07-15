@@ -1,7 +1,7 @@
 import { runtimeSendMessage } from './chrome-api.ts';
 import { applyFilledToPreview, classifySegment, createEntryLookup, summarizePreview } from './matcher.ts';
 import { ContentScriptDomHelpers } from './content-script-dom.ts';
-import type { RuntimeSegment, ScrollContext } from './content-script-dom.ts';
+import type { RuntimeSegment } from './content-script-dom.ts';
 import { normalizeFillOptions } from './fill-options.ts';
 import { describeFillStopReason, shouldStopAfterFillFailure } from './fill-failure.ts';
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFillForPlatform } from './fill-throttle.ts';
@@ -11,22 +11,18 @@ import {
   shouldRejectNonEmptyTarget,
   type MemoqFillExecutionContext
 } from './platforms/runtime.ts';
-import {
-  hasRepeatedSyntheticSignature,
-  isRecentSyntheticDuplicate,
-  shouldRescanAfterSegmentFill,
-  shouldStopScanBeforeNextScroll
-} from './scan-dedupe.ts';
-import {
-  filterSegmentsFromPendingStartMarker,
-  hasUnresolvedStartMarker,
-  type StartMarker
-} from './start-marker.ts';
+import { shouldRescanAfterSegmentFill } from './scan-dedupe.ts';
 import {
   bindStartMarkerListeners,
   clearStartMarker,
   readFreshStartMarker
 } from './start-marker-dom.ts';
+import {
+  DEFAULT_SEGMENT_SCAN_MAX_PASSES,
+  DEFAULT_SEGMENT_SCAN_MAX_SEGMENTS,
+  normalizeSegmentScanLimit,
+  SegmentScanner
+} from './segment-scanner.ts';
 import {
   replaceRuntimeMessageListener,
   type RuntimeMessageListener
@@ -55,26 +51,12 @@ declare global {
 }
 
 const CONTENT_DEBUG_PREFIX = '[Phrase Bulk Fill]';
-const DEFAULT_MAX_SEGMENTS = 500;
-const DEFAULT_MAX_PASSES = 160;
-const DEFAULT_SCAN_DELAY_MS = 260;
-const MEMOQ_SCAN_DELAY_MS = 120;
-const MEMOQ_SYNTHETIC_SCAN_DELAY_MS = 160;
 const DEFAULT_INTER_FILL_DELAY_MS = 180;
 const MEMOQ_INTER_FILL_DELAY_MS = 320;
-const DEFAULT_SCROLL_SETTLE_DELAY_MS = 80;
-const MEMOQ_SCROLL_SETTLE_DELAY_MS = 35;
-const SCROLL_RATIO = 0.85;
 
 const helpers = new ContentScriptDomHelpers();
 const platformRuntime = createPlatformRuntime(helpers);
 const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
-
-interface SegmentScanContext {
-  scanPass: number;
-  scrollTop: number;
-  scrollMode: 'native' | 'synthetic';
-}
 
 async function reportRunProgress(
   runId: string,
@@ -94,6 +76,20 @@ async function reportRunProgress(
 }
 
 class PlatformDomAdapter {
+  private readonly segmentScanner = new SegmentScanner({
+    findScrollContext: () => platformRuntime.findScrollContext(),
+    collectVisibleSegments: (scrollContext) =>
+      platformRuntime.collectVisibleSegments(scrollContext),
+    isMemoqActive: () => platformRuntime.isMemoqActive(),
+    assertNotStopped: () => this.assertNotStopped(),
+    delay,
+    readFreshStartMarker,
+    clearStartMarker,
+    now: () => Date.now(),
+    logInfo: (label, payload) => console.info(CONTENT_DEBUG_PREFIX, label, payload),
+    logError: (label, payload) => console.error(CONTENT_DEBUG_PREFIX, label, payload)
+  });
+
   async scanSegments(
     runId: string,
     options?: {
@@ -104,7 +100,7 @@ class PlatformDomAdapter {
   ): Promise<PageSegment[]> {
     this.resetStopState();
     let scannedCount = 0;
-    const runtimeSegments = await this.collectSegments(
+    const runtimeSegments = await this.segmentScanner.collect(
       async () => {
         scannedCount += 1;
         if (scannedCount === 1 || scannedCount % 10 === 0) {
@@ -112,8 +108,14 @@ class PlatformDomAdapter {
         }
       },
       {
-        maxPasses: normalizePositiveInteger(options?.maxPasses, DEFAULT_MAX_PASSES),
-        maxSegments: normalizePositiveInteger(options?.maxSegments, DEFAULT_MAX_SEGMENTS),
+        maxPasses: normalizeSegmentScanLimit(
+          options?.maxPasses,
+          DEFAULT_SEGMENT_SCAN_MAX_PASSES
+        ),
+        maxSegments: normalizeSegmentScanLimit(
+          options?.maxSegments,
+          DEFAULT_SEGMENT_SCAN_MAX_SEGMENTS
+        ),
         restoreScrollPosition: true,
         scanFromTop: options?.scanFromTop === true
       }
@@ -181,13 +183,13 @@ class PlatformDomAdapter {
     console.info(CONTENT_DEBUG_PREFIX, 'fill:start', {
       autoStopAfterFilledCount,
       plannedFillCount,
-      maxPasses: options?.maxPasses ?? DEFAULT_MAX_PASSES,
-      maxSegments: options?.maxSegments ?? DEFAULT_MAX_SEGMENTS,
+      maxPasses: options?.maxPasses ?? DEFAULT_SEGMENT_SCAN_MAX_PASSES,
+      maxSegments: options?.maxSegments ?? DEFAULT_SEGMENT_SCAN_MAX_SEGMENTS,
       scanFromTop: options?.scanFromTop === true,
       startFromMarker: options?.startFromMarker === true
     });
 
-    await this.collectSegments(
+    await this.segmentScanner.collect(
       async (segment, scanContext) => {
         const item = classifySegment(entryLookup, segment, normalizedFillOptions);
         previewItems.push(item);
@@ -294,8 +296,14 @@ class PlatformDomAdapter {
         }
       },
       {
-        maxPasses: normalizePositiveInteger(options?.maxPasses, DEFAULT_MAX_PASSES),
-        maxSegments: normalizePositiveInteger(options?.maxSegments, DEFAULT_MAX_SEGMENTS),
+        maxPasses: normalizeSegmentScanLimit(
+          options?.maxPasses,
+          DEFAULT_SEGMENT_SCAN_MAX_PASSES
+        ),
+        maxSegments: normalizeSegmentScanLimit(
+          options?.maxSegments,
+          DEFAULT_SEGMENT_SCAN_MAX_SEGMENTS
+        ),
         restoreScrollPosition: false,
         scanFromTop: options?.scanFromTop === true,
         startFromMarker: options?.startFromMarker === true
@@ -360,217 +368,6 @@ class PlatformDomAdapter {
     return `Stopped at memoQ ${rowLabel}: ${reason} Source="${sourcePreview}"`;
   }
 
-  private async collectSegments(
-    onSegment?: (
-      segment: RuntimeSegment,
-      context: SegmentScanContext
-    ) => Promise<'stop' | 'rescan' | void> | 'stop' | 'rescan' | void,
-    options?: {
-      maxPasses?: number;
-      maxSegments?: number;
-      restoreScrollPosition?: boolean;
-      scanFromTop?: boolean;
-      startFromMarker?: boolean;
-    }
-  ): Promise<RuntimeSegment[]> {
-    const scrollContext = this.findScrollContext();
-    const maxPasses = options?.maxPasses ?? DEFAULT_MAX_PASSES;
-    const maxSegments = options?.maxSegments ?? DEFAULT_MAX_SEGMENTS;
-    const shouldRestoreScrollPosition = options?.restoreScrollPosition ?? true;
-    const scanDelayMs = this.getScanDelayMs(scrollContext);
-    const scrollSettleDelayMs = this.getScrollSettleDelayMs(scrollContext);
-    const seenIds = new Set<string>();
-    const startMarker = options?.startFromMarker ? readFreshStartMarker() : null;
-    const recentSyntheticFingerprints = new WeakMap<
-      Element,
-      { fingerprint: string; pass: number }
-    >();
-    const occurrenceCounter = new Map<string, number>();
-    const segments: RuntimeSegment[] = [];
-    let previousSyntheticSignature = '';
-    let repeatedSyntheticSignaturePasses = 0;
-    let stopRequestedByCallback = false;
-    let rescanRequestedByCallback = false;
-    let shouldApplyStartMarker = startMarker !== null;
-
-    if (options?.startFromMarker && !startMarker) {
-      console.info(CONTENT_DEBUG_PREFIX, 'fill:start-marker', {
-        marker: 'none'
-      });
-    }
-
-    try {
-      if (options?.scanFromTop) {
-        scrollContext.scrollToTop();
-        await delay(scrollSettleDelayMs);
-      }
-
-      let noNewSegmentsPasses = 0;
-      let noMovementPasses = 0;
-
-      for (let pass = 0; pass < maxPasses && segments.length < maxSegments; pass += 1) {
-        this.assertNotStopped();
-        await delay(scanDelayMs);
-        this.assertNotStopped();
-
-        const countBefore = segments.length;
-        let visibleSegments = this.collectVisibleSegments(scrollContext);
-        if (shouldApplyStartMarker && startMarker) {
-          const markerFilter = filterSegmentsFromPendingStartMarker(
-            visibleSegments,
-            startMarker
-          );
-          const startIndex = markerFilter.startIndex;
-          visibleSegments = markerFilter.segments;
-          this.debugStartMarker(startMarker, startIndex, countBefore, visibleSegments);
-          shouldApplyStartMarker = markerFilter.shouldKeepStartMarker;
-        }
-        let shouldSkipSyntheticPass = false;
-        if (scrollContext.mode === 'synthetic') {
-          const syntheticSignature = visibleSegments
-            .map((segment) => `${segment.sourceNormalized}=>${segment.targetRaw}`)
-            .join('|');
-          shouldSkipSyntheticPass = hasRepeatedSyntheticSignature(
-            previousSyntheticSignature,
-            syntheticSignature
-          );
-          repeatedSyntheticSignaturePasses =
-            shouldSkipSyntheticPass
-              ? repeatedSyntheticSignaturePasses + 1
-              : 0;
-          previousSyntheticSignature = syntheticSignature;
-        }
-
-        for (const segment of visibleSegments) {
-          this.assertNotStopped();
-          if (
-            scrollContext.mode === 'synthetic' &&
-            shouldSkipSyntheticPass
-          ) {
-            continue;
-          }
-
-          if (
-            scrollContext.mode === 'synthetic' &&
-            segment.scanElement &&
-            segment.scanFingerprint
-          ) {
-            const previousSyntheticSegment = recentSyntheticFingerprints.get(
-              segment.scanElement
-            );
-            recentSyntheticFingerprints.set(segment.scanElement, {
-              fingerprint: segment.scanFingerprint,
-              pass
-            });
-
-            if (
-              isRecentSyntheticDuplicate(
-                previousSyntheticSegment,
-                segment.scanFingerprint,
-                pass
-              )
-            ) {
-              continue;
-            }
-          }
-
-          if (seenIds.has(segment.domId)) {
-            continue;
-          }
-
-          seenIds.add(segment.domId);
-          const nextOccurrence =
-            (occurrenceCounter.get(segment.sourceNormalized) ?? 0) + 1;
-          occurrenceCounter.set(segment.sourceNormalized, nextOccurrence);
-          segment.occurrenceIndex = nextOccurrence;
-          segments.push(segment);
-
-          if (onSegment) {
-            const callbackResult = await onSegment(segment, {
-              scanPass: pass + 1,
-              scrollTop: scrollContext.getTop(),
-              scrollMode: scrollContext.mode ?? 'native'
-            });
-            if (callbackResult === 'stop') {
-              stopRequestedByCallback = true;
-              break;
-            }
-            if (callbackResult === 'rescan') {
-              rescanRequestedByCallback = true;
-              break;
-            }
-          }
-        }
-
-        if (stopRequestedByCallback || segments.length >= maxSegments) {
-          break;
-        }
-
-        if (rescanRequestedByCallback) {
-          rescanRequestedByCallback = false;
-          previousSyntheticSignature = '';
-          repeatedSyntheticSignaturePasses = 0;
-          noNewSegmentsPasses = 0;
-          continue;
-        }
-
-        const discoveredCount = segments.length - countBefore;
-        noNewSegmentsPasses = discoveredCount === 0 ? noNewSegmentsPasses + 1 : 0;
-
-        const scrollTopBefore = scrollContext.getTop();
-        const isAtBottom = scrollContext.isAtBottom();
-        const scrollStep = Math.max(scrollContext.getHeight() * SCROLL_RATIO, 240);
-
-        if (
-          shouldStopScanBeforeNextScroll({
-            scrollMode: scrollContext.mode,
-            isAtBottom,
-            noNewSegmentsPasses,
-            repeatedSyntheticSignaturePasses
-          })
-        ) {
-          break;
-        }
-
-        scrollContext.scrollBy(scrollStep);
-
-        await delay(scrollSettleDelayMs);
-        this.assertNotStopped();
-
-        const scrollTopAfter = scrollContext.getTop();
-        noMovementPasses =
-          Math.abs(scrollTopAfter - scrollTopBefore) < 2
-            ? noMovementPasses + 1
-            : 0;
-
-        if (noMovementPasses >= 5 && noNewSegmentsPasses >= 3) {
-          break;
-        }
-      }
-
-      if (hasUnresolvedStartMarker(startMarker, shouldApplyStartMarker)) {
-        const message = startMarker?.domId
-          ? `Could not find the selected start row ${startMarker.domId}. Click the desired editor row and run Fill again.`
-          : 'Could not find the selected start row. Click the desired editor row and run Fill again.';
-        console.error(CONTENT_DEBUG_PREFIX, 'fill:start-marker-missing', {
-          markerDomId: startMarker?.domId ?? null,
-          markerAgeMs: startMarker?.setAt ? Date.now() - startMarker.setAt : null,
-          scannedCount: segments.length,
-          scrollTop: scrollContext.getTop(),
-          scrollMode: scrollContext.mode ?? 'native'
-        });
-        clearStartMarker();
-        throw new Error(message);
-      }
-
-      return segments;
-    } finally {
-      if (shouldRestoreScrollPosition) {
-        scrollContext.restore();
-      }
-    }
-  }
-
   stopCurrentRun(): void {
     window.__phraseBulkFillStopRequested = true;
   }
@@ -598,55 +395,10 @@ class PlatformDomAdapter {
     this.assertNotStopped();
   }
 
-  private collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[] {
-    return platformRuntime.collectVisibleSegments(scrollContext);
-  }
-
-  private findScrollContext(): ScrollContext {
-    return platformRuntime.findScrollContext();
-  }
-
   private getInterFillDelayMs(segment: RuntimeSegment): number {
     return segment.platform === 'memoq'
       ? MEMOQ_INTER_FILL_DELAY_MS
       : DEFAULT_INTER_FILL_DELAY_MS;
-  }
-
-  private getScanDelayMs(scrollContext: ScrollContext): number {
-    if (!platformRuntime.isMemoqActive()) {
-      return DEFAULT_SCAN_DELAY_MS;
-    }
-
-    return scrollContext.mode === 'synthetic'
-      ? MEMOQ_SYNTHETIC_SCAN_DELAY_MS
-      : MEMOQ_SCAN_DELAY_MS;
-  }
-
-  private getScrollSettleDelayMs(scrollContext: ScrollContext): number {
-    if (!platformRuntime.isMemoqActive()) {
-      return DEFAULT_SCROLL_SETTLE_DELAY_MS;
-    }
-
-    return scrollContext.mode === 'synthetic'
-      ? DEFAULT_SCROLL_SETTLE_DELAY_MS
-      : MEMOQ_SCROLL_SETTLE_DELAY_MS;
-  }
-
-  private debugStartMarker(
-    marker: StartMarker,
-    startIndex: number | null,
-    countBefore: number,
-    visibleSegments: RuntimeSegment[]
-  ): void {
-    console.info(CONTENT_DEBUG_PREFIX, 'fill:start-marker', {
-      markerDomId: marker.domId ?? null,
-      markerAgeMs: marker.setAt ? Date.now() - marker.setAt : null,
-      matchedStartIndex: startIndex,
-      skippedVisibleSegments: startIndex ?? 0,
-      scannedBeforeMarker: countBefore,
-      firstVisibleAfterMarker: visibleSegments[0]?.domId ?? null,
-      firstVisibleAfterMarkerRow: visibleSegments[0]?.rowNumber ?? null
-    });
   }
 }
 
@@ -693,14 +445,6 @@ async function handleRequest(request: ContentRequest): Promise<ApiResponse<unkno
 function normalizeAutoStopAfterFilledCount(value: number | null | undefined): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) {
     return null;
-  }
-
-  return Math.floor(value);
-}
-
-function normalizePositiveInteger(value: number | null | undefined, fallback: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) {
-    return fallback;
   }
 
   return Math.floor(value);
