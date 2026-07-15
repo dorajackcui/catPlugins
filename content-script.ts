@@ -12,10 +12,6 @@ import {
   type MemoqFillExecutionContext
 } from './platforms/runtime.ts';
 import {
-  findMemoqStartTargetCell,
-  readMemoqStartMarkerDomId
-} from './platforms/memoq/dom-profile.ts';
-import {
   hasRepeatedSyntheticSignature,
   isRecentSyntheticDuplicate,
   shouldRescanAfterSegmentFill,
@@ -26,6 +22,11 @@ import {
   hasUnresolvedStartMarker,
   type StartMarker
 } from './start-marker.ts';
+import {
+  bindStartMarkerListeners,
+  clearStartMarker,
+  readFreshStartMarker
+} from './start-marker-dom.ts';
 import {
   replaceRuntimeMessageListener,
   type RuntimeMessageListener
@@ -49,8 +50,6 @@ declare global {
       ContentRequest,
       ApiResponse<unknown>
     >;
-    __phraseBulkFillStartMarker?: StartMarker;
-    __phraseBulkFillStartMarkerBound?: boolean;
     __phraseBulkFillStopRequested?: boolean;
   }
 }
@@ -66,10 +65,6 @@ const MEMOQ_INTER_FILL_DELAY_MS = 320;
 const DEFAULT_SCROLL_SETTLE_DELAY_MS = 80;
 const MEMOQ_SCROLL_SETTLE_DELAY_MS = 35;
 const SCROLL_RATIO = 0.85;
-const START_MARKER_MAX_AGE_MS = 30 * 60 * 1000;
-const GIENTRANS_START_TARGET_SELECTOR = 'td.target-cell pre.edit__input[editortype="target"]';
-const GIENTRANS_START_TARGET_CELL_SELECTOR = 'td.target-cell';
-const PHRASE_START_TARGET_SELECTOR = '.twe_target';
 
 const helpers = new ContentScriptDomHelpers();
 const platformRuntime = createPlatformRuntime(helpers);
@@ -564,7 +559,7 @@ class PlatformDomAdapter {
           scrollTop: scrollContext.getTop(),
           scrollMode: scrollContext.mode ?? 'native'
         });
-        window.__phraseBulkFillStartMarker = undefined;
+        clearStartMarker();
         throw new Error(message);
       }
 
@@ -709,142 +704,6 @@ function normalizePositiveInteger(value: number | null | undefined, fallback: nu
   }
 
   return Math.floor(value);
-}
-
-function bindStartMarkerListeners(): void {
-  if (window.__phraseBulkFillStartMarkerBound) {
-    return;
-  }
-
-  for (const eventType of ['pointerdown', 'mousedown', 'focusin']) {
-    document.addEventListener(eventType, rememberStartMarkerFromEvent, true);
-  }
-
-  window.__phraseBulkFillStartMarkerBound = true;
-}
-
-function rememberStartMarkerFromEvent(event: Event): void {
-  if (!(event.target instanceof Element)) {
-    return;
-  }
-
-  const targetElement = resolveStartMarkerTargetElement(event.target);
-  if (!targetElement) {
-    if (isEditorSurfaceElement(event.target)) {
-      window.__phraseBulkFillStartMarker = undefined;
-    }
-    return;
-  }
-
-  window.__phraseBulkFillStartMarker = createStartMarker(targetElement);
-}
-
-function readFreshStartMarker(): StartMarker | null {
-  const marker = window.__phraseBulkFillStartMarker;
-  if (marker) {
-    if (!marker.setAt || Date.now() - marker.setAt <= START_MARKER_MAX_AGE_MS) {
-      return marker;
-    }
-
-    window.__phraseBulkFillStartMarker = undefined;
-  }
-
-  const activeElement = document.activeElement;
-  if (!(activeElement instanceof Element)) {
-    return null;
-  }
-
-  const targetElement = resolveStartMarkerTargetElement(activeElement);
-  if (!targetElement) {
-    return null;
-  }
-
-  const activeMarker = createStartMarker(targetElement);
-  window.__phraseBulkFillStartMarker = activeMarker;
-  return activeMarker;
-}
-
-function createStartMarker(targetElement: Element): StartMarker {
-  return {
-    targetElement,
-    domId: readLikelyTargetDomId(targetElement),
-    setAt: Date.now()
-  };
-}
-
-function resolveStartMarkerTargetElement(element: Element): Element | null {
-  const gientransTarget = element.closest<HTMLElement>(GIENTRANS_START_TARGET_SELECTOR);
-  if (gientransTarget) {
-    return gientransTarget;
-  }
-
-  const gientransTargetCell = element.closest<HTMLElement>(GIENTRANS_START_TARGET_CELL_SELECTOR);
-  const gientransCellTarget = gientransTargetCell?.querySelector<HTMLElement>(
-    GIENTRANS_START_TARGET_SELECTOR
-  );
-  if (gientransCellTarget) {
-    return gientransCellTarget;
-  }
-
-  const phraseTarget = element.closest<HTMLElement>(PHRASE_START_TARGET_SELECTOR);
-  if (phraseTarget) {
-    return phraseTarget;
-  }
-
-  const memoqTarget = findMemoqStartTargetCell(document, element);
-  if (memoqTarget) {
-    return memoqTarget;
-  }
-
-  return null;
-}
-
-function readLikelyTargetDomId(targetElement: Element): string | null {
-  const memoqRowId = readMemoqStartMarkerDomId(document, targetElement);
-  if (memoqRowId) {
-    return memoqRowId;
-  }
-
-  const gientransTarget =
-    targetElement.matches(GIENTRANS_START_TARGET_SELECTOR)
-      ? targetElement
-      : targetElement.querySelector(GIENTRANS_START_TARGET_SELECTOR);
-  const gientransSegmentId = gientransTarget?.getAttribute('segid');
-  if (gientransSegmentId) {
-    return gientransSegmentId;
-  }
-
-  const phraseRow = targetElement.closest<HTMLElement>(
-    '.segment-row[role="row"], .segment-row, .twe_segment'
-  );
-  return firstNonEmptyAttribute(phraseRow, ['id', 'data-position', 'data-row']) ??
-    firstNonEmptyAttribute(targetElement, ['id', 'data-position', 'data-row']);
-}
-
-function firstNonEmptyAttribute(
-  element: Element | null | undefined,
-  names: string[]
-): string | null {
-  if (!element) {
-    return null;
-  }
-
-  for (const name of names) {
-    const value = element.getAttribute(name);
-    if (value) {
-      return value;
-    }
-  }
-
-  return null;
-}
-
-function isEditorSurfaceElement(element: Element): boolean {
-  return Boolean(
-    element.closest(
-      '#o-editor.online-editor, .editor__table, .segment-row, .twe_segment'
-    ) || findMemoqStartTargetCell(document, element)
-  );
 }
 
 bindStartMarkerListeners();
