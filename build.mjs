@@ -19,8 +19,8 @@ const sharedConfig = {
 async function copyStaticAssets() {
   await mkdir(outdir, { recursive: true });
   await cp('manifest.json', resolve(outdir, 'manifest.json'));
-  await cp('popup.html', resolve(outdir, 'popup.html'));
-  await cp('popup.css', resolve(outdir, 'popup.css'));
+  await cp('popup/index.html', resolve(outdir, 'popup.html'));
+  await cp('popup/styles.css', resolve(outdir, 'popup.css'));
 }
 
 if (watch) {
