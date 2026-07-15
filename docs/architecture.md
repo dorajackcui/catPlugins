@@ -47,6 +47,16 @@ domain modules.
 - `shared/storage-keys.ts` is the runtime source of persisted Chrome storage keys.
 - `shared/types.ts` is a compatibility barrel; production modules should import the focused contract directly.
 
+## Background run routing
+
+- `background/request-handler.ts` routes extension messages to state, run, workbook, and debugger services.
+- `background/run-coordinator.ts` owns Preview, Export, Fill, and Stop lifecycle rules and user-facing status updates.
+- `background/editor-session.ts` is the single owner of active-tab validation, content-script injection, Phrase iframe selection, content response unwrapping, and stop-message routing.
+
+Run workflows should use `BackgroundEditorSession` rather than selecting frames or constructing
+`sendTabMessage` options themselves. Stored run targets retain their original tab and frame so Stop
+does not reinject the content script or drift to a newly focused tab.
+
 ## memoQ DOM profiles
 
 memoQ supports two editor generations behind one stable profile API:

@@ -10,8 +10,7 @@ import {
 } from '../domain/run-state.ts';
 import type {
   ApiResponse,
-  BackgroundRequest,
-  ContentRequest
+  BackgroundRequest
 } from '../shared/message-types.ts';
 import type {
   ExportSourcesResult,
@@ -19,16 +18,14 @@ import type {
   PageSegment
 } from '../shared/translation-types.ts';
 import type {
-  RunState,
   RuntimeState,
   StatusKind
 } from '../shared/state-types.ts';
 import {
-  isGientTransUrl,
-  isMemsourceEditorFrameUrl,
-  isMemoqUrl,
-  isSupportedEditorUrl
-} from './editor-url.ts';
+  BackgroundEditorSession,
+  type BackgroundEditorSessionPort
+} from './editor-session.ts';
+import { isMemoqUrl } from './editor-url.ts';
 import { buildSourceExportWorkbook } from './excel.ts';
 import type { RuntimeStateUpdate } from './storage.ts';
 
@@ -36,36 +33,20 @@ const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 const EXPORT_SCAN_MAX_PASSES = 1200;
 const EXPORT_SCAN_MAX_SEGMENTS = 10000;
 
-export interface BackgroundRunCoordinatorPort {
-  queryActiveTab(): Promise<{ id: number; url?: string }>;
-  executeScript(
-    tabId: number,
-    files: string[],
-    options?: { allFrames?: boolean; frameIds?: number[] }
-  ): Promise<void>;
-  getAllFrames(
-    tabId: number
-  ): Promise<Array<{ frameId: number; parentFrameId: number; url?: string }>>;
-  sendTabMessage<TRequest, TResponse>(
-    tabId: number,
-    message: TRequest,
-    options?: { frameId?: number }
-  ): Promise<TResponse>;
+export interface BackgroundRunCoordinatorPort
+  extends BackgroundEditorSessionPort {
   readRuntimeState(): Promise<RuntimeState>;
   writeRuntimeState(update: RuntimeStateUpdate): Promise<void>;
   now(): Date;
-  logInfo(message: string, payload: Record<string, unknown>): void;
-}
-
-interface EditorTab {
-  id: number;
-  url?: string;
-  frameId?: number;
 }
 
 /** Coordinates Preview, Export, Fill, and Stop run lifecycles. */
 export class BackgroundRunCoordinator {
-  constructor(private readonly port: BackgroundRunCoordinatorPort) {}
+  private readonly editorSession: BackgroundEditorSession;
+
+  constructor(private readonly port: BackgroundRunCoordinatorPort) {
+    this.editorSession = new BackgroundEditorSession(port);
+  }
 
   async runPreview(
     request: Extract<BackgroundRequest, { type: 'RUN_PREVIEW' }>
@@ -81,7 +62,7 @@ export class BackgroundRunCoordinator {
       request.payload?.fillOptions ?? state.fillOptions
     );
 
-    const tab = await this.ensureEditorTab();
+    const tab = await this.editorSession.prepare();
     const runState = createRunningRunState('preview', tab);
     await this.port.writeRuntimeState({
       fillOptions,
@@ -89,27 +70,19 @@ export class BackgroundRunCoordinator {
     });
 
     try {
-      const response = await this.port.sendTabMessage<
-        ContentRequest,
-        ApiResponse<PageSegment[]>
-      >(
-        tab.id,
+      const segments = await this.editorSession.request<PageSegment[]>(
+        tab,
         {
           type: 'CONTENT_SCAN',
           payload: {
             runId: runState.runId ?? ''
           }
-        },
-        tab.frameId ? { frameId: tab.frameId } : undefined
+        }
       );
-
-      if (!response.ok) {
-        throw new Error(response.error);
-      }
 
       const preview = this.buildPreviewForTab(
         tab.url,
-        buildPreview(state.translationEntries, response.data, fillOptions)
+        buildPreview(state.translationEntries, segments, fillOptions)
       );
       await this.port.writeRuntimeState({
         previewResult: preview,
@@ -136,16 +109,13 @@ export class BackgroundRunCoordinator {
       throw new Error('Another task is already running. Stop it before starting Export.');
     }
 
-    const tab = await this.ensureEditorTab();
+    const tab = await this.editorSession.prepare();
     const runState = createRunningRunState('export', tab);
     await this.port.writeRuntimeState({ runState });
 
     try {
-      const response = await this.port.sendTabMessage<
-        ContentRequest,
-        ApiResponse<PageSegment[]>
-      >(
-        tab.id,
+      const segments = await this.editorSession.request<PageSegment[]>(
+        tab,
         {
           type: 'CONTENT_SCAN',
           payload: {
@@ -154,19 +124,14 @@ export class BackgroundRunCoordinator {
             maxSegments: EXPORT_SCAN_MAX_SEGMENTS,
             scanFromTop: true
           }
-        },
-        tab.frameId ? { frameId: tab.frameId } : undefined
+        }
       );
 
-      if (!response.ok) {
-        throw new Error(response.error);
-      }
-
-      const workbookBytes = buildSourceExportWorkbook(response.data);
+      const workbookBytes = buildSourceExportWorkbook(segments);
       const result: ExportSourcesResult = {
         fileName: this.createSourceExportFileName(),
         bytes: Array.from(workbookBytes),
-        segmentCount: response.data.length
+        segmentCount: segments.length
       };
 
       await this.finalizeRunState(runState.runId ?? '', {
@@ -202,7 +167,7 @@ export class BackgroundRunCoordinator {
         state.translationEntries.length
     );
 
-    const tab = await this.ensureEditorTab();
+    const tab = await this.editorSession.prepare();
     const runState = createRunningRunState('fill', tab, {
       plannedFillCount
     });
@@ -212,11 +177,8 @@ export class BackgroundRunCoordinator {
     });
 
     try {
-      const response = await this.port.sendTabMessage<
-        ContentRequest,
-        ApiResponse<FillRunResult>
-      >(
-        tab.id,
+      const fillResult = await this.editorSession.request<FillRunResult>(
+        tab,
         {
           type: 'CONTENT_FILL',
           payload: {
@@ -232,15 +194,10 @@ export class BackgroundRunCoordinator {
                 }
               : {})
           }
-        },
-        tab.frameId ? { frameId: tab.frameId } : undefined
+        }
       );
 
-      if (!response.ok) {
-        throw new Error(response.error);
-      }
-
-      const result = this.finalizePreviewForTab(tab.url, response.data);
+      const result = this.finalizePreviewForTab(tab.url, fillResult);
 
       await this.port.writeRuntimeState({
         previewResult: result.preview,
@@ -283,7 +240,7 @@ export class BackgroundRunCoordinator {
         lastUpdatedAt: this.port.now().toISOString()
       })
     });
-    await this.sendStopToActiveRun(state.runState);
+    await this.editorSession.stop(state.runState);
     return { ok: true, data: null };
   }
 
@@ -307,41 +264,6 @@ export class BackgroundRunCoordinator {
     return isMemoqUrl(url) ? applyMemoqPreviewCorrection(preview) : preview;
   }
 
-  private async ensureEditorTab(): Promise<EditorTab> {
-    const tab = await this.port.queryActiveTab();
-
-    if (!isSupportedEditorUrl(tab.url)) {
-      this.port.logInfo('Rejected active tab for CAT run.', { url: tab.url });
-      throw new Error(
-        'Open a Phrase, memoQ, or GientTrans editor tab before running Preview, Fill, or Export.'
-      );
-    }
-
-    await this.port.executeScript(tab.id, ['content-script.js'], {
-      allFrames: true
-    });
-
-    const frames = await this.port.getAllFrames(tab.id);
-    const editorFrame = frames.find((frame) =>
-      isMemsourceEditorFrameUrl(frame.url)
-    );
-    this.port.logInfo('Prepared editor tab for CAT run.', {
-      tabId: tab.id,
-      url: tab.url,
-      platform: isGientTransUrl(tab.url)
-        ? 'gientrans'
-        : isMemoqUrl(tab.url)
-          ? 'memoq'
-          : 'phrase',
-      frameId: editorFrame?.frameId ?? null
-    });
-
-    return {
-      ...tab,
-      frameId: editorFrame?.frameId
-    };
-  }
-
   private async finalizeRunState(
     runId: string,
     options: {
@@ -361,30 +283,6 @@ export class BackgroundRunCoordinator {
     await this.port.writeRuntimeState({
       runState: createFinishedRunState(currentRunState, options)
     });
-  }
-
-  private async sendStopToActiveRun(runState?: RunState): Promise<void> {
-    const activeRunState =
-      runState ?? (await this.port.readRuntimeState()).runState;
-    const tabId = activeRunState.tabId;
-
-    if (typeof tabId !== 'number') {
-      const tab = await this.ensureEditorTab();
-      await this.port.sendTabMessage<ContentRequest, ApiResponse<null>>(
-        tab.id,
-        { type: 'CONTENT_STOP' },
-        tab.frameId ? { frameId: tab.frameId } : undefined
-      );
-      return;
-    }
-
-    await this.port.sendTabMessage<ContentRequest, ApiResponse<null>>(
-      tabId,
-      { type: 'CONTENT_STOP' },
-      typeof activeRunState.frameId === 'number'
-        ? { frameId: activeRunState.frameId }
-        : undefined
-    );
   }
 
   private createSourceExportFileName(): string {
