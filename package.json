@@ -7,7 +7,7 @@
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-transform-types tests/**/*.test.ts"
+    "test": "node scripts/run-tests.mjs"
   },
   "dependencies": {
     "xlsx": "^0.18.5"
