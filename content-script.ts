@@ -5,17 +5,16 @@ import type { RuntimeSegment, ScrollContext } from './content-script-dom.ts';
 import { normalizeFillOptions } from './fill-options.ts';
 import { describeFillStopReason, shouldStopAfterFillFailure } from './fill-failure.ts';
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFillForPlatform } from './fill-throttle.ts';
-import { GientTransAdapter } from './platforms/gientrans/adapter.ts';
 import { describeMemoqFillDiagnostic } from './platforms/memoq/fill-diagnostics.ts';
 import {
-  MemoqAdapter,
+  createPlatformRuntime,
+  shouldRejectNonEmptyTarget,
   type MemoqFillExecutionContext
-} from './platforms/memoq/adapter.ts';
+} from './platforms/runtime.ts';
 import {
   findMemoqStartTargetCell,
   readMemoqStartMarkerDomId
 } from './platforms/memoq/dom-profile.ts';
-import { PhraseAdapter } from './platforms/phrase/adapter.ts';
 import {
   hasRepeatedSyntheticSignature,
   isRecentSyntheticDuplicate,
@@ -42,7 +41,7 @@ import type {
   PreviewItem,
   TranslationEntry
 } from './types.ts';
-import { delay, normalizeText } from './utils.ts';
+import { delay } from './utils.ts';
 
 declare global {
   interface Window {
@@ -73,9 +72,7 @@ const GIENTRANS_START_TARGET_CELL_SELECTOR = 'td.target-cell';
 const PHRASE_START_TARGET_SELECTOR = '.twe_target';
 
 const helpers = new ContentScriptDomHelpers();
-const memoqAdapter = new MemoqAdapter(helpers);
-const gientransAdapter = new GientTransAdapter(helpers);
-const phraseAdapter = new PhraseAdapter(helpers);
+const platformRuntime = createPlatformRuntime(helpers);
 const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 
 interface SegmentScanContext {
@@ -155,10 +152,10 @@ class PlatformDomAdapter {
     // attachment's infobar resizes the page and re-lays out memoQ's grid, so
     // it must happen before any element or coordinate is captured. Also lets
     // one attachment survive the whole run instead of toggling per segment.
-    const memoqActive = memoqAdapter.isActive();
+    const memoqActive = platformRuntime.isMemoqActive();
     if (memoqActive) {
       try {
-        await memoqAdapter.prepareTrustedInput();
+        await platformRuntime.prepareMemoqTrustedInput();
       } catch (error) {
         console.error(CONTENT_DEBUG_PREFIX, 'memoQ debugger:prepare-failure', {
           runId,
@@ -338,11 +335,11 @@ class PlatformDomAdapter {
   ): Promise<FillOutcome> {
     this.assertNotStopped();
     if (segment.platform === 'memoq') {
-      return memoqAdapter.fillSegment(segment, value, memoqContext);
+      return platformRuntime.fillSegment(segment, value, memoqContext);
     }
 
-    const currentValue = this.getEditableValue(segment);
-    if (segment.platform !== 'gientrans' && normalizeText(currentValue)) {
+    const currentValue = platformRuntime.getEditableValue(segment);
+    if (shouldRejectNonEmptyTarget(segment.platform, currentValue)) {
       return {
         domId: segment.domId,
         filled: false,
@@ -350,19 +347,7 @@ class PlatformDomAdapter {
       };
     }
 
-    if (segment.platform === 'gientrans') {
-      return gientransAdapter.fillSegment(segment, value);
-    }
-
-    return phraseAdapter.fillSegment(segment, value);
-  }
-
-  private getEditableValue(segment: RuntimeSegment): string {
-    if (segment.platform === 'gientrans') {
-      return gientransAdapter.getEditableValue(segment.targetElement as HTMLElement);
-    }
-
-    return phraseAdapter.getEditableValue(segment.targetElement);
+    return platformRuntime.fillSegment(segment, value);
   }
 
   private describeMemoqStopReason(segment: RuntimeSegment, outcome: FillOutcome): string {
@@ -619,26 +604,11 @@ class PlatformDomAdapter {
   }
 
   private collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[] {
-    const memoqSegments = memoqAdapter.collectVisibleSegments(scrollContext);
-    if (memoqSegments.length > 0) {
-      return memoqSegments;
-    }
-
-    const gientransSegments = gientransAdapter.collectVisibleSegments(scrollContext);
-    if (gientransSegments.length > 0) {
-      return gientransSegments;
-    }
-
-    return phraseAdapter.collectVisibleSegments(scrollContext);
+    return platformRuntime.collectVisibleSegments(scrollContext);
   }
 
   private findScrollContext(): ScrollContext {
-    return (
-      memoqAdapter.findScrollContext() ??
-      gientransAdapter.findScrollContext() ??
-      phraseAdapter.findScrollContext() ??
-      helpers.toWindowScrollContext()
-    );
+    return platformRuntime.findScrollContext();
   }
 
   private getInterFillDelayMs(segment: RuntimeSegment): number {
@@ -648,7 +618,7 @@ class PlatformDomAdapter {
   }
 
   private getScanDelayMs(scrollContext: ScrollContext): number {
-    if (!memoqAdapter.isActive()) {
+    if (!platformRuntime.isMemoqActive()) {
       return DEFAULT_SCAN_DELAY_MS;
     }
 
@@ -658,7 +628,7 @@ class PlatformDomAdapter {
   }
 
   private getScrollSettleDelayMs(scrollContext: ScrollContext): number {
-    if (!memoqAdapter.isActive()) {
+    if (!platformRuntime.isMemoqActive()) {
       return DEFAULT_SCROLL_SETTLE_DELAY_MS;
     }
 
