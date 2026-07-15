@@ -10,11 +10,13 @@ Supporting code is grouped by responsibility:
 
 - `background/` contains Chrome-side services: debugger input, supported editor URLs, Excel conversion, and persisted state.
 - `content/` contains page-side infrastructure: DOM helpers, segment traversal, start markers, fill orchestration, and trusted text writes.
-- `domain/` contains business rules for matching, fill options, failure policy, throttling, and run state. These modules should not perform Chrome API calls or mutate editor DOM.
-- `platforms/` owns editor-specific selectors, text normalization, row discovery, and writes for memoQ, GientTrans, and Phrase.
+- `domain/` contains business rules for matching, inline-markup canonicalization, fill options, failure policy, throttling, and run state. These modules should not perform Chrome API calls, mutate editor DOM, or import platform implementations.
+- `platforms/` owns editor-specific selectors, DOM serialization, row discovery, and writes for memoQ, GientTrans, and Phrase.
 - `popup/` contains popup workflow coordination, DOM rendering, and the HTML/CSS source assets copied into the extension package.
+- `scripts/` contains build, test, and architecture-check tooling.
 - `shared/` contains cross-layer Chrome wrappers, message/state contracts, and general utilities.
 - `tests/` mirrors these boundaries with direct unit and adapter regression coverage.
+- `types/` contains ambient declarations used during typechecking.
 
 ## Content DOM foundation
 
@@ -32,11 +34,20 @@ scroll resolvers should depend on `ContentScrollHelpers` unless they also need e
 - `content/fill-runner.ts` owns run-level preparation, scanner startup, and completion logging.
 - `content/fill-segment-processor.ts` owns per-segment classification, write safety, progress, throttling, stop conditions, and rescan decisions.
 - `content/fill-runner-contracts.ts` defines the scanner, runtime, and reporting ports shared by those layers.
+- `platforms/start-marker-dom.ts` owns editor-specific click/focus target discovery while exposing one start-marker surface to the root composition.
 
 The root `content-script.ts` only assembles browser-backed ports and registers listeners. The runner
 must prepare memoQ trusted input before the scanner captures its first DOM snapshot. The segment
 processor remains platform-neutral except for explicit behavior policies exposed by platform and
 domain modules.
+
+## Domain matching and markup
+
+- `domain/gientrans-markup.ts` canonicalizes GientTrans tokens and XML-like markup for both matching and editor writes.
+- `domain/phrase-markup.ts` canonicalizes Phrase tag clips and splits ordered text/tag operations.
+- `domain/memoq-fill-diagnostics.ts` formats stable user-facing stop reasons from platform-neutral diagnostic data.
+
+Keeping these pure rules in `domain/` prevents Phrase and memoQ readers from depending indirectly on another platform implementation through shared QA.
 
 ## Shared contracts
 
@@ -121,6 +132,8 @@ retain `segid` target re-resolution so virtualized table rows are not written th
 3. Cross-platform scan and fill flow stays inside `content/` and calls platform ports instead of querying editor DOM directly.
 4. Background-only Chrome lifecycle and persistence stay inside `background/`.
 5. `shared/` must remain platform-neutral and must not import entry points.
+6. Pure matching and markup canonicalization stay in `domain/`; domain modules must not import `platforms/`.
+7. `content/` may import public modules at the root of `platforms/`, but not a platform implementation subfolder.
 
 ## Preserved platform behavior
 
@@ -130,6 +143,6 @@ retain `segid` target re-resolution so virtualized table rows are not written th
 
 Changes to these invariants require explicit behavior tests in addition to the full test, typecheck, and build gates.
 
-Run `npm run check:architecture` to enforce the root-entrypoint layout, focused shared-contract imports,
-shared-layer neutrality, platform isolation, popup dependency direction, domain browser independence,
-and reader/adapter DOM boundary.
+Run `npm run check:architecture` to enforce the root-entrypoint layout, tooling and declaration placement,
+focused shared-contract imports, shared-layer neutrality, platform isolation, popup dependency direction,
+domain independence, and reader/adapter DOM boundary.

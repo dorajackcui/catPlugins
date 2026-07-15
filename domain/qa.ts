@@ -1,4 +1,4 @@
-import { normalizeGientTransInlineMarkup } from '../platforms/gientrans/markup.ts';
+import { normalizeGientTransInlineMarkup } from './gientrans-markup.ts';
 
 export function extractPlaceholderTokens(input: string): string[] {
   const tokens: Array<{ index: number; token: string }> = [];

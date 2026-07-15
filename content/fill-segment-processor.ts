@@ -8,7 +8,7 @@ import {
   createEntryLookup,
   summarizePreview
 } from '../domain/matcher.ts';
-import { describeMemoqFillDiagnostic } from '../platforms/memoq/fill-diagnostics.ts';
+import { describeMemoqFillDiagnostic } from '../domain/memoq-fill-diagnostics.ts';
 import {
   shouldRejectNonEmptyTarget,
   type MemoqFillExecutionContext

@@ -11,5 +11,6 @@
     "allowJs": false,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["./*.ts", "./*.d.ts", "./tests/**/*.ts"]
+  "include": ["./**/*.ts"],
+  "exclude": ["./dist", "./node_modules"]
 }

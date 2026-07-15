@@ -1,12 +1,18 @@
 import { build, context } from 'esbuild';
 import { cp, mkdir, rm } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const outdir = resolve('dist');
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const outdir = resolve(projectRoot, 'dist');
 const watch = process.argv.includes('--watch');
 
 const sharedConfig = {
-  entryPoints: ['background.ts', 'content-script.ts', 'popup.ts'],
+  entryPoints: [
+    resolve(projectRoot, 'background.ts'),
+    resolve(projectRoot, 'content-script.ts'),
+    resolve(projectRoot, 'popup.ts')
+  ],
   bundle: true,
   format: 'iife',
   outdir,
@@ -18,9 +24,18 @@ const sharedConfig = {
 
 async function copyStaticAssets() {
   await mkdir(outdir, { recursive: true });
-  await cp('manifest.json', resolve(outdir, 'manifest.json'));
-  await cp('popup/index.html', resolve(outdir, 'popup.html'));
-  await cp('popup/styles.css', resolve(outdir, 'popup.css'));
+  await cp(
+    resolve(projectRoot, 'manifest.json'),
+    resolve(outdir, 'manifest.json')
+  );
+  await cp(
+    resolve(projectRoot, 'popup/index.html'),
+    resolve(outdir, 'popup.html')
+  );
+  await cp(
+    resolve(projectRoot, 'popup/styles.css'),
+    resolve(outdir, 'popup.css')
+  );
 }
 
 if (watch) {

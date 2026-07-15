@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,7 +13,7 @@ const repositoryFiles = execFileSync(
   }
 )
   .split('\0')
-  .filter(Boolean);
+  .filter((file) => file && existsSync(resolve(projectRoot, file)));
 const productionTypeScriptFiles = repositoryFiles.filter(
   (file) =>
     file.endsWith('.ts') &&
@@ -48,13 +48,19 @@ function checkRootLayout() {
   ]);
 
   for (const file of rootFiles) {
-    if (
-      file.endsWith('.ts') &&
-      !file.endsWith('.d.ts') &&
-      !allowedRootTypeScript.has(file)
-    ) {
+    if (file.endsWith('.d.ts')) {
+      violations.push(
+        `${file}: ambient declarations belong in types/, not at repository root.`
+      );
+    } else if (file.endsWith('.ts') && !allowedRootTypeScript.has(file)) {
       violations.push(
         `${file}: root TypeScript must be an entry point; move implementation code into a responsibility folder.`
+      );
+    }
+
+    if (file.endsWith('.mjs')) {
+      violations.push(
+        `${file}: repository tooling belongs in scripts/, not at repository root.`
       );
     }
 
@@ -81,6 +87,21 @@ function checkProductionImports() {
       if (file.startsWith('shared/') && !importedFile.startsWith('shared/')) {
         violations.push(
           `${file}: shared modules must remain layer-neutral; found import ${importedFile}.`
+        );
+      }
+
+      if (file.startsWith('domain/') && importedFile.startsWith('platforms/')) {
+        violations.push(
+          `${file}: domain rules must not depend on a platform implementation (${importedFile}).`
+        );
+      }
+
+      if (
+        file.startsWith('content/') &&
+        /^platforms\/[^/]+\//.test(importedFile)
+      ) {
+        violations.push(
+          `${file}: content flow must use a platform-level port instead of a platform implementation (${importedFile}).`
         );
       }
 

@@ -10,8 +10,8 @@ import type {
 import {
   normalizeGientTransInlineMarkup,
   stripGientTransInlineMarkup
-} from '../platforms/gientrans/markup.ts';
-import { normalizePhraseTagClipText } from '../platforms/phrase/markup.ts';
+} from './gientrans-markup.ts';
+import { normalizePhraseTagClipText } from './phrase-markup.ts';
 import { normalizeText } from '../shared/utils.ts';
 
 export function buildMatchKey(sourceNormalized: string, occurrenceIndex: number): string {

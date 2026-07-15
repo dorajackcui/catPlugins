@@ -1,4 +1,4 @@
-import { normalizeText } from '../../shared/utils.ts';
+import { normalizeText } from '../shared/utils.ts';
 
 export const GIENTRANS_DEFAULT_TAG_TOKEN_PATTERN = /❮[^❮❯]+❯/g;
 export const GIENTRANS_NEWLINE_TAG_TOKEN = '\\n';

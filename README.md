@@ -24,8 +24,10 @@ The build writes an unpacked extension to `dist/`. Load that directory from `chr
 - `domain/` owns browser-independent matching, QA, throttling, run-state, and failure policies.
 - `platforms/` owns Phrase, memoQ, and GientTrans DOM readers and editor writers.
 - `popup/` owns popup workflows, run monitoring, view rendering, and static source assets.
+- `scripts/` owns build, test, and architecture-check tooling.
 - `shared/` owns focused message, state, fill-result, storage, and translation contracts.
 - `tests/` mirrors those boundaries with unit, state-machine, adapter, and DOM regression coverage.
+- `types/` owns ambient declarations for Chrome, Node's test runner, and the Excel library.
 
 See [docs/architecture.md](docs/architecture.md) for dependency rules and module-level responsibilities.
 

@@ -4,7 +4,7 @@ import {
   readGientTransEditorTextPreservingNbsp,
   stripEditorMarkers
 } from './editor-text.ts';
-import { normalizeGientTransInlineMarkup } from './markup.ts';
+import { normalizeGientTransInlineMarkup } from '../../domain/gientrans-markup.ts';
 import { describeGientTransText } from './diagnostics.ts';
 
 export { describeGientTransText } from './diagnostics.ts';

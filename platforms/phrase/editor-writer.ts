@@ -5,7 +5,10 @@ import type {
   DebuggerInputOperation
 } from '../../shared/message-types.ts';
 import { delay } from '../../shared/utils.ts';
-import { normalizePhraseTagClipText, splitPhraseMarkup } from './markup.ts';
+import {
+  normalizePhraseTagClipText,
+  splitPhraseMarkup
+} from '../../domain/phrase-markup.ts';
 
 const TARGET_ACTIVATION_SELECTORS = [
   '.twe_target .te_text_container',

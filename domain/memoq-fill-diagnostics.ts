@@ -1,8 +1,8 @@
 import type {
   MemoqFillFailureCode,
   MemoqFillFailureDiagnostic
-} from '../../shared/fill-outcome-types.ts';
-import { normalizeText } from '../../shared/utils.ts';
+} from '../shared/fill-outcome-types.ts';
+import { normalizeText } from '../shared/utils.ts';
 
 const FAILURE_MESSAGES: Record<MemoqFillFailureCode, string> = {
   ROW_NOT_FOUND: 'Could not find the current row.',

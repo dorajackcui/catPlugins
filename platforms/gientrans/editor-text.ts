@@ -1,8 +1,8 @@
 import {
   findGientTransMarkupTokenAt,
   normalizeGientTransDomTagToken
-} from './markup.ts';
-import type { GientTransMarkupToken } from './markup.ts';
+} from '../../domain/gientrans-markup.ts';
+import type { GientTransMarkupToken } from '../../domain/gientrans-markup.ts';
 
 const ZERO_WIDTH_EDITOR_MARKERS = /[\u200B\uFEFF\u2060]/g;
 

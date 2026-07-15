@@ -1,7 +1,7 @@
 import { runtimeSendMessage } from '../../shared/chrome-api.ts';
 import type { ContentScriptDomHelpers } from '../../content/dom.ts';
 import type { RuntimeSegment, ScrollContext } from '../../content/types.ts';
-import { describeMemoqFillDiagnostic } from './fill-diagnostics.ts';
+import { describeMemoqFillDiagnostic } from '../../domain/memoq-fill-diagnostics.ts';
 import { MemoqFillTransaction } from './fill-transaction.ts';
 import {
   selectMemoqDomProfile,

@@ -9,7 +9,7 @@ import {
   bindStartMarkerListeners,
   clearStartMarker,
   readFreshStartMarker
-} from './content/start-marker-dom.ts';
+} from './platforms/start-marker-dom.ts';
 import { createPlatformRuntime } from './platforms/runtime.ts';
 import { runtimeSendMessage } from './shared/chrome-api.ts';
 import type {

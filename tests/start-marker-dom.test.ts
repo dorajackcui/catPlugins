@@ -10,7 +10,7 @@ import {
   rememberStartMarkerFromEvent,
   type StartMarkerEnvironment,
   type StartMarkerState
-} from '../content/start-marker-dom.ts';
+} from '../platforms/start-marker-dom.ts';
 import { fakeDocument, fakeElement } from './memoq-test-dom.ts';
 
 const GIENTRANS_TARGET_SELECTOR =
