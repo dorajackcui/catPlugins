@@ -1,5 +1,5 @@
-import { extractPlaceholderTokens } from '../../qa.ts';
-import { normalizeText } from '../../utils.ts';
+import { extractPlaceholderTokens } from '../../domain/qa.ts';
+import { normalizeText } from '../../shared/utils.ts';
 import type {
   ContentScriptDomHelpers,
   RuntimeSegment,

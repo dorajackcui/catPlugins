@@ -5,7 +5,7 @@ import type {
   RunPhase,
   RunState,
   StatusKind
-} from './types.ts';
+} from '../shared/types.ts';
 
 export const DEFAULT_RUN_STATE: RunState = {
   runId: null,

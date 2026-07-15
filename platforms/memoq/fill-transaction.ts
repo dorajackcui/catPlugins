@@ -8,8 +8,8 @@ import type {
   MemoqFillFailureDiagnostic,
   MemoqFillSuccessDiagnostic,
   MemoqVisibleRowSnapshot
-} from '../../types.ts';
-import { normalizeText } from '../../utils.ts';
+} from '../../shared/types.ts';
+import { normalizeText } from '../../shared/utils.ts';
 
 const MEMOQ_COMMIT_CONFIRM_ATTEMPTS = 14;
 const MEMOQ_COMMIT_CONFIRM_DELAY_MS = 150;

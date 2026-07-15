@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { normalizeFillOptions } from '../fill-options.ts';
+import { normalizeFillOptions } from '../domain/fill-options.ts';
 
 test('normalizeFillOptions defaults to placeholder validation enabled', () => {
   assert.deepEqual(normalizeFillOptions(undefined), {

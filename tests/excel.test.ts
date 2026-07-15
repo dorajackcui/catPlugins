@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { read, utils as xlsxUtils, write } from 'xlsx';
 
-import { buildSourceExportWorkbook, parseExcelBuffer } from '../excel.ts';
+import { buildSourceExportWorkbook, parseExcelBuffer } from '../background/excel.ts';
 
 test('parseExcelBuffer falls back to the first two columns when no source/target header is found', () => {
   const workbook = xlsxUtils.book_new();

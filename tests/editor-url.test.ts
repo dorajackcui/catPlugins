@@ -6,7 +6,7 @@ import {
   isMemsourceEditorFrameUrl,
   isMemoqUrl,
   isSupportedEditorUrl
-} from '../editor-url.ts';
+} from '../background/editor-url.ts';
 
 test('GientTrans olEditor URLs are supported editor tabs', () => {
   const url =

@@ -4,8 +4,8 @@ import {
   type RuntimeSegment,
   type ScrollContext
 } from '../content/dom.ts';
-import type { FillOutcome } from '../types.ts';
-import { normalizeText } from '../utils.ts';
+import type { FillOutcome } from '../shared/types.ts';
+import { normalizeText } from '../shared/utils.ts';
 import { GientTransAdapter } from './gientrans/adapter.ts';
 import {
   MemoqAdapter,

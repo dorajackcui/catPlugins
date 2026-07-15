@@ -1,6 +1,6 @@
-import { extractPlaceholderTokens } from '../../qa.ts';
-import type { FillOutcome } from '../../types.ts';
-import { normalizeText, waitForNormalizedTextMatch } from '../../utils.ts';
+import { extractPlaceholderTokens } from '../../domain/qa.ts';
+import type { FillOutcome } from '../../shared/types.ts';
+import { normalizeText, waitForNormalizedTextMatch } from '../../shared/utils.ts';
 import { PhraseEditorWriter } from './editor-writer.ts';
 import type {
   ContentScriptDomHelpers,

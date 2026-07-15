@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { shouldPauseBulkFill, shouldPauseBulkFillForPlatform } from '../fill-throttle.ts';
+import { shouldPauseBulkFill, shouldPauseBulkFillForPlatform } from '../domain/fill-throttle.ts';
 
 test('bulk pause stays disabled for tasks with 300 rows or fewer', () => {
   assert.equal(shouldPauseBulkFill(300, 200), false);

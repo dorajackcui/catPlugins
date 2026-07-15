@@ -1,6 +1,6 @@
-import { runtimeSendMessage } from './chrome-api.ts';
-import { normalizeFillOptions } from './fill-options.ts';
-import { describeRunState, isRunActive, normalizeRunState } from './run-state.ts';
+import { runtimeSendMessage } from './shared/chrome-api.ts';
+import { normalizeFillOptions } from './domain/fill-options.ts';
+import { describeRunState, isRunActive, normalizeRunState } from './domain/run-state.ts';
 import type {
   ApiResponse,
   BackgroundRequest,
@@ -10,7 +10,7 @@ import type {
   PopupState,
   PreviewResult,
   RunState
-} from './types.ts';
+} from './shared/types.ts';
 
 const state = {
   busy: false,

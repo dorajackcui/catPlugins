@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   DebuggerInputController,
   type ChromeDebuggerInputApi
-} from '../debugger-input.ts';
+} from '../background/debugger-input.ts';
 
 interface RecordedCommand {
   tabId: number;

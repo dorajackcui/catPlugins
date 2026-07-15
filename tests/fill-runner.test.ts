@@ -13,7 +13,7 @@ import type { MemoqFillExecutionContext } from '../platforms/runtime.ts';
 import type {
   FillOutcome,
   TranslationEntry
-} from '../types.ts';
+} from '../shared/types.ts';
 
 type CallbackResult = 'stop' | 'rescan' | 'continue';
 

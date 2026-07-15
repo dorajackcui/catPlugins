@@ -1,6 +1,6 @@
-import { extractPlaceholderTokens } from '../../qa.ts';
-import type { FillOutcome } from '../../types.ts';
-import { delay, normalizeText } from '../../utils.ts';
+import { extractPlaceholderTokens } from '../../domain/qa.ts';
+import type { FillOutcome } from '../../shared/types.ts';
+import { delay, normalizeText } from '../../shared/utils.ts';
 import {
   collectGientTransTagHtmlByToken,
   containsMappedGientTransTag,

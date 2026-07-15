@@ -6,13 +6,13 @@ import type {
   PreviewItem,
   PreviewResult,
   TranslationEntry
-} from './types.ts';
+} from '../shared/types.ts';
 import {
   normalizeGientTransInlineMarkup,
   stripGientTransInlineMarkup
-} from './platforms/gientrans/markup.ts';
-import { normalizePhraseTagClipText } from './platforms/phrase/markup.ts';
-import { normalizeText } from './utils.ts';
+} from '../platforms/gientrans/markup.ts';
+import { normalizePhraseTagClipText } from '../platforms/phrase/markup.ts';
+import { normalizeText } from '../shared/utils.ts';
 
 export function buildMatchKey(sourceNormalized: string, occurrenceIndex: number): string {
   return `source:${sourceNormalized}::${occurrenceIndex}`;

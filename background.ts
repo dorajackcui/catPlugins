@@ -1,15 +1,15 @@
-import { executeScript, getAllFrames, queryActiveTab, sendTabMessage } from './chrome-api.ts';
-import { DebuggerInputController } from './debugger-input.ts';
+import { executeScript, getAllFrames, queryActiveTab, sendTabMessage } from './shared/chrome-api.ts';
+import { DebuggerInputController } from './background/debugger-input.ts';
 import {
   isGientTransUrl,
   isMemsourceEditorFrameUrl,
   isMemoqUrl,
   isSupportedEditorUrl
-} from './editor-url.ts';
-import { buildSourceExportWorkbook, parseExcelBuffer } from './excel.ts';
-import { normalizeFillOptions } from './fill-options.ts';
-import { normalizePlannedFillCount } from './fill-throttle.ts';
-import { applyMemoqPreviewCorrection, buildPreview } from './matcher.ts';
+} from './background/editor-url.ts';
+import { buildSourceExportWorkbook, parseExcelBuffer } from './background/excel.ts';
+import { normalizeFillOptions } from './domain/fill-options.ts';
+import { normalizePlannedFillCount } from './domain/fill-throttle.ts';
+import { applyMemoqPreviewCorrection, buildPreview } from './domain/matcher.ts';
 import {
   createFinishedRunState,
   createRunningRunState,
@@ -17,8 +17,8 @@ import {
   isRunActive,
   mergeRunProgress,
   normalizeRunState
-} from './run-state.ts';
-import { readRuntimeState, writeRuntimeState } from './storage.ts';
+} from './domain/run-state.ts';
+import { readRuntimeState, writeRuntimeState } from './background/storage.ts';
 import type {
   ApiResponse,
   BackgroundRequest,
@@ -29,7 +29,7 @@ import type {
   PopupState,
   RunState,
   StatusKind
-} from './types.ts';
+} from './shared/types.ts';
 
 const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 const EXPORT_SCAN_MAX_PASSES = 1200;

@@ -4,7 +4,7 @@ import test from 'node:test';
 import type { RuntimeSegment } from '../content/dom.ts';
 import type { MemoqDomProfile, MemoqProfileCells } from '../platforms/memoq/dom-profile.ts';
 import { MemoqFillTransaction } from '../platforms/memoq/fill-transaction.ts';
-import type { MemoqVisibleRowSnapshot } from '../types.ts';
+import type { MemoqVisibleRowSnapshot } from '../shared/types.ts';
 
 function createSegment(overrides: Partial<RuntimeSegment> = {}): RuntimeSegment {
   return {

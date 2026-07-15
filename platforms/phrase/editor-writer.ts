@@ -1,10 +1,10 @@
-import { runtimeSendMessage } from '../../chrome-api.ts';
+import { runtimeSendMessage } from '../../shared/chrome-api.ts';
 import type {
   ApiResponse,
   BackgroundRequest,
   DebuggerInputOperation
-} from '../../types.ts';
-import { delay } from '../../utils.ts';
+} from '../../shared/types.ts';
+import { delay } from '../../shared/utils.ts';
 import { normalizePhraseTagClipText, splitPhraseMarkup } from './markup.ts';
 
 const TARGET_ACTIVATION_SELECTORS = [

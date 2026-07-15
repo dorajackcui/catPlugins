@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { BackgroundRequest } from '../types.ts';
+import type { BackgroundRequest } from '../shared/types.ts';
 import {
   PhraseEditorWriter,
   type PhraseEditorWriterHelpers,

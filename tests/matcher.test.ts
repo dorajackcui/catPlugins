@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { applyMemoqPreviewCorrection, buildPreview } from '../matcher.ts';
-import type { PageSegment, TranslationEntry } from '../types.ts';
+import { applyMemoqPreviewCorrection, buildPreview } from '../domain/matcher.ts';
+import type { PageSegment, TranslationEntry } from '../shared/types.ts';
 
 const entries: TranslationEntry[] = [
   {

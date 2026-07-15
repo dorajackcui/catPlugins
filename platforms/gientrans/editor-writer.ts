@@ -1,4 +1,4 @@
-import { normalizeText } from '../../utils.ts';
+import { normalizeText } from '../../shared/utils.ts';
 import {
   normalizeGientTransEditorText,
   readGientTransEditorText,

@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   describeFillStopReason,
   shouldStopAfterFillFailure
-} from '../fill-failure.ts';
+} from '../domain/fill-failure.ts';
 
 test('Phrase fill failures stop the run with source context', () => {
   assert.equal(shouldStopAfterFillFailure('phrase'), true);

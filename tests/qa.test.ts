@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { extractPlaceholderTokens, placeholdersMatch } from '../qa.ts';
-import { normalizeText } from '../utils.ts';
+import { extractPlaceholderTokens, placeholdersMatch } from '../domain/qa.ts';
+import { normalizeText } from '../shared/utils.ts';
 
 test('normalizeText trims and collapses whitespace', () => {
   assert.equal(normalizeText('  Hello   world \n\n again '), 'Hello world again');

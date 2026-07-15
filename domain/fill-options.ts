@@ -1,4 +1,4 @@
-import type { FillOptions } from './types.ts';
+import type { FillOptions } from '../shared/types.ts';
 
 export const DEFAULT_FILL_OPTIONS: FillOptions = {
   autoStopAfterFilledCount: null,

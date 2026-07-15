@@ -1,4 +1,4 @@
-import { runtimeSendMessage } from '../../chrome-api.ts';
+import { runtimeSendMessage } from '../../shared/chrome-api.ts';
 import type {
   ContentScriptDomHelpers,
   RuntimeSegment,
@@ -19,12 +19,12 @@ import {
 } from './accessibility-textbox.ts';
 import { serializeMemoqContent } from './text.ts';
 import { writeTrustedTextToElement } from '../../content/trusted-text-writer.ts';
-import type { ApiResponse, BackgroundRequest, FillOutcome } from '../../types.ts';
+import type { ApiResponse, BackgroundRequest, FillOutcome } from '../../shared/types.ts';
 import {
   containsNoBreakSpace,
   normalizeText,
   normalizeTextPreservingNoBreakSpaces
-} from '../../utils.ts';
+} from '../../shared/utils.ts';
 
 export {
   chooseMemoqAccessibilityTextBoxes,

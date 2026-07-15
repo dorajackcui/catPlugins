@@ -1,8 +1,8 @@
 import type { RuntimeSegment } from './dom.ts';
-import { normalizeFillOptions } from '../fill-options.ts';
-import { describeFillStopReason, shouldStopAfterFillFailure } from '../fill-failure.ts';
-import { BULK_FILL_PAUSE_MS, shouldPauseBulkFillForPlatform } from '../fill-throttle.ts';
-import { applyFilledToPreview, classifySegment, createEntryLookup, summarizePreview } from '../matcher.ts';
+import { normalizeFillOptions } from '../domain/fill-options.ts';
+import { describeFillStopReason, shouldStopAfterFillFailure } from '../domain/fill-failure.ts';
+import { BULK_FILL_PAUSE_MS, shouldPauseBulkFillForPlatform } from '../domain/fill-throttle.ts';
+import { applyFilledToPreview, classifySegment, createEntryLookup, summarizePreview } from '../domain/matcher.ts';
 import { describeMemoqFillDiagnostic } from '../platforms/memoq/fill-diagnostics.ts';
 import {
   shouldRejectNonEmptyTarget,
@@ -23,7 +23,7 @@ import type {
   PreviewItem,
   ReportRunProgressRequest,
   TranslationEntry
-} from '../types.ts';
+} from '../shared/types.ts';
 
 const DEFAULT_INTER_FILL_DELAY_MS = 180;
 const MEMOQ_INTER_FILL_DELAY_MS = 320;

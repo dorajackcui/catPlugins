@@ -1,6 +1,6 @@
-import { runtimeSendMessage } from './chrome-api.ts';
+import { runtimeSendMessage } from './shared/chrome-api.ts';
 import { ContentScriptDomHelpers } from './content/dom.ts';
-import { normalizeFillOptions } from './fill-options.ts';
+import { normalizeFillOptions } from './domain/fill-options.ts';
 import { FillRunner } from './content/fill-runner.ts';
 import { createPlatformRuntime } from './platforms/runtime.ts';
 import {
@@ -26,8 +26,8 @@ import type {
   FillRunResult,
   PageSegment,
   TranslationEntry
-} from './types.ts';
-import { delay } from './utils.ts';
+} from './shared/types.ts';
+import { delay } from './shared/utils.ts';
 
 declare global {
   interface Window {

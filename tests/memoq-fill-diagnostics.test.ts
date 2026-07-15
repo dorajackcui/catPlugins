@@ -5,7 +5,7 @@ import {
   describeMemoqFillDiagnostic,
   truncateMemoqDiagnosticValue
 } from '../platforms/memoq/fill-diagnostics.ts';
-import type { MemoqFillFailureDiagnostic } from '../types.ts';
+import type { MemoqFillFailureDiagnostic } from '../shared/types.ts';
 
 test('describeMemoqFillDiagnostic formats a stable stop reason', () => {
   const diagnostic: MemoqFillFailureDiagnostic = {

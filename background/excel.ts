@@ -1,7 +1,7 @@
 import { read, utils as xlsxUtils, write } from 'xlsx';
 
-import type { PageSegment, ParseExcelResult, TranslationEntry } from './types.ts';
-import { normalizeText, toText } from './utils.ts';
+import type { PageSegment, ParseExcelResult, TranslationEntry } from '../shared/types.ts';
+import { normalizeText, toText } from '../shared/utils.ts';
 
 interface IndexedRow {
   rowNumber: number;

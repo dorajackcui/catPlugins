@@ -9,7 +9,7 @@ import {
   isRunActive,
   mergeRunProgress,
   normalizeRunState
-} from '../run-state.ts';
+} from '../domain/run-state.ts';
 
 test('normalizeRunState falls back to defaults', () => {
   assert.deepEqual(normalizeRunState(undefined), DEFAULT_RUN_STATE);
