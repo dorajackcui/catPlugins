@@ -10,9 +10,8 @@ import {
   selectMemoqDomProfile,
   type MemoqDomProfile
 } from './dom-profile.ts';
-import {
-  MemoqRowReader,
-} from './row-reader.ts';
+import { MemoqRowReader } from './row-reader.ts';
+import { MemoqScrollContextResolver } from './scroll-context.ts';
 import {
   chooseMemoqAccessibilityTextBoxes,
   readMemoqAccessibilityTextBoxValue
@@ -71,27 +70,7 @@ export class MemoqAdapter {
       return null;
     }
 
-    const profileScrollRoot = profile.findScrollRoot(document);
-    if (
-      profileScrollRoot &&
-      this.helpers.isScrollableContainer(profileScrollRoot, true)
-    ) {
-      return this.helpers.toElementScrollContext(profileScrollRoot);
-    }
-
-    const visibleTargets = this.getVisibleProfileTargets(profile);
-    const scrollContainer = this.helpers.findBestScrollContainer(visibleTargets);
-    if (scrollContainer) {
-      return this.helpers.toElementScrollContext(scrollContainer);
-    }
-
-    const syntheticTarget = profile.createSyntheticScrollTarget(document);
-    if (syntheticTarget) {
-      return this.createSyntheticScrollContext(syntheticTarget);
-    }
-
-    const interactionTarget = this.findSharedAncestor(visibleTargets);
-    return interactionTarget ? this.createSyntheticScrollContext(interactionTarget) : null;
+    return new MemoqScrollContextResolver(profile, this.helpers).resolve();
   }
 
   collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[] {
@@ -232,124 +211,6 @@ export class MemoqAdapter {
         }
       );
     }
-  }
-
-  private getVisibleProfileTargets(profile: MemoqDomProfile): HTMLElement[] {
-    const targets: HTMLElement[] = [];
-
-    for (const row of profile.findVisibleRows(document)) {
-      const cells = profile.findCells(row);
-      targets.push(row);
-
-      if (cells) {
-        targets.push(cells.source, cells.target);
-      }
-    }
-
-    return targets.filter((target) => this.helpers.isElementVisible(target));
-  }
-
-  private findSharedAncestor(elements: HTMLElement[]): HTMLElement | null {
-    const candidates = new Map<HTMLElement, number>();
-
-    for (const element of elements.slice(0, 40)) {
-      let ancestor = element.parentElement;
-      let depth = 0;
-
-      while (ancestor && ancestor !== document.body && depth < 8) {
-        const current = candidates.get(ancestor) ?? 0;
-        candidates.set(ancestor, current + Math.max(1, 8 - depth));
-        ancestor = ancestor.parentElement;
-        depth += 1;
-      }
-    }
-
-    return [...candidates.entries()]
-      .sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
-  }
-
-  private createSyntheticScrollContext(target: HTMLElement): ScrollContext {
-    let syntheticTop = 0;
-
-    return {
-      initialTop: 0,
-      mode: 'synthetic',
-      getTop: () => syntheticTop,
-      getHeight: () => target.clientHeight || window.innerHeight,
-      scrollToTop: () => {
-        const focusTarget = this.findMemoqFocusTarget(target);
-
-        focusTarget.focus();
-        for (const receiver of [focusTarget, target]) {
-          receiver.dispatchEvent(
-            new KeyboardEvent('keydown', {
-              bubbles: true,
-              cancelable: true,
-              key: 'Home',
-              code: 'Home',
-              ctrlKey: true,
-              metaKey: true
-            })
-          );
-          receiver.dispatchEvent(
-            new KeyboardEvent('keyup', {
-              bubbles: true,
-              cancelable: true,
-              key: 'Home',
-              code: 'Home',
-              ctrlKey: true,
-              metaKey: true
-            })
-          );
-        }
-        syntheticTop = 0;
-      },
-      scrollBy: (delta) => {
-        const focusTarget = this.findMemoqFocusTarget(target);
-
-        focusTarget.focus();
-
-        for (const receiver of [focusTarget, target]) {
-          receiver.dispatchEvent(
-            new WheelEvent('wheel', {
-              bubbles: true,
-              cancelable: true,
-              deltaY: Math.max(delta, 240)
-            })
-          );
-        }
-
-        for (const receiver of [focusTarget, target]) {
-          receiver.dispatchEvent(
-            new KeyboardEvent('keydown', {
-              bubbles: true,
-              cancelable: true,
-              key: 'PageDown',
-              code: 'PageDown'
-            })
-          );
-          receiver.dispatchEvent(
-            new KeyboardEvent('keyup', {
-              bubbles: true,
-              cancelable: true,
-              key: 'PageDown',
-              code: 'PageDown'
-            })
-          );
-        }
-
-        syntheticTop += Math.max(delta, 240);
-      },
-      isAtBottom: () => false,
-      restore: () => {
-        // Synthetic scrolling cannot be restored reliably.
-      }
-    };
-  }
-
-  private findMemoqFocusTarget(target: HTMLElement): HTMLElement {
-    return target.querySelector<HTMLElement>('[tabindex], textarea, input, [contenteditable="true"]') ??
-      target;
   }
 
   async prepareTrustedInput(): Promise<void> {

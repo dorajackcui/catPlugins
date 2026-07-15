@@ -25,6 +25,7 @@ memoQ supports two editor generations behind one stable profile API:
 - `platforms/memoq/legacy-dom-profile.ts` owns legacy WebTrans cell and row rules.
 - `platforms/memoq/dom-profile-types.ts` is the contract for adding another editor generation.
 - `platforms/memoq/dom-profile-helpers.ts` contains DOM primitives shared by profile implementations.
+- `platforms/memoq/scroll-context.ts` resolves native scroll containers and owns synthetic memoQ navigation events.
 
 Profile selection prefers a fully visible modern editor, then a fully visible legacy editor. A matching
 but incomplete modern surface must not hide a usable legacy editor.
