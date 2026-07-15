@@ -61,6 +61,15 @@ does not reinject the content script or drift to a newly focused tab.
 `domain/run-stop.ts` defines the cross-context user-stop error and its display mapping. Content,
 background, and popup code must use this contract so an intentional stop never appears as a failure.
 
+## Popup application
+
+- `popup/controller.ts` owns Upload, Preview, Export, Fill, and option-persistence workflows.
+- `popup/run-monitor.ts` owns busy/stopping state, run-state rendering, refresh polling, and Stop request gating.
+- `popup/view.ts` owns DOM bindings, form parsing, preview rendering, and file downloads.
+
+New popup commands should compose these layers instead of creating another timer or duplicating
+busy/stopping state in a workflow handler.
+
 ## memoQ DOM profiles
 
 memoQ supports two editor generations behind one stable profile API:

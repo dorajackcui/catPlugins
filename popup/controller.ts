@@ -1,8 +1,3 @@
-import {
-  describeRunState,
-  isRunActive,
-  normalizeRunState
-} from '../domain/run-state.ts';
 import { describeRunFailure } from '../domain/run-stop.ts';
 import type { BackgroundRequest } from '../shared/message-types.ts';
 import type {
@@ -13,11 +8,9 @@ import type {
 } from '../shared/translation-types.ts';
 import type {
   PopupState,
-  RunState,
   StatusKind
 } from '../shared/state-types.ts';
-
-const REFRESH_INTERVAL_MS = 1000;
+import { PopupRunMonitor } from './run-monitor.ts';
 
 export interface PopupFile {
   name: string;
@@ -58,11 +51,17 @@ export interface PopupControllerPort {
  * Coordinates popup workflows independently from the concrete DOM view.
  */
 export class PopupController {
-  private busy = false;
-  private stopping = false;
-  private refreshTimerId: number | null = null;
+  private readonly runMonitor: PopupRunMonitor;
 
-  constructor(private readonly port: PopupControllerPort) {}
+  constructor(private readonly port: PopupControllerPort) {
+    this.runMonitor = new PopupRunMonitor({
+      view: port.view,
+      refreshState: () => this.refreshState(),
+      setInterval: (callback, delayMs) =>
+        port.setInterval(callback, delayMs),
+      clearInterval: (timerId) => port.clearInterval(timerId)
+    });
+  }
 
   start(): void {
     this.port.view.bind({
@@ -115,7 +114,7 @@ export class PopupController {
     const popupState = await this.port.sendMessage<PopupState>({
       type: 'GET_STATE'
     });
-    this.renderRunState(popupState.runState);
+    this.runMonitor.renderRunState(popupState.runState);
     this.port.view.renderFileInfo(popupState);
     this.port.view.renderPreview(popupState.previewResult);
     this.port.view.renderFillOptions(popupState.fillOptions);
@@ -131,7 +130,7 @@ export class PopupController {
 
   async handleUpload(file: PopupFile): Promise<void> {
     try {
-      this.setBusy(true);
+      this.runMonitor.setBusy(true);
       this.port.view.renderStatus('Parsing Excel...');
       const buffer = await file.arrayBuffer();
       const bytes = Array.from(new Uint8Array(buffer));
@@ -151,17 +150,14 @@ export class PopupController {
       );
     } finally {
       this.port.view.clearFileSelection();
-      this.setBusy(false);
+      this.runMonitor.setBusy(false);
     }
   }
 
   async handlePreview(): Promise<void> {
     try {
       const fillOptions = this.port.view.readFillOptions();
-      this.setBusy(true);
-      this.setStopping(false);
-      this.port.view.renderStatus('Scanning Phrase segments...');
-      this.startRefreshLoop();
+      this.runMonitor.beginRun('Scanning Phrase segments...');
       const preview = await this.port.sendMessage<PreviewResult>({
         type: 'RUN_PREVIEW',
         payload: { fillOptions }
@@ -173,18 +169,14 @@ export class PopupController {
     } catch (error) {
       this.renderOperationError(error, 'Preview failed.');
     } finally {
-      this.setStopping(false);
-      this.setBusy(false);
+      this.runMonitor.finishRun();
       await this.refreshState();
     }
   }
 
   async handleExportSources(): Promise<void> {
     try {
-      this.setBusy(true);
-      this.setStopping(false);
-      this.port.view.renderStatus('Exporting source segments...');
-      this.startRefreshLoop();
+      this.runMonitor.beginRun('Exporting source segments...');
       const result = await this.port.sendMessage<ExportSourcesResult>({
         type: 'EXPORT_SOURCES'
       });
@@ -195,8 +187,7 @@ export class PopupController {
     } catch (error) {
       this.renderOperationError(error, 'Export failed.');
     } finally {
-      this.setStopping(false);
-      this.setBusy(false);
+      this.runMonitor.finishRun();
       await this.refreshState();
     }
   }
@@ -204,10 +195,7 @@ export class PopupController {
   async handleFill(): Promise<void> {
     try {
       const fillOptions = this.port.view.readFillOptions();
-      this.setBusy(true);
-      this.setStopping(false);
-      this.port.view.renderStatus('Re-scanning and filling segments...');
-      this.startRefreshLoop();
+      this.runMonitor.beginRun('Re-scanning and filling segments...');
       const result = await this.port.sendMessage<FillRunResult>({
         type: 'RUN_FILL',
         payload: { fillOptions }
@@ -226,82 +214,21 @@ export class PopupController {
     } catch (error) {
       this.renderOperationError(error, 'Fill failed.');
     } finally {
-      this.setStopping(false);
-      this.setBusy(false);
+      this.runMonitor.finishRun();
       await this.refreshState();
     }
   }
 
   async handleStop(): Promise<void> {
-    if (!this.busy || this.stopping) {
+    if (!this.runMonitor.tryBeginStop()) {
       return;
     }
 
     try {
-      this.setStopping(true);
-      this.port.view.renderStatus('Stopping current run...');
       await this.port.sendMessage<null>({ type: 'STOP_RUN' });
     } catch (error) {
-      this.setStopping(false);
-      this.port.view.renderStatus(
-        error instanceof Error ? error.message : 'Stop failed.',
-        'error'
-      );
+      this.runMonitor.failStop(error);
     }
-  }
-
-  private renderRunState(runState?: RunState | null): void {
-    const normalizedRunState = normalizeRunState(runState);
-    this.setBusy(isRunActive(normalizedRunState));
-    this.setStopping(normalizedRunState.phase === 'stopping');
-    this.port.view.renderStatus(
-      describeRunState(normalizedRunState),
-      normalizedRunState.statusKind
-    );
-
-    if (isRunActive(normalizedRunState)) {
-      this.startRefreshLoop();
-      return;
-    }
-
-    this.stopRefreshLoop();
-  }
-
-  private setBusy(nextBusy: boolean): void {
-    this.busy = nextBusy;
-    this.port.view.setBusy(nextBusy);
-  }
-
-  private setStopping(nextStopping: boolean): void {
-    this.stopping = nextStopping;
-    this.port.view.setStopping(nextStopping);
-  }
-
-  private startRefreshLoop(): void {
-    if (this.refreshTimerId !== null) {
-      return;
-    }
-
-    this.refreshTimerId = this.port.setInterval(() => {
-      void this.refreshState().catch((error) => {
-        this.stopRefreshLoop();
-        this.port.view.renderStatus(
-          error instanceof Error
-            ? error.message
-            : 'Failed to refresh state.',
-          'error'
-        );
-      });
-    }, REFRESH_INTERVAL_MS);
-  }
-
-  private stopRefreshLoop(): void {
-    if (this.refreshTimerId === null) {
-      return;
-    }
-
-    this.port.clearInterval(this.refreshTimerId);
-    this.refreshTimerId = null;
   }
 
   private renderOperationError(error: unknown, fallback: string): void {
