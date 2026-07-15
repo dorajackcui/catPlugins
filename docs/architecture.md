@@ -92,6 +92,15 @@ but incomplete modern surface must not hide a usable legacy editor.
 - `platforms/memoq/fill-confirmation.ts` owns commit polling and row re-resolution.
 - `platforms/memoq/fill-diagnostic-builder.ts` creates stable success and failure diagnostics.
 
+## Phrase adapter
+
+- `platforms/phrase/row-reader.ts` owns Phrase row selectors, generic editable fallback discovery, tag-chip detection, scroll-container selection, and segment serialization.
+- `platforms/phrase/editor-writer.ts` owns trusted Phrase activation, text/tag input, and confirmation polling.
+- `platforms/phrase/adapter.ts` composes the reader and writer behind the common platform runtime port.
+
+Phrase DOM changes should be contained in the reader or writer rather than adding selectors to the
+adapter orchestration layer.
+
 ## Dependency rules
 
 1. Root entry points assemble dependencies and register listeners; they should not accumulate platform algorithms.
