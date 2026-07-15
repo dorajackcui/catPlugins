@@ -147,7 +147,12 @@ test('MemoqFillTransaction writes once and confirms same-row target text', async
     writeTrustedText: async (writeTarget, value) => {
       writes.push({ target: writeTarget, value });
       targetText = value;
-    }
+    },
+    runId: 'run-123',
+    sequence: 7,
+    scanPass: 3,
+    scrollTop: 480,
+    scrollMode: 'synthetic'
   });
 
   try {
@@ -158,6 +163,11 @@ test('MemoqFillTransaction writes once and confirms same-row target text', async
     assert.deepEqual(writes[0], { target, value: 'Translated text' });
     assert.equal(outcome.diagnostic?.outcome, 'success');
     assert.equal(outcome.diagnostic?.profileId, 'modern-editor');
+    assert.equal(outcome.diagnostic?.runId, 'run-123');
+    assert.equal(outcome.diagnostic?.sequence, 7);
+    assert.equal(outcome.diagnostic?.scanPass, 3);
+    assert.equal(outcome.diagnostic?.scrollTop, 480);
+    assert.equal(outcome.diagnostic?.scrollMode, 'synthetic');
     assert.equal(outcome.diagnostic?.confirmation.ok, true);
     assert.equal(outcome.diagnostic?.targetAfter, 'Translated text');
   } finally {
@@ -262,6 +272,54 @@ test('MemoqFillTransaction re-resolves the current target before writing', async
 
     assert.equal(outcome.filled, true);
     assert.deepEqual(writes, [{ target: currentTarget, value: 'Translated text' }]);
+  } finally {
+    restoreTimer();
+  }
+});
+
+test('MemoqFillTransaction refuses to write when the row disappears after preflight', async () => {
+  const initialTarget = {} as HTMLElement;
+  let lookupCount = 0;
+  let writes = 0;
+  const transaction = new MemoqFillTransaction({
+    profile: createMutableProfile(() => {
+      lookupCount += 1;
+      return lookupCount === 1 ? initialTarget : null;
+    }),
+    readTargetText: () => '',
+    readSourceText: () => 'Source text',
+    collectNearbyRows: () => [],
+    writeTrustedText: async () => {
+      writes += 1;
+    }
+  });
+
+  const outcome = await transaction.fillSegment(createSegment(), 'Translated text');
+
+  assert.equal(outcome.filled, false);
+  assert.equal(outcome.diagnostic?.failureCode, 'ROW_NOT_FOUND');
+  assert.equal(writes, 0);
+});
+
+test('MemoqFillTransaction reports ROW_NOT_FOUND when the row disappears during confirmation', async () => {
+  const restoreTimer = installImmediateTimer();
+  const target = {} as HTMLElement;
+  let rowAvailable = true;
+  const transaction = new MemoqFillTransaction({
+    profile: createMutableProfile(() => (rowAvailable ? target : null)),
+    readTargetText: () => '',
+    readSourceText: () => 'Source text',
+    collectNearbyRows: () => [],
+    writeTrustedText: async () => {
+      rowAvailable = false;
+    }
+  });
+
+  try {
+    const outcome = await transaction.fillSegment(createSegment(), 'Translated text');
+
+    assert.equal(outcome.filled, false);
+    assert.equal(outcome.diagnostic?.failureCode, 'ROW_NOT_FOUND');
   } finally {
     restoreTimer();
   }

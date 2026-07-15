@@ -4,7 +4,8 @@ import test from 'node:test';
 import {
   filterSegmentsFromStartMarker,
   filterSegmentsFromPendingStartMarker,
-  findStartSegmentIndex
+  findStartSegmentIndex,
+  hasUnresolvedStartMarker
 } from '../start-marker.ts';
 import type { RuntimeSegment } from '../content-script-dom.ts';
 
@@ -103,4 +104,10 @@ test('pending start marker suppresses segments until the marker is found', () =>
   assert.equal(matched.startIndex, 1);
   assert.equal(matched.matched, true);
   assert.equal(matched.shouldKeepStartMarker, false);
+});
+
+test('hasUnresolvedStartMarker identifies a marker that was never found', () => {
+  assert.equal(hasUnresolvedStartMarker({ domId: 'missing' }, true), true);
+  assert.equal(hasUnresolvedStartMarker({ domId: 'matched' }, false), false);
+  assert.equal(hasUnresolvedStartMarker(null, true), false);
 });

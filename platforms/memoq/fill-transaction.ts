@@ -17,7 +17,8 @@ const MEMOQ_COMMIT_CONFIRM_DELAY_MS = 150;
 export interface MemoqFillTransactionOptions {
   profile: MemoqDomProfile;
   readTargetText(target: HTMLElement): string;
-  readSourceText(segment: RuntimeSegment): string;
+  readSourceText(segment: RuntimeSegment): string | null;
+  resolveCurrentTarget?(rowNumber: string): HTMLElement | null;
   collectNearbyRows(rowNumber?: string): MemoqVisibleRowSnapshot[];
   writeTrustedText(target: HTMLElement, value: string): Promise<void>;
   runId?: string;
@@ -33,11 +34,11 @@ export class MemoqFillTransaction {
   async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
     const rowNumber = segment.rowNumber ?? '';
     const currentTarget = this.resolveCurrentTarget(segment);
-    const target = currentTarget ??
+    let target = currentTarget ??
       (segment.rowNumber ? null : segment.targetElement as HTMLElement | null);
 
     if (!target) {
-      const diagnostic = this.createDiagnostic({
+      return this.createFailureOutcome({
         segment,
         value,
         failureCode: 'ROW_NOT_FOUND',
@@ -47,20 +48,28 @@ export class MemoqFillTransaction {
         confirmationAttempts: 0,
         activationAttempted: false,
         activationOk: false
-      }) as MemoqFillFailureDiagnostic;
-
-      return {
-        domId: segment.domId,
-        filled: false,
-        diagnostic
-      };
+      });
     }
 
-    const sourceBefore = this.options.readSourceText(segment);
-    const targetBefore = this.options.readTargetText(target);
+    let sourceBefore = this.options.readSourceText(segment);
+    let targetBefore = this.options.readTargetText(target);
+
+    if (sourceBefore === null) {
+      return this.createFailureOutcome({
+        segment,
+        value,
+        failureCode: 'ROW_NOT_FOUND',
+        sourceBefore: '',
+        targetBefore,
+        targetAfter: targetBefore,
+        confirmationAttempts: 0,
+        activationAttempted: false,
+        activationOk: false
+      });
+    }
 
     if (normalizeText(sourceBefore) !== normalizeText(segment.sourceRaw)) {
-      const diagnostic = this.createDiagnostic({
+      return this.createFailureOutcome({
         segment,
         value,
         failureCode: 'SOURCE_MISMATCH',
@@ -70,17 +79,11 @@ export class MemoqFillTransaction {
         confirmationAttempts: 0,
         activationAttempted: false,
         activationOk: false
-      }) as MemoqFillFailureDiagnostic;
-
-      return {
-        domId: segment.domId,
-        filled: false,
-        diagnostic
-      };
+      });
     }
 
     if (normalizeText(targetBefore) !== '') {
-      const diagnostic = this.createDiagnostic({
+      return this.createFailureOutcome({
         segment,
         value,
         failureCode: 'TARGET_NOT_EMPTY',
@@ -90,24 +93,80 @@ export class MemoqFillTransaction {
         confirmationAttempts: 0,
         activationAttempted: false,
         activationOk: false
-      }) as MemoqFillFailureDiagnostic;
+      });
+    }
 
-      return {
-        domId: segment.domId,
-        filled: false,
-        diagnostic
-      };
+    const writeTarget = segment.rowNumber ? this.resolveCurrentTarget(segment) : target;
+    if (!writeTarget) {
+      return this.createFailureOutcome({
+        segment,
+        value,
+        failureCode: 'ROW_NOT_FOUND',
+        sourceBefore,
+        targetBefore,
+        targetAfter: targetBefore,
+        confirmationAttempts: 0,
+        activationAttempted: false,
+        activationOk: false
+      });
+    }
+
+    if (writeTarget !== target) {
+      target = writeTarget;
+      sourceBefore = this.options.readSourceText(segment);
+      targetBefore = this.options.readTargetText(target);
+
+      if (sourceBefore === null) {
+        return this.createFailureOutcome({
+          segment,
+          value,
+          failureCode: 'ROW_NOT_FOUND',
+          sourceBefore: '',
+          targetBefore,
+          targetAfter: targetBefore,
+          confirmationAttempts: 0,
+          activationAttempted: false,
+          activationOk: false
+        });
+      }
+
+      if (normalizeText(sourceBefore) !== normalizeText(segment.sourceRaw)) {
+        return this.createFailureOutcome({
+          segment,
+          value,
+          failureCode: 'SOURCE_MISMATCH',
+          sourceBefore,
+          targetBefore,
+          targetAfter: targetBefore,
+          confirmationAttempts: 0,
+          activationAttempted: false,
+          activationOk: false
+        });
+      }
+
+      if (normalizeText(targetBefore) !== '') {
+        return this.createFailureOutcome({
+          segment,
+          value,
+          failureCode: 'TARGET_NOT_EMPTY',
+          sourceBefore,
+          targetBefore,
+          targetAfter: targetBefore,
+          confirmationAttempts: 0,
+          activationAttempted: false,
+          activationOk: false
+        });
+      }
     }
 
     try {
-      const currentTarget = this.resolveCurrentTarget(segment) ?? target;
       await this.options.writeTrustedText(
-        this.options.profile.getWriteTarget(currentTarget),
+        this.options.profile.getWriteTarget(writeTarget),
         value
       );
     } catch (error) {
       const targetAfter = this.options.readTargetText(target);
-      const diagnostic = this.createDiagnostic({
+      return this.createFailureOutcome({
         segment,
         value,
         failureCode: 'INPUT_FAILED',
@@ -118,34 +177,22 @@ export class MemoqFillTransaction {
         activationAttempted: true,
         activationOk: false,
         activationError: describeError(error)
-      }) as MemoqFillFailureDiagnostic;
-
-      return {
-        domId: segment.domId,
-        filled: false,
-        diagnostic
-      };
+      });
     }
 
     const confirmation = await this.confirmTargetText(target, rowNumber, value);
     if (!confirmation.ok) {
-      const diagnostic = this.createDiagnostic({
+      return this.createFailureOutcome({
         segment,
         value,
-        failureCode: 'CONFIRM_TIMEOUT',
+        failureCode: confirmation.failureCode ?? 'CONFIRM_TIMEOUT',
         sourceBefore,
         targetBefore,
         targetAfter: confirmation.targetAfter,
         confirmationAttempts: confirmation.attempts,
         activationAttempted: true,
         activationOk: true
-      }) as MemoqFillFailureDiagnostic;
-
-      return {
-        domId: segment.domId,
-        filled: false,
-        diagnostic
-      };
+      });
     }
 
     const diagnostic = this.createDiagnostic({
@@ -170,17 +217,27 @@ export class MemoqFillTransaction {
     target: HTMLElement,
     rowNumber: string,
     value: string
-  ): Promise<{ ok: boolean; attempts: number; targetAfter: string }> {
+  ): Promise<{
+    ok: boolean;
+    attempts: number;
+    targetAfter: string;
+    failureCode?: Extract<MemoqFillFailureCode, 'ROW_NOT_FOUND'>;
+  }> {
     let targetAfter = '';
+    let resolvedAtLeastOnce = false;
 
     for (let attempt = 1; attempt <= MEMOQ_COMMIT_CONFIRM_ATTEMPTS; attempt += 1) {
-      const currentTarget =
-        rowNumber
-          ? this.options.profile.findCurrentTargetByRowNumber(
-              globalThis.document as Document,
-              rowNumber
-            ) ?? target
-          : target;
+      const currentTarget = rowNumber
+        ? this.resolveCurrentTargetByRowNumber(rowNumber)
+        : target;
+      if (!currentTarget) {
+        if (attempt < MEMOQ_COMMIT_CONFIRM_ATTEMPTS) {
+          await wait(MEMOQ_COMMIT_CONFIRM_DELAY_MS);
+        }
+        continue;
+      }
+
+      resolvedAtLeastOnce = true;
       targetAfter = this.options.readTargetText(currentTarget);
       if (isMemoqCommittedTargetText(targetAfter, value)) {
         return {
@@ -198,7 +255,8 @@ export class MemoqFillTransaction {
     return {
       ok: false,
       attempts: MEMOQ_COMMIT_CONFIRM_ATTEMPTS,
-      targetAfter
+      targetAfter,
+      failureCode: resolvedAtLeastOnce ? undefined : 'ROW_NOT_FOUND'
     };
   }
 
@@ -207,10 +265,61 @@ export class MemoqFillTransaction {
       return null;
     }
 
+    return this.resolveCurrentTargetByRowNumber(segment.rowNumber);
+  }
+
+  private resolveCurrentTargetByRowNumber(rowNumber: string): HTMLElement | null {
+    if (this.options.resolveCurrentTarget) {
+      return this.options.resolveCurrentTarget(rowNumber);
+    }
+
     return this.options.profile.findCurrentTargetByRowNumber(
       globalThis.document as Document,
-      segment.rowNumber
+      rowNumber
     );
+  }
+
+  private createFailureOutcome({
+    segment,
+    value,
+    failureCode,
+    sourceBefore,
+    targetBefore,
+    targetAfter,
+    confirmationAttempts,
+    activationAttempted,
+    activationOk,
+    activationError
+  }: {
+    segment: RuntimeSegment;
+    value: string;
+    failureCode: MemoqFillFailureCode;
+    sourceBefore: string;
+    targetBefore: string;
+    targetAfter: string;
+    confirmationAttempts: number;
+    activationAttempted: boolean;
+    activationOk: boolean;
+    activationError?: string;
+  }): FillOutcome {
+    const diagnostic = this.createDiagnostic({
+      segment,
+      value,
+      failureCode,
+      sourceBefore,
+      targetBefore,
+      targetAfter,
+      confirmationAttempts,
+      activationAttempted,
+      activationOk,
+      activationError
+    }) as MemoqFillFailureDiagnostic;
+
+    return {
+      domId: segment.domId,
+      filled: false,
+      diagnostic
+    };
   }
 
   private createDiagnostic({

@@ -7,7 +7,10 @@ import { describeFillStopReason, shouldStopAfterFillFailure } from './fill-failu
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFillForPlatform } from './fill-throttle.ts';
 import { GientTransAdapter } from './platforms/gientrans/adapter.ts';
 import { describeMemoqFillDiagnostic } from './platforms/memoq/fill-diagnostics.ts';
-import { MemoqAdapter } from './platforms/memoq/adapter.ts';
+import {
+  MemoqAdapter,
+  type MemoqFillExecutionContext
+} from './platforms/memoq/adapter.ts';
 import {
   findMemoqStartTargetCell,
   readMemoqStartMarkerDomId
@@ -21,6 +24,7 @@ import {
 } from './scan-dedupe.ts';
 import {
   filterSegmentsFromPendingStartMarker,
+  hasUnresolvedStartMarker,
   type StartMarker
 } from './start-marker.ts';
 import {
@@ -73,6 +77,12 @@ const memoqAdapter = new MemoqAdapter(helpers);
 const gientransAdapter = new GientTransAdapter(helpers);
 const phraseAdapter = new PhraseAdapter(helpers);
 const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
+
+interface SegmentScanContext {
+  scanPass: number;
+  scrollTop: number;
+  scrollMode: 'native' | 'synthetic';
+}
 
 async function reportRunProgress(
   runId: string,
@@ -145,8 +155,25 @@ class PlatformDomAdapter {
     // attachment's infobar resizes the page and re-lays out memoQ's grid, so
     // it must happen before any element or coordinate is captured. Also lets
     // one attachment survive the whole run instead of toggling per segment.
-    if (memoqAdapter.isActive()) {
-      await memoqAdapter.prepareTrustedInput();
+    const memoqActive = memoqAdapter.isActive();
+    if (memoqActive) {
+      try {
+        await memoqAdapter.prepareTrustedInput();
+      } catch (error) {
+        console.error(CONTENT_DEBUG_PREFIX, 'memoQ debugger:prepare-failure', {
+          runId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      }
+      console.info(CONTENT_DEBUG_PREFIX, 'memoQ fill run:start', {
+        runId,
+        entryCount: entries.length,
+        plannedFillCount,
+        fillOptions,
+        scanFromTop: options?.scanFromTop === true,
+        startFromMarker: options?.startFromMarker === true
+      });
     }
     const entryLookup = createEntryLookup(entries);
     const previewItems: PreviewItem[] = [];
@@ -157,6 +184,7 @@ class PlatformDomAdapter {
     );
     let stoppedByAutoStop = false;
     let stopReason: string | undefined;
+    let memoqFillSequence = 0;
 
     console.info(CONTENT_DEBUG_PREFIX, 'fill:start', {
       autoStopAfterFilledCount,
@@ -168,7 +196,7 @@ class PlatformDomAdapter {
     });
 
     await this.collectSegments(
-      async (segment) => {
+      async (segment, scanContext) => {
         const item = classifySegment(entryLookup, segment, normalizedFillOptions);
         previewItems.push(item);
         const scannedCount = previewItems.length;
@@ -182,10 +210,43 @@ class PlatformDomAdapter {
         }
 
         if (item.status !== 'ready' || !item.translation) {
+          if (
+            segment.platform === 'memoq' &&
+            item.reason?.includes('source does not match')
+          ) {
+            console.warn(CONTENT_DEBUG_PREFIX, 'memoQ fill:match-rejected', {
+              runId,
+              rowNumber: segment.rowNumber,
+              domId: segment.domId,
+              source: segment.sourceRaw,
+              reason: item.reason
+            });
+          }
           return;
         }
 
-        const outcome = await this.fillSegment(segment, item.translation);
+        const memoqContext: MemoqFillExecutionContext | undefined =
+          segment.platform === 'memoq'
+            ? {
+                runId,
+                sequence: ++memoqFillSequence,
+                scanPass: scanContext.scanPass,
+                scrollTop: scanContext.scrollTop,
+                scrollMode: scanContext.scrollMode
+              }
+            : undefined;
+        if (memoqContext) {
+          console.info(CONTENT_DEBUG_PREFIX, 'memoQ fill:attempt', {
+            ...memoqContext,
+            rowNumber: segment.rowNumber,
+            domId: segment.domId,
+            excelRowIndex: item.excelRowIndex,
+            source: segment.sourceRaw,
+            targetBeforeScan: segment.targetRaw,
+            expectedTranslation: item.translation
+          });
+        }
+        const outcome = await this.fillSegment(segment, item.translation, memoqContext);
         let shouldRescanVisibleSnapshot = false;
         if (outcome.filled) {
           filledDomIds.push(outcome.domId);
@@ -250,7 +311,7 @@ class PlatformDomAdapter {
     );
 
     const preFillPreview = summarizePreview(previewItems);
-    return {
+    const result = {
       preview: applyFilledToPreview(preFillPreview, filledDomIds),
       filledCount: filledDomIds.length,
       filledDomIds,
@@ -258,10 +319,28 @@ class PlatformDomAdapter {
       autoStopAfterFilledCount,
       stopReason
     };
+    if (memoqActive) {
+      console.info(CONTENT_DEBUG_PREFIX, 'memoQ fill run:complete', {
+        runId,
+        filledCount: result.filledCount,
+        scannedCount: result.preview.totalSegments,
+        stoppedByAutoStop: result.stoppedByAutoStop,
+        stopReason: result.stopReason ?? null
+      });
+    }
+    return result;
   }
 
-  private async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
+  private async fillSegment(
+    segment: RuntimeSegment,
+    value: string,
+    memoqContext?: MemoqFillExecutionContext
+  ): Promise<FillOutcome> {
     this.assertNotStopped();
+    if (segment.platform === 'memoq') {
+      return memoqAdapter.fillSegment(segment, value, memoqContext);
+    }
+
     const currentValue = this.getEditableValue(segment);
     if (segment.platform !== 'gientrans' && normalizeText(currentValue)) {
       return {
@@ -269,10 +348,6 @@ class PlatformDomAdapter {
         filled: false,
         reason: 'Target is no longer empty.'
       };
-    }
-
-    if (segment.platform === 'memoq') {
-      return memoqAdapter.fillSegment(segment, value);
     }
 
     if (segment.platform === 'gientrans') {
@@ -283,10 +358,6 @@ class PlatformDomAdapter {
   }
 
   private getEditableValue(segment: RuntimeSegment): string {
-    if (segment.platform === 'memoq') {
-      return memoqAdapter.getCurrentEditableValue(segment);
-    }
-
     if (segment.platform === 'gientrans') {
       return gientransAdapter.getEditableValue(segment.targetElement as HTMLElement);
     }
@@ -311,7 +382,8 @@ class PlatformDomAdapter {
 
   private async collectSegments(
     onSegment?: (
-      segment: RuntimeSegment
+      segment: RuntimeSegment,
+      context: SegmentScanContext
     ) => Promise<'stop' | 'rescan' | void> | 'stop' | 'rescan' | void,
     options?: {
       maxPasses?: number;
@@ -434,7 +506,11 @@ class PlatformDomAdapter {
           segments.push(segment);
 
           if (onSegment) {
-            const callbackResult = await onSegment(segment);
+            const callbackResult = await onSegment(segment, {
+              scanPass: pass + 1,
+              scrollTop: scrollContext.getTop(),
+              scrollMode: scrollContext.mode ?? 'native'
+            });
             if (callbackResult === 'stop') {
               stopRequestedByCallback = true;
               break;
@@ -490,6 +566,21 @@ class PlatformDomAdapter {
         if (noMovementPasses >= 5 && noNewSegmentsPasses >= 3) {
           break;
         }
+      }
+
+      if (hasUnresolvedStartMarker(startMarker, shouldApplyStartMarker)) {
+        const message = startMarker?.domId
+          ? `Could not find the selected start row ${startMarker.domId}. Click the desired editor row and run Fill again.`
+          : 'Could not find the selected start row. Click the desired editor row and run Fill again.';
+        console.error(CONTENT_DEBUG_PREFIX, 'fill:start-marker-missing', {
+          markerDomId: startMarker?.domId ?? null,
+          markerAgeMs: startMarker?.setAt ? Date.now() - startMarker.setAt : null,
+          scannedCount: segments.length,
+          scrollTop: scrollContext.getTop(),
+          scrollMode: scrollContext.mode ?? 'native'
+        });
+        window.__phraseBulkFillStartMarker = undefined;
+        throw new Error(message);
       }
 
       return segments;

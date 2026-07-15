@@ -80,6 +80,13 @@ export function filterSegmentsFromPendingStartMarker<T extends RuntimeSegment>(
   };
 }
 
+export function hasUnresolvedStartMarker(
+  marker: StartMarker | null | undefined,
+  shouldKeepStartMarker: boolean
+): boolean {
+  return Boolean(marker && shouldKeepStartMarker);
+}
+
 function elementsOverlap(left: Element, right: Element): boolean {
   return (
     left === right ||

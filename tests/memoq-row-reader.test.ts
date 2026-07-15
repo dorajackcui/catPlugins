@@ -121,7 +121,7 @@ function modernFixture(row: FakeElement): FakeElement {
   return fakeElement({ children: [readOnlyPane, table] });
 }
 
-test('legacy row collection reads source and target, row number, and preserves dedupe replacement', () => {
+test('legacy row collection dedupes overlapping recycled rows and preserves the committed copy', () => {
   const emptyDuplicate = legacyRow({
     rowNumber: '8',
     source: 'Repeat source',
@@ -152,6 +152,31 @@ test('legacy row collection reads source and target, row number, and preserves d
   assert.equal(segments[0].isEmptyTarget, false);
   assert.equal(segments[0].platform, 'memoq');
   assert.equal(segments[0].scanElement, filledDuplicate);
+});
+
+test('legacy row collection keeps adjacent rows with the same source', () => {
+  const firstRow = legacyRow({
+    rowNumber: '8',
+    source: 'Repeat source',
+    target: '',
+    top: 48
+  });
+  const secondRow = legacyRow({
+    rowNumber: '9',
+    source: 'Repeat source',
+    target: '',
+    top: 70
+  });
+  installDocument(fakeElement({ children: [firstRow, secondRow] }));
+
+  const reader = new MemoqRowReader({
+    profile: legacyWebtransMemoqProfile,
+    helpers: new ContentScriptDomHelpers()
+  });
+
+  const segments = reader.collectVisibleSegments(scrollContext());
+
+  assert.deepEqual(segments.map((segment) => segment.rowNumber), ['8', '9']);
 });
 
 test('current target and source values are re-read by row number', () => {
@@ -214,6 +239,30 @@ test('current target lookup skips zero-size recycled duplicate rows', () => {
   });
 
   assert.equal(reader.findCurrentTargetByRowNumber('21')?.textContent, 'Current target');
+});
+
+test('current target lookup refuses multiple visible rows with the same row number', () => {
+  const firstRow = legacyRow({
+    rowNumber: '21',
+    source: 'First source',
+    target: '',
+    top: 72
+  });
+  const secondRow = legacyRow({
+    rowNumber: '21',
+    source: 'Second source',
+    target: '',
+    top: 96
+  });
+  installDocument(fakeElement({ children: [firstRow, secondRow] }));
+
+  const reader = new MemoqRowReader({
+    profile: legacyWebtransMemoqProfile,
+    helpers: new ContentScriptDomHelpers()
+  });
+
+  assert.equal(reader.findCurrentTargetByRowNumber('21'), null);
+  assert.equal(reader.findCurrentCellsByRowNumber('21'), null);
 });
 
 test('modern row collection uses profile rows and ProseMirror gridcells', () => {

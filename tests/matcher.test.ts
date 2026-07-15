@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildPreview } from '../matcher.ts';
+import { applyMemoqPreviewCorrection, buildPreview } from '../matcher.ts';
 import type { PageSegment, TranslationEntry } from '../types.ts';
 
 const entries: TranslationEntry[] = [
@@ -86,6 +86,62 @@ test('buildPreview prefers memoQ row numbers over occurrence indexes', () => {
 
   assert.equal(preview.readyToFill, 1);
   assert.equal(preview.items[0]?.translation, 'Bonjour ligne 171');
+});
+
+test('buildPreview rejects a memoQ row-number match when the Excel source differs', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 2,
+        rowNumber: '171',
+        sourceRaw: 'Old Excel source',
+        sourceNormalized: 'Old Excel source',
+        targetRaw: 'Wrong translation',
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: '171',
+        rowNumber: '171',
+        sourceRaw: 'Current memoQ source',
+        sourceNormalized: 'Current memoQ source',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: [],
+        platform: 'memoq'
+      }
+    ]
+  );
+
+  assert.equal(preview.readyToFill, 0);
+  assert.equal(preview.items[0]?.status, 'unmatched');
+  assert.equal(
+    /row 171 source does not match/i.test(preview.items[0]?.reason ?? ''),
+    true
+  );
+});
+
+test('memoQ preview correction preserves legitimate unmatched rows', () => {
+  const preview = buildPreview([], [
+    {
+      domId: '171',
+      rowNumber: '171',
+      sourceRaw: 'Untranslated source',
+      sourceNormalized: 'Untranslated source',
+      occurrenceIndex: 1,
+      targetRaw: '',
+      isEmptyTarget: true,
+      placeholderTokens: [],
+      platform: 'memoq'
+    }
+  ]);
+
+  const corrected = applyMemoqPreviewCorrection(preview);
+
+  assert.equal(corrected.totalSegments, 1);
+  assert.equal(corrected.items[0]?.status, 'unmatched');
 });
 
 test('buildPreview marks placeholder mismatches', () => {

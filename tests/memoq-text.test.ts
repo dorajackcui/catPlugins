@@ -105,6 +105,11 @@ test('isMemoqCommittedTargetText treats rendered no-break spaces and plain space
   );
 });
 
+test('isMemoqCommittedTargetText does not treat literal degree signs or middle dots as spaces', () => {
+  assert.equal(isMemoqCommittedTargetText('20 C', `20${DEGREE} C`), false);
+  assert.equal(isMemoqCommittedTargetText('alpha beta', `alpha${MIDDLE_DOT}beta`), false);
+});
+
 test('serializeMemoqContent converts inline tag elements while ignoring input elements', () => {
   const root = fakeElement({
     children: [

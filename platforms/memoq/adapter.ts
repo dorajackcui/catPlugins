@@ -39,6 +39,15 @@ export {
 } from './text.ts';
 
 const MEMOQ_ACCESSIBILITY_TEXTBOX_SELECTOR = 'textarea, input[type="text"]';
+const MEMOQ_DEBUG_PREFIX = '[Phrase Bulk Fill]';
+
+export interface MemoqFillExecutionContext {
+  runId: string;
+  sequence: number;
+  scanPass: number;
+  scrollTop: number;
+  scrollMode: 'native' | 'synthetic';
+}
 
 export class MemoqAdapter {
   constructor(private readonly helpers: ContentScriptDomHelpers) {}
@@ -109,13 +118,18 @@ export class MemoqAdapter {
       this.getEditableValue(segment.targetElement as HTMLElement);
   }
 
-  async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
-    return this.fillSegmentWithTransaction(segment, value);
+  async fillSegment(
+    segment: RuntimeSegment,
+    value: string,
+    context?: MemoqFillExecutionContext
+  ): Promise<FillOutcome> {
+    return this.fillSegmentWithTransaction(segment, value, context);
   }
 
   private async fillSegmentWithTransaction(
     segment: RuntimeSegment,
-    value: string
+    value: string,
+    context?: MemoqFillExecutionContext
   ): Promise<FillOutcome> {
     const profile = this.getProfile();
     if (!profile) {
@@ -131,18 +145,39 @@ export class MemoqAdapter {
       profile,
       readTargetText: (target) => reader.getEditableValue(target),
       readSourceText: (currentSegment) => reader.getCurrentSourceValue(currentSegment),
+      resolveCurrentTarget: (rowNumber) => reader.findCurrentTargetByRowNumber(rowNumber),
       collectNearbyRows: (rowNumber) => reader.collectVisibleRowDiagnostics(rowNumber),
       writeTrustedText: (target, text) =>
         writeTrustedTextToElement(target, text, {
           requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
           settleMs: 20,
-          resolveElement: () => {
-            const currentTarget = reader.findCurrentTargetByRowNumber(segment.rowNumber);
-            return currentTarget ? profile.getWriteTarget(currentTarget) : null;
-          }
-        })
+          ...(segment.rowNumber
+            ? {
+                requireResolvedElement: true,
+                resolveElement: () => {
+                  const currentTarget = reader.findCurrentTargetByRowNumber(segment.rowNumber);
+                  return currentTarget ? profile.getWriteTarget(currentTarget) : null;
+                }
+              }
+            : {})
+        }),
+      runId: context?.runId,
+      sequence: context?.sequence,
+      scanPass: context?.scanPass,
+      scrollTop: context?.scrollTop,
+      scrollMode: context?.scrollMode
     });
     const outcome = await transaction.fillSegment(segment, value);
+
+    if (outcome.filled) {
+      console.info(MEMOQ_DEBUG_PREFIX, 'memoQ fill:success', outcome.diagnostic);
+    } else {
+      console.error(MEMOQ_DEBUG_PREFIX, 'memoQ fill:failure', outcome.diagnostic ?? {
+        rowNumber: segment.rowNumber,
+        domId: segment.domId,
+        reason: outcome.reason
+      });
+    }
 
     if (outcome.filled) {
       if (containsNoBreakSpace(value)) {

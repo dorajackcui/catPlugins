@@ -113,6 +113,53 @@ test('writeTrustedTextToElement re-resolves the target after settling', async ()
   ]);
 });
 
+test('writeTrustedTextToElement refuses a missing required re-resolved target', async () => {
+  const previousWindow = globalThis.window;
+  const messages: unknown[] = [];
+  const restoreChrome = installChromeRecorder(messages);
+  const target = {
+    scrollIntoView: () => undefined,
+    getBoundingClientRect: () => ({
+      left: 10,
+      top: 20,
+      width: 80,
+      height: 40
+    })
+  } as unknown as HTMLElement;
+  globalThis.window = {
+    setTimeout: (callback: () => void) => {
+      callback();
+      return 0;
+    }
+  } as unknown as Window & typeof globalThis;
+
+  try {
+    let error: unknown;
+
+    try {
+      await writeTrustedTextToElement(target, 'Bonjour', {
+        requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
+        settleMs: 20,
+        requireResolvedElement: true,
+        resolveElement: () => null
+      });
+    } catch (nextError) {
+      error = nextError;
+    }
+
+    assert.equal(error instanceof Error, true);
+    assert.equal(
+      error instanceof Error ? /could not be re-resolved/i.test(error.message) : false,
+      true
+    );
+  } finally {
+    restoreChrome();
+    globalThis.window = previousWindow;
+  }
+
+  assert.deepEqual(messages, []);
+});
+
 test('writeTrustedTextToElement rejects zero-size targets', async () => {
   const target = {
     scrollIntoView: () => undefined,

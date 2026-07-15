@@ -10,7 +10,7 @@ import type { MemoqDomProfile } from './dom-profile.ts';
 import { serializeMemoqContent } from './text.ts';
 
 const MEMOQ_ACCESSIBILITY_TEXTBOX_SELECTOR = 'textarea, input[type="text"]';
-const VISIBLE_SEGMENT_TOP_BUCKET_PX = 24;
+const VISIBLE_ROW_OVERLAP_RATIO = 0.5;
 
 export interface MemoqVisibleRowDiagnostic {
   rowNumber?: string;
@@ -68,11 +68,7 @@ export class MemoqRowReader {
   }
 
   findCurrentTargetByRowNumber(rowNumber?: string): HTMLElement | null {
-    if (!rowNumber) {
-      return null;
-    }
-
-    const target = this.profile.findCurrentTargetByRowNumber(document, rowNumber);
+    const target = this.findCurrentCellsByRowNumber(rowNumber)?.target ?? null;
     return target && this.hasClickableRect(target) ? target : null;
   }
 
@@ -83,20 +79,29 @@ export class MemoqRowReader {
       return null;
     }
 
+    const matches: Array<{ source: HTMLElement; target: HTMLElement }> = [];
+
     for (const row of this.profile.findVisibleRows(document)) {
       if (this.profile.readRowNumber(row) !== rowNumber) {
         continue;
       }
 
-      return this.profile.findCells(row);
+      const cells = this.profile.findCells(row);
+      if (cells && this.hasClickableRect(cells.source) && this.hasClickableRect(cells.target)) {
+        matches.push(cells);
+      }
     }
 
-    return null;
+    return matches.length === 1 ? matches[0] : null;
   }
 
-  getCurrentSourceValue(segment: RuntimeSegment): string {
+  getCurrentSourceValue(segment: RuntimeSegment): string | null {
+    if (!segment.rowNumber) {
+      return segment.sourceRaw;
+    }
+
     const cells = this.findCurrentCellsByRowNumber(segment.rowNumber);
-    return cells ? this.getEditableValue(cells.source) : segment.sourceRaw;
+    return cells ? this.getEditableValue(cells.source) : null;
   }
 
   collectVisibleRowDiagnostics(
@@ -174,31 +179,50 @@ export class MemoqRowReader {
 
   private dedupeVisibleSegments(
     segments: RuntimeSegment[],
-    scrollContext: ScrollContext
+    _scrollContext: ScrollContext
   ): RuntimeSegment[] {
-    const deduped = new Map<string, RuntimeSegment>();
+    const deduped: RuntimeSegment[] = [];
 
     for (const segment of segments) {
-      const topBucket = Math.round(
-        this.helpers.getAbsoluteTop(segment.targetElement as Element, scrollContext) /
-          VISIBLE_SEGMENT_TOP_BUCKET_PX
+      const duplicateIndex = deduped.findIndex((current) =>
+        this.areLikelySameVisibleRow(current, segment)
       );
-      const visibleKey = `${segment.sourceNormalized}::${topBucket}`;
-      const current = deduped.get(visibleKey);
-
-      if (!current) {
-        deduped.set(visibleKey, segment);
+      if (duplicateIndex === -1) {
+        deduped.push(segment);
         continue;
       }
 
+      const current = deduped[duplicateIndex];
       const currentTarget = normalizeText(current.targetRaw);
       const nextTarget = normalizeText(segment.targetRaw);
       if (currentTarget.length === 0 && nextTarget.length > 0) {
-        deduped.set(visibleKey, segment);
+        deduped[duplicateIndex] = segment;
       }
     }
 
-    return [...deduped.values()];
+    return deduped;
+  }
+
+  private areLikelySameVisibleRow(
+    current: RuntimeSegment,
+    next: RuntimeSegment
+  ): boolean {
+    if (current.rowNumber && next.rowNumber && current.rowNumber === next.rowNumber) {
+      return true;
+    }
+
+    if (current.sourceNormalized !== next.sourceNormalized) {
+      return false;
+    }
+
+    const currentRect = (current.targetElement as Element).getBoundingClientRect();
+    const nextRect = (next.targetElement as Element).getBoundingClientRect();
+    const currentBottom = currentRect.top + currentRect.height;
+    const nextBottom = nextRect.top + nextRect.height;
+    const overlap = Math.min(currentBottom, nextBottom) - Math.max(currentRect.top, nextRect.top);
+    const smallerHeight = Math.min(currentRect.height, nextRect.height);
+
+    return smallerHeight > 0 && overlap / smallerHeight >= VISIBLE_ROW_OVERLAP_RATIO;
   }
 
   private hasClickableRect(element: HTMLElement): boolean {

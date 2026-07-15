@@ -52,11 +52,24 @@ export function classifySegment(
   fillOptions?: FillOptions | null
 ): PreviewItem {
   const normalizedFillOptions = normalizeFillOptions(fillOptions);
-  const entry =
-    segment.rowNumber
-      ? entryLookup.get(buildRowNumberMatchKey(segment.rowNumber)) ??
-        findEntryBySource(entryLookup, segment)
-      : findEntryBySource(entryLookup, segment);
+  const rowNumberEntry = segment.rowNumber
+    ? entryLookup.get(buildRowNumberMatchKey(segment.rowNumber))
+    : undefined;
+
+  if (
+    segment.platform === 'memoq' &&
+    segment.rowNumber &&
+    rowNumberEntry &&
+    normalizeText(rowNumberEntry.sourceNormalized) !== normalizeText(segment.sourceNormalized)
+  ) {
+    return {
+      ...segment,
+      status: 'unmatched',
+      reason: `Excel row ${segment.rowNumber} source does not match the current memoQ source.`
+    };
+  }
+
+  const entry = rowNumberEntry ?? findEntryBySource(entryLookup, segment);
 
   if (!entry) {
     return {
@@ -208,15 +221,8 @@ export function applyFilledToPreview(
 }
 
 export function applyMemoqPreviewCorrection(preview: PreviewResult): PreviewResult {
-  const unmatchedIndex = [...preview.items]
-    .map((item, index) => ({ item, index }))
-    .reverse()
-    .find(({ item }) => item.status === 'unmatched')?.index;
-
-  if (unmatchedIndex === undefined) {
-    return preview;
-  }
-
-  const items = preview.items.filter((_, index) => index !== unmatchedIndex);
-  return summarizePreview(items);
+  // Kept as an identity function for existing background call sites. Older
+  // memoQ builds exposed a phantom unmatched row, but deleting an arbitrary
+  // unmatched item also hid legitimate source rows.
+  return preview;
 }

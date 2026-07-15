@@ -13,15 +13,30 @@ export function memoQAccessibilityTextToRenderedText(value: string): string {
   return normalizeText(stripMemoqInlineTagMarkup(value));
 }
 
-// With "show whitespace marks" enabled, memoQ renders spaces as U+00B7
-// middle dots and no-break spaces as U+00B0 degree signs in the cell DOM.
-const MEMOQ_RENDERED_WHITESPACE_MARKS = new RegExp(
-  `[${String.fromCharCode(0x00b7, 0x00b0)}]`,
-  'g'
-);
+const MEMOQ_RENDERED_SPACE_PATTERN = `[\\s${String.fromCharCode(0x00b7, 0x00b0)}]+`;
 
-function normalizeMemoqRenderedWhitespace(value: string): string {
-  return normalizeText(value.replace(MEMOQ_RENDERED_WHITESPACE_MARKS, ' '));
+function escapeRegExpCharacter(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function matchesMemoqRenderedWhitespace(cellText: string, expected: string): boolean {
+  const trimmedExpected = expected.trim();
+  let pattern = '';
+
+  for (let index = 0; index < trimmedExpected.length; index += 1) {
+    const character = trimmedExpected[index];
+    if (/\s/.test(character)) {
+      while (index + 1 < trimmedExpected.length && /\s/.test(trimmedExpected[index + 1])) {
+        index += 1;
+      }
+      pattern += MEMOQ_RENDERED_SPACE_PATTERN;
+      continue;
+    }
+
+    pattern += escapeRegExpCharacter(character);
+  }
+
+  return new RegExp(`^${pattern}$`, 'u').test(cellText.trim());
 }
 
 export function isMemoqCommittedTargetText(cellText: string, value: string): boolean {
@@ -39,13 +54,11 @@ export function isMemoqCommittedTargetText(cellText: string, value: string): boo
     return true;
   }
 
-  // Fall back to a comparison that treats memoQ's whitespace display marks
-  // as the whitespace they stand for. Mapped on both sides so genuine
-  // middle dots or degree signs in the translation still line up.
-  const committedMarked = normalizeMemoqRenderedWhitespace(cellText);
+  // Only expected whitespace can match memoQ's display marks. Literal middle
+  // dots and degree signs in the expected translation must remain literal.
   return (
-    committedMarked === normalizeMemoqRenderedWhitespace(value) ||
-    committedMarked === normalizeMemoqRenderedWhitespace(stripMemoqInlineTagMarkup(value))
+    matchesMemoqRenderedWhitespace(cellText, value) ||
+    matchesMemoqRenderedWhitespace(cellText, stripMemoqInlineTagMarkup(value))
   );
 }
 
