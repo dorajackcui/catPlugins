@@ -1,11 +1,13 @@
 import { normalizeText } from '../../shared/utils.ts';
 import {
-  normalizeGientTransEditorText,
   readGientTransEditorText,
   readGientTransEditorTextPreservingNbsp,
   stripEditorMarkers
 } from './editor-text.ts';
 import { normalizeGientTransInlineMarkup } from './markup.ts';
+import { describeGientTransText } from './diagnostics.ts';
+
+export { describeGientTransText } from './diagnostics.ts';
 
 export interface NativeWriteDiagnostic {
   method: 'beforeinput-paste' | 'insertText' | 'insertHTML' | 'skipped';
@@ -269,19 +271,4 @@ export class GientTransEditorWriter {
       normalizeText(normalizedExpected)
     );
   }
-}
-
-export function describeGientTransText(value: string): {
-  rawLength: number;
-  normalizedLength: number;
-  normalized: string;
-  preview: string;
-} {
-  const normalized = normalizeText(normalizeGientTransEditorText(value));
-  return {
-    rawLength: value.length,
-    normalizedLength: normalized.length,
-    normalized,
-    preview: normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized
-  };
 }

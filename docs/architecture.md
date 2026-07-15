@@ -101,6 +101,17 @@ but incomplete modern surface must not hide a usable legacy editor.
 Phrase DOM changes should be contained in the reader or writer rather than adding selectors to the
 adapter orchestration layer.
 
+## GientTrans adapter
+
+- `platforms/gientrans/row-reader.ts` owns table selectors, scroll-container selection, segment serialization, target re-resolution, source-tag lookup, and scan diagnostics.
+- `platforms/gientrans/editor-text.ts` owns editor text/tag serialization and translation-to-editor HTML conversion.
+- `platforms/gientrans/diagnostics.ts` defines stable text diagnostics shared by scanning and writing.
+- `platforms/gientrans/editor-writer.ts` owns native contenteditable write mechanics and confirmation polling.
+- `platforms/gientrans/adapter.ts` preserves the ordered paste/text/HTML/fallback write transaction behind the common runtime port.
+
+GientTrans must remain the only platform that may overwrite non-empty targets. Reader refactors must
+retain `segid` target re-resolution so virtualized table rows are not written through stale elements.
+
 ## Dependency rules
 
 1. Root entry points assemble dependencies and register listeners; they should not accumulate platform algorithms.
