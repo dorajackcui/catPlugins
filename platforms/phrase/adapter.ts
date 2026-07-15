@@ -1,16 +1,7 @@
-import { runtimeSendMessage } from '../../chrome-api.ts';
-import {
-  normalizePhraseTagClipText,
-  splitPhraseMarkup
-} from './markup.ts';
 import { extractPlaceholderTokens } from '../../qa.ts';
-import type {
-  ApiResponse,
-  BackgroundRequest,
-  DebuggerInputOperation,
-  FillOutcome
-} from '../../types.ts';
-import { delay, normalizeText, waitForNormalizedTextMatch } from '../../utils.ts';
+import type { FillOutcome } from '../../types.ts';
+import { normalizeText, waitForNormalizedTextMatch } from '../../utils.ts';
+import { PhraseEditorWriter } from './editor-writer.ts';
 import type {
   ContentScriptDomHelpers,
   EditableElement,
@@ -28,11 +19,6 @@ const SOURCE_ROW_SELECTORS = [
 const TARGET_ROW_SELECTORS = [
   '.twe_target .te_text_container',
   '.twe_target .te_txt'
-];
-const TARGET_ACTIVATION_SELECTORS = [
-  '.twe_target .te_text_container',
-  '.twe_target .te_textarea_container',
-  '.twe_target'
 ];
 const TAG_MARKUP_SCOPE_SELECTORS = [
   ...SOURCE_ROW_SELECTORS,
@@ -56,12 +42,6 @@ const TAG_CHIP_SELECTORS = [
   '[title*="Tag"]',
   '[title*="标记"]'
 ];
-const INSERT_TAG_BUTTON_SELECTORS = [
-  'button[aria-label="插入标记"]',
-  'button[aria-label="Insert tag"]',
-  'button[title*="插入标记"]',
-  'button[title*="Insert tag"]'
-];
 const SOURCE_SELECTORS = [
   '[data-testid*="source"]',
   '[data-test*="source"]',
@@ -84,7 +64,11 @@ const EDITABLE_SELECTORS = [
 ];
 
 export class PhraseAdapter {
-  constructor(private readonly helpers: ContentScriptDomHelpers) {}
+  private readonly editorWriter: PhraseEditorWriter;
+
+  constructor(private readonly helpers: ContentScriptDomHelpers) {
+    this.editorWriter = new PhraseEditorWriter(helpers);
+  }
 
   findScrollContext(): ScrollContext | null {
     const editables = Array.from(
@@ -132,9 +116,9 @@ export class PhraseAdapter {
     const target = segment.targetElement;
 
     if (target instanceof HTMLElement && target.matches('.twe_target')) {
-      await this.activateTarget(target);
+      await this.editorWriter.activate(target);
       try {
-        await this.dispatchPhraseWrite(
+        await this.editorWriter.write(
           target,
           value,
           segment.phraseUsesTagMarkup === true
@@ -149,7 +133,7 @@ export class PhraseAdapter {
         };
       }
 
-      const confirmed = await this.waitForPhraseTextMatch(
+      const confirmed = await this.editorWriter.waitForTextMatch(
         () => this.getEditableValue(target),
         value
       );
@@ -262,159 +246,6 @@ export class PhraseAdapter {
       targetElement,
       platform: 'generic'
     };
-  }
-
-  private async activateTarget(targetElement: HTMLElement): Promise<void> {
-    const clickTarget =
-      targetElement.querySelector<HTMLElement>(TARGET_ACTIVATION_SELECTORS.join(',')) ||
-      targetElement;
-
-    this.helpers.dispatchMouseSequence(clickTarget, ['mousedown', 'mouseup', 'click', 'dblclick']);
-    clickTarget.focus();
-    await delay(80);
-  }
-
-  private async dispatchTrustedTextWrite(targetElement: HTMLElement, text: string): Promise<void> {
-    targetElement.scrollIntoView?.({ block: 'center', inline: 'nearest' });
-    await delay(20);
-
-    const rect = targetElement.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-
-    if (!Number.isFinite(x) || !Number.isFinite(y) || rect.width <= 0 || rect.height <= 0) {
-      throw new Error('Phrase target cell is not visible enough to write.');
-    }
-
-    const response = await runtimeSendMessage<BackgroundRequest, ApiResponse<null>>({
-      type: 'DEBUGGER_WRITE_TEXT',
-      payload: {
-        x,
-        y,
-        text
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(response.error);
-    }
-  }
-
-  private async dispatchPhraseWrite(
-    targetElement: HTMLElement,
-    text: string,
-    useTagInsertion: boolean
-  ): Promise<void> {
-    const operations: DebuggerInputOperation[] =
-      useTagInsertion
-        ? this.buildPhraseInputOperations(text)
-        : [
-            {
-              type: 'text',
-              text
-            }
-          ];
-
-    if (!operations.some((operation) => operation.type === 'click')) {
-      await this.dispatchTrustedTextWrite(targetElement, text);
-      return;
-    }
-
-    const rect = this.getVisibleRect(
-      targetElement,
-      'Phrase target cell is not visible enough to write.'
-    );
-
-    const response = await runtimeSendMessage<BackgroundRequest, ApiResponse<null>>({
-      type: 'DEBUGGER_INPUT_SEQUENCE',
-      payload: {
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
-        operations
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(response.error);
-    }
-  }
-
-  private buildPhraseInputOperations(text: string): DebuggerInputOperation[] {
-    const parts = splitPhraseMarkup(text);
-    if (!parts.some((part) => part.type === 'tag')) {
-      return [
-        {
-          type: 'text',
-          text
-        }
-      ];
-    }
-
-    const insertTagButton = this.findInsertTagButton();
-    const rect = this.getVisibleRect(
-      insertTagButton,
-      'Phrase insert tag button is not visible enough to click.'
-    );
-    const insertTagClick: DebuggerInputOperation = {
-      type: 'click',
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2
-    };
-
-    return parts.map((part) =>
-      part.type === 'text'
-        ? {
-            type: 'text',
-            text: part.value
-          }
-        : insertTagClick
-    );
-  }
-
-  private findInsertTagButton(): HTMLElement {
-    for (const selector of INSERT_TAG_BUTTON_SELECTORS) {
-      const button = document.querySelector<HTMLElement>(selector);
-      if (button && this.helpers.isElementVisible(button)) {
-        return button;
-      }
-    }
-
-    throw new Error('Phrase insert tag button was not found.');
-  }
-
-  private getVisibleRect(element: HTMLElement, errorMessage: string): DOMRect {
-    element.scrollIntoView?.({ block: 'center', inline: 'nearest' });
-    const rect = element.getBoundingClientRect();
-
-    if (
-      !Number.isFinite(rect.left) ||
-      !Number.isFinite(rect.top) ||
-      rect.width <= 0 ||
-      rect.height <= 0
-    ) {
-      throw new Error(errorMessage);
-    }
-
-    return rect;
-  }
-
-  private async waitForPhraseTextMatch(
-    readValue: () => string,
-    expected: string
-  ): Promise<boolean> {
-    const normalizedExpected = normalizePhraseTagClipText(expected);
-
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      if (normalizePhraseTagClipText(readValue()) === normalizedExpected) {
-        return true;
-      }
-
-      if (attempt < 7) {
-        await delay(120);
-      }
-    }
-
-    return false;
   }
 
   private hasPhraseTagMarkup(row: HTMLElement): boolean {
