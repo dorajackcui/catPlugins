@@ -16,6 +16,19 @@ Supporting code is grouped by responsibility:
 - `shared/` contains cross-layer Chrome wrappers, message/state contracts, and general utilities.
 - `tests/` mirrors these boundaries with direct unit and adapter regression coverage.
 
+## memoQ DOM profiles
+
+memoQ supports two editor generations behind one stable profile API:
+
+- `platforms/memoq/dom-profile.ts` registers profiles, selects the active profile, and resolves start markers.
+- `platforms/memoq/modern-dom-profile.ts` owns modern ProseMirror selectors and row identity rules.
+- `platforms/memoq/legacy-dom-profile.ts` owns legacy WebTrans cell and row rules.
+- `platforms/memoq/dom-profile-types.ts` is the contract for adding another editor generation.
+- `platforms/memoq/dom-profile-helpers.ts` contains DOM primitives shared by profile implementations.
+
+Profile selection prefers a fully visible modern editor, then a fully visible legacy editor. A matching
+but incomplete modern surface must not hide a usable legacy editor.
+
 ## Dependency rules
 
 1. Root entry points assemble dependencies and register listeners; they should not accumulate platform algorithms.

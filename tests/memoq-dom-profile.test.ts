@@ -118,6 +118,28 @@ test('modern memoQ rows are detected and preferred when present', () => {
   assert.equal(modernEditorMemoqProfile.createSyntheticScrollTarget(documentRoot), table);
 });
 
+test('modern memoQ wins when modern and legacy rows are both visible', () => {
+  const { table } = modernMemoqFixture();
+  const legacySource = fakeElement({
+    className: 'editor-cell',
+    rect: { left: 120 },
+    textContent: 'Legacy source'
+  });
+  const legacyTarget = fakeElement({
+    className: 'editor-cell',
+    rect: { left: 260 },
+    textContent: 'Legacy target'
+  });
+  const legacyRow = fakeElement({
+    children: [fakeElement({ textContent: '48.' }), legacySource, legacyTarget]
+  });
+  const documentRoot = fakeDocument(fakeElement({ children: [legacyRow, table] }));
+
+  assert.deepEqual(legacyWebtransMemoqProfile.findVisibleRows(documentRoot), [legacyRow]);
+  assert.equal(modernEditorMemoqProfile.findVisibleRows(documentRoot).length, 1);
+  assert.equal(selectMemoqDomProfile(documentRoot), modernEditorMemoqProfile);
+});
+
 test('modern memoQ profile matches a transient contenteditable gridcell before a full row is available', () => {
   const transientCell = fakeElement({
     className: 'ProseMirror',
