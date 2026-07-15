@@ -53,6 +53,8 @@ domain modules.
 - `background/run-coordinator.ts` owns Preview, Export, Fill, and Stop lifecycle rules and user-facing status updates.
 - `background/run-lifecycle.ts` owns persisted start, finish, failure, and stopping state transitions shared by every run kind.
 - `background/editor-session.ts` is the single owner of active-tab validation, content-script injection, Phrase iframe selection, content response unwrapping, and stop-message routing.
+- `background/debugger-session.ts` owns serialized Chrome Debugger attachment, fresh-attach settling, keep-alive, external detach, and idle release.
+- `background/debugger-input.ts` validates and dispatches trusted click/text operation sequences through that session.
 
 Run workflows should use `BackgroundEditorSession` rather than selecting frames or constructing
 `sendTabMessage` options themselves. Stored run targets retain their original tab and frame so Stop
