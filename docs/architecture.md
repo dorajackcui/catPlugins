@@ -25,6 +25,16 @@ Supporting code is grouped by responsibility:
 Modules that only need `RuntimeSegment` or `ScrollContext` should import `content/types.ts`. Platform
 scroll resolvers should depend on `ContentScrollHelpers` unless they also need editor DOM operations.
 
+## Fill execution
+
+- `content/fill-runner.ts` owns run-level preparation, scanner startup, and completion logging.
+- `content/fill-segment-processor.ts` owns per-segment classification, write safety, progress, throttling, stop conditions, and rescan decisions.
+- `content/fill-runner-contracts.ts` defines the scanner, runtime, and reporting ports shared by those layers.
+
+The runner must prepare memoQ trusted input before the scanner captures its first DOM snapshot. The
+segment processor remains platform-neutral except for explicit behavior policies exposed by platform
+and domain modules.
+
 ## Shared contracts
 
 - `shared/translation-types.ts` defines workbook, preview, and fill-run data.
