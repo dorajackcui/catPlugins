@@ -1,6 +1,15 @@
 import { runtimeSendMessage } from '../../chrome-api.ts';
+import {
+  normalizePhraseTagClipText,
+  splitPhraseMarkup
+} from './markup.ts';
 import { extractPlaceholderTokens } from '../../qa.ts';
-import type { ApiResponse, BackgroundRequest, FillOutcome } from '../../types.ts';
+import type {
+  ApiResponse,
+  BackgroundRequest,
+  DebuggerInputOperation,
+  FillOutcome
+} from '../../types.ts';
 import { delay, normalizeText, waitForNormalizedTextMatch } from '../../utils.ts';
 import type {
   ContentScriptDomHelpers,
@@ -24,6 +33,34 @@ const TARGET_ACTIVATION_SELECTORS = [
   '.twe_target .te_text_container',
   '.twe_target .te_textarea_container',
   '.twe_target'
+];
+const TAG_MARKUP_SCOPE_SELECTORS = [
+  ...SOURCE_ROW_SELECTORS,
+  ...TARGET_ROW_SELECTORS
+];
+const TAG_CHIP_SELECTORS = [
+  '[contenteditable="false"]',
+  'input[type="tag"]',
+  '[class*="tag"]',
+  '[class*="Tag"]',
+  '[data-testid*="tag"]',
+  '[data-testid*="Tag"]',
+  '[data-test*="tag"]',
+  '[data-test*="Tag"]',
+  '[data-qa*="tag"]',
+  '[data-qa*="Tag"]',
+  '[aria-label*="tag"]',
+  '[aria-label*="Tag"]',
+  '[aria-label*="标记"]',
+  '[title*="tag"]',
+  '[title*="Tag"]',
+  '[title*="标记"]'
+];
+const INSERT_TAG_BUTTON_SELECTORS = [
+  'button[aria-label="插入标记"]',
+  'button[aria-label="Insert tag"]',
+  'button[title*="插入标记"]',
+  'button[title*="Insert tag"]'
 ];
 const SOURCE_SELECTORS = [
   '[data-testid*="source"]',
@@ -97,7 +134,11 @@ export class PhraseAdapter {
     if (target instanceof HTMLElement && target.matches('.twe_target')) {
       await this.activateTarget(target);
       try {
-        await this.dispatchTrustedTextWrite(target, value);
+        await this.dispatchPhraseWrite(
+          target,
+          value,
+          segment.phraseUsesTagMarkup === true
+        );
       } catch (error) {
         return {
           domId: segment.domId,
@@ -108,7 +149,7 @@ export class PhraseAdapter {
         };
       }
 
-      const confirmed = await waitForNormalizedTextMatch(
+      const confirmed = await this.waitForPhraseTextMatch(
         () => this.getEditableValue(target),
         value
       );
@@ -189,7 +230,8 @@ export class PhraseAdapter {
       isEmptyTarget: normalizeText(targetRaw) === '',
       placeholderTokens: extractPlaceholderTokens(sourceRaw),
       targetElement,
-      platform: 'phrase'
+      platform: 'phrase',
+      phraseUsesTagMarkup: this.hasPhraseTagMarkup(row)
     };
   }
 
@@ -256,5 +298,137 @@ export class PhraseAdapter {
     if (!response.ok) {
       throw new Error(response.error);
     }
+  }
+
+  private async dispatchPhraseWrite(
+    targetElement: HTMLElement,
+    text: string,
+    useTagInsertion: boolean
+  ): Promise<void> {
+    const operations: DebuggerInputOperation[] =
+      useTagInsertion
+        ? this.buildPhraseInputOperations(text)
+        : [
+            {
+              type: 'text',
+              text
+            }
+          ];
+
+    if (!operations.some((operation) => operation.type === 'click')) {
+      await this.dispatchTrustedTextWrite(targetElement, text);
+      return;
+    }
+
+    const rect = this.getVisibleRect(
+      targetElement,
+      'Phrase target cell is not visible enough to write.'
+    );
+
+    const response = await runtimeSendMessage<BackgroundRequest, ApiResponse<null>>({
+      type: 'DEBUGGER_INPUT_SEQUENCE',
+      payload: {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+        operations
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+  }
+
+  private buildPhraseInputOperations(text: string): DebuggerInputOperation[] {
+    const parts = splitPhraseMarkup(text);
+    if (!parts.some((part) => part.type === 'tag')) {
+      return [
+        {
+          type: 'text',
+          text
+        }
+      ];
+    }
+
+    const insertTagButton = this.findInsertTagButton();
+    const rect = this.getVisibleRect(
+      insertTagButton,
+      'Phrase insert tag button is not visible enough to click.'
+    );
+    const insertTagClick: DebuggerInputOperation = {
+      type: 'click',
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2
+    };
+
+    return parts.map((part) =>
+      part.type === 'text'
+        ? {
+            type: 'text',
+            text: part.value
+          }
+        : insertTagClick
+    );
+  }
+
+  private findInsertTagButton(): HTMLElement {
+    for (const selector of INSERT_TAG_BUTTON_SELECTORS) {
+      const button = document.querySelector<HTMLElement>(selector);
+      if (button && this.helpers.isElementVisible(button)) {
+        return button;
+      }
+    }
+
+    throw new Error('Phrase insert tag button was not found.');
+  }
+
+  private getVisibleRect(element: HTMLElement, errorMessage: string): DOMRect {
+    element.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+    const rect = element.getBoundingClientRect();
+
+    if (
+      !Number.isFinite(rect.left) ||
+      !Number.isFinite(rect.top) ||
+      rect.width <= 0 ||
+      rect.height <= 0
+    ) {
+      throw new Error(errorMessage);
+    }
+
+    return rect;
+  }
+
+  private async waitForPhraseTextMatch(
+    readValue: () => string,
+    expected: string
+  ): Promise<boolean> {
+    const normalizedExpected = normalizePhraseTagClipText(expected);
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (normalizePhraseTagClipText(readValue()) === normalizedExpected) {
+        return true;
+      }
+
+      if (attempt < 7) {
+        await delay(120);
+      }
+    }
+
+    return false;
+  }
+
+  private hasPhraseTagMarkup(row: HTMLElement): boolean {
+    const scopedRoots = Array.from(
+      row.querySelectorAll<HTMLElement>(TAG_MARKUP_SCOPE_SELECTORS.join(','))
+    );
+    const roots = scopedRoots.length > 0 ? scopedRoots : [row];
+
+    return roots.some((root) => this.hasVisibleTagChip(root));
+  }
+
+  private hasVisibleTagChip(root: HTMLElement): boolean {
+    return Array.from(
+      root.querySelectorAll<HTMLElement>(TAG_CHIP_SELECTORS.join(','))
+    ).some((element) => this.helpers.isElementVisible(element));
   }
 }

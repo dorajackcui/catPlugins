@@ -11,6 +11,7 @@ import {
   normalizeGientTransInlineMarkup,
   stripGientTransInlineMarkup
 } from './platforms/gientrans/markup.ts';
+import { normalizePhraseTagClipText } from './platforms/phrase/markup.ts';
 import { normalizeText } from './utils.ts';
 
 export function buildMatchKey(sourceNormalized: string, occurrenceIndex: number): string {
@@ -32,6 +33,7 @@ export function createEntryLookup(
     }
 
     addSourceLookupEntry(lookup, entry, entry.sourceNormalized);
+    addSourceLookupEntry(lookup, entry, normalizePhraseTagClipText(entry.sourceRaw));
 
     const canonicalGientTransSource = normalizeText(
       normalizeGientTransInlineMarkup(entry.sourceRaw)
@@ -107,6 +109,13 @@ function findEntryBySource(
   }
 
   if (segment.platform !== 'gientrans') {
+    if (segment.platform === 'phrase' || segment.platform === 'generic') {
+      const canonicalPhraseSource = normalizePhraseTagClipText(segment.sourceRaw);
+      return entryLookup.get(
+        buildMatchKey(canonicalPhraseSource, segment.occurrenceIndex)
+      );
+    }
+
     return undefined;
   }
 

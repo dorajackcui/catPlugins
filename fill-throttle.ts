@@ -25,3 +25,15 @@ export function shouldPauseBulkFill(
 
   return filledCount > 0 && filledCount % BULK_FILL_PAUSE_EVERY === 0;
 }
+
+export function shouldPauseBulkFillForPlatform(
+  platform: string | undefined,
+  plannedFillCount: number | null | undefined,
+  filledCount: number
+): boolean {
+  if (platform === 'phrase') {
+    return false;
+  }
+
+  return shouldPauseBulkFill(plannedFillCount, filledCount);
+}

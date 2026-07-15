@@ -261,6 +261,26 @@ export interface DebuggerWriteTextRequest {
   };
 }
 
+export type DebuggerInputOperation =
+  | {
+      type: 'text';
+      text: string;
+    }
+  | {
+      type: 'click';
+      x: number;
+      y: number;
+    };
+
+export interface DebuggerInputSequenceRequest {
+  type: 'DEBUGGER_INPUT_SEQUENCE';
+  payload: {
+    x: number;
+    y: number;
+    operations: DebuggerInputOperation[];
+  };
+}
+
 export type BackgroundRequest =
   | ParseExcelRequest
   | RunPreviewRequest
@@ -272,7 +292,8 @@ export type BackgroundRequest =
   | ReportRunProgressRequest
   | MemoqDebuggerPrepareRequest
   | MemoqDebuggerWriteTextRequest
-  | DebuggerWriteTextRequest;
+  | DebuggerWriteTextRequest
+  | DebuggerInputSequenceRequest;
 
 export interface ContentScanRequest {
   type: 'CONTENT_SCAN';

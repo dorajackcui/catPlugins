@@ -39,12 +39,15 @@ test('memoQ fills rescan before using the rest of a visible-row snapshot', () =>
     true
   );
   assert.equal(
-    shouldRescanAfterSegmentFill({ platform: 'phrase' }, { filled: true }),
-    false
-  );
-  assert.equal(
     shouldRescanAfterSegmentFill({ platform: 'memoq' }, { filled: false }),
     false
+  );
+});
+
+test('Phrase fills rescan before using the rest of a visible-row snapshot', () => {
+  assert.equal(
+    shouldRescanAfterSegmentFill({ platform: 'phrase' }, { filled: true }),
+    true
   );
 });
 
