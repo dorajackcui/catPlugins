@@ -1,4 +1,4 @@
-import type { RuntimeSegment } from '../../content-script-dom.ts';
+import type { RuntimeSegment } from '../../content/dom.ts';
 import type { MemoqDomProfile } from './dom-profile.ts';
 import { isMemoqCommittedTargetText } from './text.ts';
 import type {

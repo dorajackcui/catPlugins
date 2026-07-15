@@ -1,4 +1,4 @@
-import type { RuntimeSegment } from './content-script-dom.ts';
+import type { RuntimeSegment } from './dom.ts';
 
 export interface StartMarker {
   targetElement?: Element | null;

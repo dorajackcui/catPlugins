@@ -4,7 +4,7 @@ import type {
   ContentScriptDomHelpers,
   RuntimeSegment,
   ScrollContext
-} from '../../content-script-dom.ts';
+} from '../../content/dom.ts';
 import { readMemoqAccessibilityTextBoxValue } from './accessibility-textbox.ts';
 import type { MemoqDomProfile } from './dom-profile.ts';
 import { serializeMemoqContent } from './text.ts';

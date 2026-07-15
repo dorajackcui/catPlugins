@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ContentScriptDomHelpers } from '../content-script-dom.ts';
+import { ContentScriptDomHelpers } from '../content/dom.ts';
 
 test('element scroll context can move to top and restore the original position', () => {
   const helpers = new ContentScriptDomHelpers();

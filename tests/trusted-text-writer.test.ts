@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { writeTrustedTextToElement } from '../trusted-text-writer.ts';
+import { writeTrustedTextToElement } from '../content/trusted-text-writer.ts';
 
 function installChromeRecorder(
   messages: unknown[],

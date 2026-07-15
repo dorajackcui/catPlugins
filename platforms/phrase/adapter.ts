@@ -7,7 +7,7 @@ import type {
   EditableElement,
   RuntimeSegment,
   ScrollContext
-} from '../../content-script-dom.ts';
+} from '../../content/dom.ts';
 
 const ROW_SELECTORS = ['.segment-row[role="row"]', '.segment-row', '.twe_segment'];
 const SOURCE_ROW_SELECTORS = [

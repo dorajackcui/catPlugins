@@ -6,8 +6,8 @@ import {
   filterSegmentsFromPendingStartMarker,
   findStartSegmentIndex,
   hasUnresolvedStartMarker
-} from '../start-marker.ts';
-import type { RuntimeSegment } from '../content-script-dom.ts';
+} from '../content/start-marker.ts';
+import type { RuntimeSegment } from '../content/dom.ts';
 
 interface FakeElement {
   children: FakeElement[];

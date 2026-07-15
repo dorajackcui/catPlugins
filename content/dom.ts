@@ -1,4 +1,4 @@
-import { normalizeText } from './utils.ts';
+import { normalizeText } from '../utils.ts';
 
 export const KNOWN_SCROLL_CONTAINER_SELECTORS = [
   '[data-testid*="virtual"]',

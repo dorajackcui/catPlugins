@@ -1,7 +1,7 @@
 import {
   findMemoqStartTargetCell,
   readMemoqStartMarkerDomId
-} from './platforms/memoq/dom-profile.ts';
+} from '../platforms/memoq/dom-profile.ts';
 import type { StartMarker } from './start-marker.ts';
 
 export const START_MARKER_MAX_AGE_MS = 30 * 60 * 1000;

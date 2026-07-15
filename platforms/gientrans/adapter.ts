@@ -16,7 +16,7 @@ import type {
   ContentScriptDomHelpers,
   RuntimeSegment,
   ScrollContext
-} from '../../content-script-dom.ts';
+} from '../../content/dom.ts';
 
 const GIENTRANS_ROOT_SELECTOR = '#o-editor.online-editor';
 const GIENTRANS_TABLE_SELECTOR = '.editor__table';

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ContentScriptDomHelpers, type RuntimeSegment, type ScrollContext } from '../content-script-dom.ts';
+import { ContentScriptDomHelpers, type RuntimeSegment, type ScrollContext } from '../content/dom.ts';
 import {
   legacyWebtransMemoqProfile,
   modernEditorMemoqProfile

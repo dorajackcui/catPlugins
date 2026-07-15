@@ -3,7 +3,7 @@ import {
   type EditableElement,
   type RuntimeSegment,
   type ScrollContext
-} from '../content-script-dom.ts';
+} from '../content/dom.ts';
 import type { FillOutcome } from '../types.ts';
 import { normalizeText } from '../utils.ts';
 import { GientTransAdapter } from './gientrans/adapter.ts';

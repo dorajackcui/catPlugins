@@ -5,7 +5,7 @@ import {
   replaceRuntimeMessageListener,
   type RuntimeListenerState,
   type RuntimeMessageListener
-} from '../runtime-listener.ts';
+} from '../content/runtime-listener.ts';
 
 test('replaceRuntimeMessageListener removes a previous listener before adding the next one', () => {
   const calls: string[] = [];

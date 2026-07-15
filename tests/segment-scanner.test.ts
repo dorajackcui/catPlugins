@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { RuntimeSegment, ScrollContext } from '../content-script-dom.ts';
+import type { RuntimeSegment, ScrollContext } from '../content/dom.ts';
 import {
   normalizeSegmentScanLimit,
   SegmentScanner,
   type SegmentScanContext,
   type SegmentScannerPort
-} from '../segment-scanner.ts';
-import type { StartMarker } from '../start-marker.ts';
+} from '../content/segment-scanner.ts';
+import type { StartMarker } from '../content/start-marker.ts';
 
 class FakeScrollContext implements ScrollContext {
   readonly scrollDeltas: number[] = [];

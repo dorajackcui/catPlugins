@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ScrollContext } from '../content-script-dom.ts';
+import type { ScrollContext } from '../content/dom.ts';
 import { GientTransAdapter } from '../platforms/gientrans/adapter.ts';
 import {
   gientransTextToEditorHtml,

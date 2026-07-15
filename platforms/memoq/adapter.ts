@@ -3,7 +3,7 @@ import type {
   ContentScriptDomHelpers,
   RuntimeSegment,
   ScrollContext
-} from '../../content-script-dom.ts';
+} from '../../content/dom.ts';
 import { describeMemoqFillDiagnostic } from './fill-diagnostics.ts';
 import { MemoqFillTransaction } from './fill-transaction.ts';
 import {
@@ -18,7 +18,7 @@ import {
   readMemoqAccessibilityTextBoxValue
 } from './accessibility-textbox.ts';
 import { serializeMemoqContent } from './text.ts';
-import { writeTrustedTextToElement } from '../../trusted-text-writer.ts';
+import { writeTrustedTextToElement } from '../../content/trusted-text-writer.ts';
 import type { ApiResponse, BackgroundRequest, FillOutcome } from '../../types.ts';
 import {
   containsNoBreakSpace,

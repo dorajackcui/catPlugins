@@ -6,7 +6,7 @@ import {
   isRecentSyntheticDuplicate,
   shouldRescanAfterSegmentFill,
   shouldStopScanBeforeNextScroll
-} from '../scan-dedupe.ts';
+} from '../content/scan-dedupe.ts';
 
 test('hasRepeatedSyntheticSignature only flags non-empty repeated signatures', () => {
   assert.equal(hasRepeatedSyntheticSignature('', 'hello=>'), false);
