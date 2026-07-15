@@ -64,6 +64,7 @@ background, and popup code must use this contract so an intentional stop never a
 ## Popup application
 
 - `popup/controller.ts` owns Upload, Preview, Export, Fill, and option-persistence workflows.
+- `popup/contracts.ts` defines the stable file, view, and controller ports shared by popup layers.
 - `popup/run-monitor.ts` owns busy/stopping state, run-state rendering, refresh polling, and Stop request gating.
 - `popup/view.ts` owns DOM bindings, form parsing, preview rendering, and file downloads.
 

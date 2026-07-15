@@ -8,7 +8,7 @@ import type { PopupState, StatusKind } from '../shared/state-types.ts';
 import type {
   PopupViewHandlers,
   PopupViewPort
-} from './controller.ts';
+} from './contracts.ts';
 
 const EMPTY_PREVIEW_SUMMARY_HTML =
   '<li>Total segments: -</li><li>Matched: -</li><li>Already translated: -</li><li>Tag / placeholder errors: -</li><li>Ready to fill: -</li><li>Skipped: -</li>';
