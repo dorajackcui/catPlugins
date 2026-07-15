@@ -1,18 +1,19 @@
 import type { RuntimeSegment } from '../../content/dom.ts';
-import type { MemoqDomProfile } from './dom-profile.ts';
-import { isMemoqCommittedTargetText } from './text.ts';
 import type {
   FillOutcome,
-  MemoqFillDiagnostic,
   MemoqFillFailureCode,
-  MemoqFillFailureDiagnostic,
-  MemoqFillSuccessDiagnostic,
   MemoqVisibleRowSnapshot
 } from '../../shared/types.ts';
-import { normalizeText } from '../../shared/utils.ts';
-
-const MEMOQ_COMMIT_CONFIRM_ATTEMPTS = 14;
-const MEMOQ_COMMIT_CONFIRM_DELAY_MS = 150;
+import type { MemoqDomProfile } from './dom-profile.ts';
+import { confirmMemoqTargetText } from './fill-confirmation.ts';
+import {
+  MemoqFillDiagnosticBuilder,
+  type MemoqFillDiagnosticInput
+} from './fill-diagnostic-builder.ts';
+import {
+  validateMemoqFillTarget,
+  type MemoqInvalidFillSnapshot
+} from './fill-validation.ts';
 
 export interface MemoqFillTransactionOptions {
   profile: MemoqDomProfile;
@@ -29,7 +30,19 @@ export interface MemoqFillTransactionOptions {
 }
 
 export class MemoqFillTransaction {
-  constructor(private readonly options: MemoqFillTransactionOptions) {}
+  private readonly diagnostics: MemoqFillDiagnosticBuilder;
+
+  constructor(private readonly options: MemoqFillTransactionOptions) {
+    this.diagnostics = new MemoqFillDiagnosticBuilder({
+      profileId: options.profile.id,
+      collectNearbyRows: (rowNumber) => options.collectNearbyRows(rowNumber),
+      runId: options.runId,
+      sequence: options.sequence,
+      scanPass: options.scanPass,
+      scrollTop: options.scrollTop,
+      scrollMode: options.scrollMode
+    });
+  }
 
   async fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome> {
     const rowNumber = segment.rowNumber ?? '';
@@ -51,51 +64,12 @@ export class MemoqFillTransaction {
       });
     }
 
-    let sourceBefore = this.options.readSourceText(segment);
-    let targetBefore = this.options.readTargetText(target);
-
-    if (sourceBefore === null) {
-      return this.createFailureOutcome({
-        segment,
-        value,
-        failureCode: 'ROW_NOT_FOUND',
-        sourceBefore: '',
-        targetBefore,
-        targetAfter: targetBefore,
-        confirmationAttempts: 0,
-        activationAttempted: false,
-        activationOk: false
-      });
+    const initialValidation = validateMemoqFillTarget(segment, target, this.options);
+    if (!initialValidation.ok) {
+      return this.createValidationFailureOutcome(segment, value, initialValidation);
     }
 
-    if (normalizeText(sourceBefore) !== normalizeText(segment.sourceRaw)) {
-      return this.createFailureOutcome({
-        segment,
-        value,
-        failureCode: 'SOURCE_MISMATCH',
-        sourceBefore,
-        targetBefore,
-        targetAfter: targetBefore,
-        confirmationAttempts: 0,
-        activationAttempted: false,
-        activationOk: false
-      });
-    }
-
-    if (normalizeText(targetBefore) !== '') {
-      return this.createFailureOutcome({
-        segment,
-        value,
-        failureCode: 'TARGET_NOT_EMPTY',
-        sourceBefore,
-        targetBefore,
-        targetAfter: targetBefore,
-        confirmationAttempts: 0,
-        activationAttempted: false,
-        activationOk: false
-      });
-    }
-
+    let { sourceBefore, targetBefore } = initialValidation;
     const writeTarget = segment.rowNumber ? this.resolveCurrentTarget(segment) : target;
     if (!writeTarget) {
       return this.createFailureOutcome({
@@ -113,50 +87,13 @@ export class MemoqFillTransaction {
 
     if (writeTarget !== target) {
       target = writeTarget;
-      sourceBefore = this.options.readSourceText(segment);
-      targetBefore = this.options.readTargetText(target);
-
-      if (sourceBefore === null) {
-        return this.createFailureOutcome({
-          segment,
-          value,
-          failureCode: 'ROW_NOT_FOUND',
-          sourceBefore: '',
-          targetBefore,
-          targetAfter: targetBefore,
-          confirmationAttempts: 0,
-          activationAttempted: false,
-          activationOk: false
-        });
+      const currentValidation = validateMemoqFillTarget(segment, target, this.options);
+      if (!currentValidation.ok) {
+        return this.createValidationFailureOutcome(segment, value, currentValidation);
       }
 
-      if (normalizeText(sourceBefore) !== normalizeText(segment.sourceRaw)) {
-        return this.createFailureOutcome({
-          segment,
-          value,
-          failureCode: 'SOURCE_MISMATCH',
-          sourceBefore,
-          targetBefore,
-          targetAfter: targetBefore,
-          confirmationAttempts: 0,
-          activationAttempted: false,
-          activationOk: false
-        });
-      }
-
-      if (normalizeText(targetBefore) !== '') {
-        return this.createFailureOutcome({
-          segment,
-          value,
-          failureCode: 'TARGET_NOT_EMPTY',
-          sourceBefore,
-          targetBefore,
-          targetAfter: targetBefore,
-          confirmationAttempts: 0,
-          activationAttempted: false,
-          activationOk: false
-        });
-      }
+      sourceBefore = currentValidation.sourceBefore;
+      targetBefore = currentValidation.targetBefore;
     }
 
     try {
@@ -180,7 +117,14 @@ export class MemoqFillTransaction {
       });
     }
 
-    const confirmation = await this.confirmTargetText(target, rowNumber, value);
+    const confirmation = await confirmMemoqTargetText({
+      target,
+      rowNumber,
+      value,
+      readTargetText: (currentTarget) => this.options.readTargetText(currentTarget),
+      resolveCurrentTargetByRowNumber: (currentRowNumber) =>
+        this.resolveCurrentTargetByRowNumber(currentRowNumber)
+    });
     if (!confirmation.ok) {
       return this.createFailureOutcome({
         segment,
@@ -195,68 +139,19 @@ export class MemoqFillTransaction {
       });
     }
 
-    const diagnostic = this.createDiagnostic({
-      segment,
-      value,
-      sourceBefore,
-      targetBefore,
-      targetAfter: confirmation.targetAfter,
-      confirmationAttempts: confirmation.attempts,
-      activationAttempted: true,
-      activationOk: true
-    }) as MemoqFillSuccessDiagnostic;
-
     return {
       domId: segment.domId,
       filled: true,
-      diagnostic
-    };
-  }
-
-  private async confirmTargetText(
-    target: HTMLElement,
-    rowNumber: string,
-    value: string
-  ): Promise<{
-    ok: boolean;
-    attempts: number;
-    targetAfter: string;
-    failureCode?: Extract<MemoqFillFailureCode, 'ROW_NOT_FOUND'>;
-  }> {
-    let targetAfter = '';
-    let resolvedAtLeastOnce = false;
-
-    for (let attempt = 1; attempt <= MEMOQ_COMMIT_CONFIRM_ATTEMPTS; attempt += 1) {
-      const currentTarget = rowNumber
-        ? this.resolveCurrentTargetByRowNumber(rowNumber)
-        : target;
-      if (!currentTarget) {
-        if (attempt < MEMOQ_COMMIT_CONFIRM_ATTEMPTS) {
-          await wait(MEMOQ_COMMIT_CONFIRM_DELAY_MS);
-        }
-        continue;
-      }
-
-      resolvedAtLeastOnce = true;
-      targetAfter = this.options.readTargetText(currentTarget);
-      if (isMemoqCommittedTargetText(targetAfter, value)) {
-        return {
-          ok: true,
-          attempts: attempt,
-          targetAfter
-        };
-      }
-
-      if (attempt < MEMOQ_COMMIT_CONFIRM_ATTEMPTS) {
-        await wait(MEMOQ_COMMIT_CONFIRM_DELAY_MS);
-      }
-    }
-
-    return {
-      ok: false,
-      attempts: MEMOQ_COMMIT_CONFIRM_ATTEMPTS,
-      targetAfter,
-      failureCode: resolvedAtLeastOnce ? undefined : 'ROW_NOT_FOUND'
+      diagnostic: this.diagnostics.createSuccess({
+        segment,
+        value,
+        sourceBefore,
+        targetBefore,
+        targetAfter: confirmation.targetAfter,
+        confirmationAttempts: confirmation.attempts,
+        activationAttempted: true,
+        activationOk: true
+      })
     };
   }
 
@@ -279,132 +174,35 @@ export class MemoqFillTransaction {
     );
   }
 
-  private createFailureOutcome({
-    segment,
-    value,
-    failureCode,
-    sourceBefore,
-    targetBefore,
-    targetAfter,
-    confirmationAttempts,
-    activationAttempted,
-    activationOk,
-    activationError
-  }: {
-    segment: RuntimeSegment;
-    value: string;
-    failureCode: MemoqFillFailureCode;
-    sourceBefore: string;
-    targetBefore: string;
-    targetAfter: string;
-    confirmationAttempts: number;
-    activationAttempted: boolean;
-    activationOk: boolean;
-    activationError?: string;
-  }): FillOutcome {
-    const diagnostic = this.createDiagnostic({
+  private createValidationFailureOutcome(
+    segment: RuntimeSegment,
+    value: string,
+    validation: MemoqInvalidFillSnapshot
+  ): FillOutcome {
+    return this.createFailureOutcome({
       segment,
       value,
-      failureCode,
-      sourceBefore,
-      targetBefore,
-      targetAfter,
-      confirmationAttempts,
-      activationAttempted,
-      activationOk,
-      activationError
-    }) as MemoqFillFailureDiagnostic;
+      failureCode: validation.failureCode,
+      sourceBefore: validation.sourceBefore,
+      targetBefore: validation.targetBefore,
+      targetAfter: validation.targetBefore,
+      confirmationAttempts: 0,
+      activationAttempted: false,
+      activationOk: false
+    });
+  }
 
+  private createFailureOutcome(
+    input: MemoqFillDiagnosticInput & { failureCode: MemoqFillFailureCode }
+  ): FillOutcome {
     return {
-      domId: segment.domId,
+      domId: input.segment.domId,
       filled: false,
-      diagnostic
+      diagnostic: this.diagnostics.createFailure(input)
     };
   }
-
-  private createDiagnostic({
-    segment,
-    value,
-    failureCode,
-    sourceBefore,
-    targetBefore,
-    targetAfter,
-    confirmationAttempts,
-    activationAttempted,
-    activationOk,
-    activationError
-  }: {
-    segment: RuntimeSegment;
-    value: string;
-    failureCode?: MemoqFillFailureCode;
-    sourceBefore: string;
-    targetBefore: string;
-    targetAfter: string;
-    confirmationAttempts: number;
-    activationAttempted: boolean;
-    activationOk: boolean;
-    activationError?: string;
-  }): MemoqFillDiagnostic {
-    const rowNumber = segment.rowNumber;
-
-    return {
-      runId: this.options.runId ?? '',
-      sequence: this.options.sequence ?? 0,
-      scanPass: this.options.scanPass ?? 0,
-      scrollTop: this.options.scrollTop ?? 0,
-      scrollMode: this.options.scrollMode ?? 'native',
-      profileId: this.options.profile.id,
-      domId: segment.domId,
-      rowNumber,
-      locatingMethod: rowNumber ? 'rowNumber' : 'none',
-      segmentSource: segment.sourceRaw,
-      sourceBefore,
-      targetBefore,
-      expectedTranslation: value,
-      activation: {
-        attempted: activationAttempted,
-        ok: activationOk,
-        activeElement: describeActiveElement(),
-        error: activationError
-      },
-      inputMethod: 'chrome-debugger',
-      targetAfter,
-      confirmation: {
-        ok: failureCode === undefined,
-        attempts: confirmationAttempts
-      },
-      nearbyRows: this.options.collectNearbyRows(rowNumber),
-      outcome: failureCode ? 'failure' : 'success',
-      failureCode
-    } as MemoqFillDiagnostic;
-  }
-}
-
-function wait(ms: number): Promise<void> {
-  const setTimer =
-    typeof window !== 'undefined' && typeof window.setTimeout === 'function'
-      ? window.setTimeout.bind(window)
-      : globalThis.setTimeout.bind(globalThis);
-
-  return new Promise((resolve) => {
-    setTimer(resolve, ms);
-  });
 }
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function describeActiveElement(): string {
-  const activeElement = globalThis.document?.activeElement as HTMLElement | null | undefined;
-  if (!activeElement) {
-    return 'none';
-  }
-
-  const tagName = activeElement.tagName?.toLowerCase() ?? 'element';
-  const id = activeElement.id ? `#${activeElement.id}` : '';
-  const className = String(activeElement.className || '').trim().replace(/\s+/g, '.');
-  const classSuffix = className ? `.${className}` : '';
-
-  return `${tagName}${id}${classSuffix}`;
 }

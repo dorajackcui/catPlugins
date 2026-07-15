@@ -30,6 +30,13 @@ memoQ supports two editor generations behind one stable profile API:
 Profile selection prefers a fully visible modern editor, then a fully visible legacy editor. A matching
 but incomplete modern surface must not hide a usable legacy editor.
 
+### memoQ fill pipeline
+
+- `platforms/memoq/fill-transaction.ts` orchestrates target lookup, trusted input, and the stop-safe sequence.
+- `platforms/memoq/fill-validation.ts` validates the current source and empty target before each write.
+- `platforms/memoq/fill-confirmation.ts` owns commit polling and row re-resolution.
+- `platforms/memoq/fill-diagnostic-builder.ts` creates stable success and failure diagnostics.
+
 ## Dependency rules
 
 1. Root entry points assemble dependencies and register listeners; they should not accumulate platform algorithms.
