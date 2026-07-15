@@ -10,7 +10,14 @@ import { buildSourceExportWorkbook, parseExcelBuffer } from './excel.ts';
 import { normalizeFillOptions } from './fill-options.ts';
 import { normalizePlannedFillCount } from './fill-throttle.ts';
 import { applyMemoqPreviewCorrection, buildPreview } from './matcher.ts';
-import { DEFAULT_RUN_STATE, isRunActive, normalizeRunState } from './run-state.ts';
+import {
+  createFinishedRunState,
+  createRunningRunState,
+  DEFAULT_RUN_STATE,
+  isRunActive,
+  mergeRunProgress,
+  normalizeRunState
+} from './run-state.ts';
 import { readRuntimeState, writeRuntimeState } from './storage.ts';
 import type {
   ApiResponse,
@@ -20,7 +27,6 @@ import type {
   FillRunResult,
   PageSegment,
   PopupState,
-  RunKind,
   RunState,
   StatusKind
 } from './types.ts';
@@ -86,90 +92,6 @@ async function ensurePhraseTab(): Promise<{
     ...tab,
     frameId: editorFrame?.frameId
   };
-}
-
-function createRunId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function createRunningRunState(
-  kind: RunKind,
-  target: { id: number; frameId?: number },
-  options?: {
-    plannedFillCount?: number | null;
-  }
-): RunState {
-  const now = new Date().toISOString();
-
-  return normalizeRunState({
-    runId: createRunId(),
-    kind,
-    phase: 'running',
-    statusKind: 'default',
-    startedAt: now,
-    lastUpdatedAt: now,
-    tabId: target.id,
-    frameId: target.frameId ?? null,
-    plannedFillCount: options?.plannedFillCount ?? null,
-    scannedCount: 0,
-    filledCount: 0,
-    message: ''
-  });
-}
-
-function createFinishedRunState(
-  currentRunState: RunState,
-  options: {
-    message: string;
-    statusKind?: StatusKind;
-    scannedCount?: number;
-    filledCount?: number;
-    plannedFillCount?: number | null;
-  }
-): RunState {
-  return normalizeRunState({
-    ...DEFAULT_RUN_STATE,
-    startedAt: currentRunState.startedAt,
-    lastUpdatedAt: new Date().toISOString(),
-    scannedCount: options.scannedCount ?? currentRunState.scannedCount,
-    filledCount: options.filledCount ?? currentRunState.filledCount,
-    plannedFillCount:
-      options.plannedFillCount === undefined
-        ? currentRunState.plannedFillCount
-        : options.plannedFillCount,
-    message: options.message,
-    statusKind: options.statusKind ?? 'default'
-  });
-}
-
-function mergeRunProgress(
-  currentRunState: RunState,
-  payload: Extract<BackgroundRequest, { type: 'REPORT_RUN_PROGRESS' }>['payload']
-): RunState {
-  return normalizeRunState({
-    ...currentRunState,
-    phase:
-      currentRunState.phase === 'stopping'
-        ? 'stopping'
-        : payload.phase ?? currentRunState.phase,
-    lastUpdatedAt: new Date().toISOString(),
-    scannedCount:
-      typeof payload.scannedCount === 'number'
-        ? Math.max(currentRunState.scannedCount, Math.floor(payload.scannedCount))
-        : currentRunState.scannedCount,
-    filledCount:
-      typeof payload.filledCount === 'number'
-        ? Math.max(currentRunState.filledCount, Math.floor(payload.filledCount))
-        : currentRunState.filledCount,
-    plannedFillCount:
-      payload.plannedFillCount === undefined
-        ? currentRunState.plannedFillCount
-        : normalizePlannedFillCount(payload.plannedFillCount),
-    message:
-      typeof payload.message === 'string' && payload.message.trim()
-        ? payload.message
-        : currentRunState.message
-  });
 }
 
 async function finalizeRunState(
