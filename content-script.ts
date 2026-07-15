@@ -21,12 +21,14 @@ import {
 import type {
   ApiResponse,
   BackgroundRequest,
-  ContentRequest,
+  ContentRequest
+} from './shared/message-types.ts';
+import type {
   FillOptions,
   FillRunResult,
   PageSegment,
   TranslationEntry
-} from './shared/types.ts';
+} from './shared/translation-types.ts';
 import { delay } from './shared/utils.ts';
 
 declare global {

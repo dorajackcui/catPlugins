@@ -1,4 +1,4 @@
-import type { DebuggerInputOperation } from '../shared/types.ts';
+import type { DebuggerInputOperation } from '../shared/message-types.ts';
 
 const DEFAULT_PROTOCOL_VERSION = '1.3';
 const DEFAULT_IDLE_DETACH_MS = 30000;

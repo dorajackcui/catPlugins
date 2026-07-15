@@ -6,7 +6,7 @@ import type {
   PreviewItem,
   PreviewResult,
   TranslationEntry
-} from '../shared/types.ts';
+} from '../shared/translation-types.ts';
 import {
   normalizeGientTransInlineMarkup,
   stripGientTransInlineMarkup

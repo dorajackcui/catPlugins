@@ -2,7 +2,7 @@ import { runtimeSendMessage } from './shared/chrome-api.ts';
 import type {
   ApiResponse,
   BackgroundRequest
-} from './shared/types.ts';
+} from './shared/message-types.ts';
 import { PopupController } from './popup/controller.ts';
 import { PopupView } from './popup/view.ts';
 

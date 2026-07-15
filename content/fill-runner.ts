@@ -18,12 +18,12 @@ import {
 } from './segment-scanner.ts';
 import type {
   FillOptions,
-  FillOutcome,
   FillRunResult,
   PreviewItem,
-  ReportRunProgressRequest,
   TranslationEntry
-} from '../shared/types.ts';
+} from '../shared/translation-types.ts';
+import type { FillOutcome } from '../shared/fill-outcome-types.ts';
+import type { ReportRunProgressRequest } from '../shared/message-types.ts';
 
 const DEFAULT_INTER_FILL_DELAY_MS = 180;
 const MEMOQ_INTER_FILL_DELAY_MS = 320;

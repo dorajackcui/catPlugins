@@ -4,7 +4,7 @@ import type {
   RuntimeSegment,
   ScrollContext
 } from '../content/types.ts';
-import type { FillOutcome } from '../shared/types.ts';
+import type { FillOutcome } from '../shared/fill-outcome-types.ts';
 import { normalizeText } from '../shared/utils.ts';
 import { GientTransAdapter } from './gientrans/adapter.ts';
 import {

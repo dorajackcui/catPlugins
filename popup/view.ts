@@ -2,10 +2,9 @@ import { normalizeFillOptions } from '../domain/fill-options.ts';
 import type {
   ExportSourcesResult,
   FillOptions,
-  PopupState,
-  PreviewResult,
-  StatusKind
-} from '../shared/types.ts';
+  PreviewResult
+} from '../shared/translation-types.ts';
+import type { PopupState, StatusKind } from '../shared/state-types.ts';
 import type {
   PopupViewHandlers,
   PopupViewPort

@@ -6,9 +6,9 @@ import {
 import type {
   ApiResponse,
   BackgroundRequest,
-  DebuggerInputOperation,
-  PopupState
-} from '../shared/types.ts';
+  DebuggerInputOperation
+} from '../shared/message-types.ts';
+import type { PopupState } from '../shared/state-types.ts';
 import { parseExcelBuffer } from './excel.ts';
 import {
   BackgroundRunCoordinator,

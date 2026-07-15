@@ -1,11 +1,11 @@
 import { normalizePlannedFillCount } from './fill-throttle.ts';
+import type { ReportRunProgressRequest } from '../shared/message-types.ts';
 import type {
-  ReportRunProgressRequest,
   RunKind,
   RunPhase,
   RunState,
   StatusKind
-} from '../shared/types.ts';
+} from '../shared/state-types.ts';
 
 export const DEFAULT_RUN_STATE: RunState = {
   runId: null,

@@ -3,7 +3,7 @@ import type {
   ApiResponse,
   BackgroundRequest,
   DebuggerInputOperation
-} from '../../shared/types.ts';
+} from '../../shared/message-types.ts';
 import { delay } from '../../shared/utils.ts';
 import { normalizePhraseTagClipText, splitPhraseMarkup } from './markup.ts';
 

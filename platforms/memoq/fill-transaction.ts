@@ -3,7 +3,7 @@ import type {
   FillOutcome,
   MemoqFillFailureCode,
   MemoqVisibleRowSnapshot
-} from '../../shared/types.ts';
+} from '../../shared/fill-outcome-types.ts';
 import type { MemoqDomProfile } from './dom-profile.ts';
 import { confirmMemoqTargetText } from './fill-confirmation.ts';
 import {

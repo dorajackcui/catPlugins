@@ -1,4 +1,4 @@
-import type { MemoqFillFailureCode } from '../../shared/types.ts';
+import type { MemoqFillFailureCode } from '../../shared/fill-outcome-types.ts';
 import { isMemoqCommittedTargetText } from './text.ts';
 
 const MEMOQ_COMMIT_CONFIRM_ATTEMPTS = 14;

@@ -16,7 +16,7 @@ import {
 import type {
   ApiResponse,
   BackgroundRequest
-} from './shared/types.ts';
+} from './shared/message-types.ts';
 
 const DEBUG_PREFIX = '[Phrase Bulk Fill]';
 const debuggerInput = new DebuggerInputController(chrome);

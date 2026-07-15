@@ -3,16 +3,18 @@ import {
   isRunActive,
   normalizeRunState
 } from '../domain/run-state.ts';
+import type { BackgroundRequest } from '../shared/message-types.ts';
 import type {
-  BackgroundRequest,
   ExportSourcesResult,
   FillOptions,
   FillRunResult,
+  PreviewResult
+} from '../shared/translation-types.ts';
+import type {
   PopupState,
-  PreviewResult,
   RunState,
   StatusKind
-} from '../shared/types.ts';
+} from '../shared/state-types.ts';
 
 const STOP_ERROR_MESSAGE = 'Operation stopped by user.';
 const REFRESH_INTERVAL_MS = 1000;

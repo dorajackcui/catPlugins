@@ -1,5 +1,5 @@
 import { runtimeSendMessage } from '../shared/chrome-api.ts';
-import type { ApiResponse, BackgroundRequest } from '../shared/types.ts';
+import type { ApiResponse, BackgroundRequest } from '../shared/message-types.ts';
 
 export type TrustedTextWriteRequestType = 'MEMOQ_DEBUGGER_WRITE_TEXT' | 'DEBUGGER_WRITE_TEXT';
 

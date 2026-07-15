@@ -25,6 +25,15 @@ Supporting code is grouped by responsibility:
 Modules that only need `RuntimeSegment` or `ScrollContext` should import `content/types.ts`. Platform
 scroll resolvers should depend on `ContentScrollHelpers` unless they also need editor DOM operations.
 
+## Shared contracts
+
+- `shared/translation-types.ts` defines workbook, preview, and fill-run data.
+- `shared/state-types.ts` defines runtime and popup state.
+- `shared/fill-outcome-types.ts` defines platform fill results and memoQ diagnostics.
+- `shared/message-types.ts` defines background/content request and response protocols.
+- `shared/storage-keys.ts` is the runtime source of persisted Chrome storage keys.
+- `shared/types.ts` is a compatibility barrel; production modules should import the focused contract directly.
+
 ## memoQ DOM profiles
 
 memoQ supports two editor generations behind one stable profile API:

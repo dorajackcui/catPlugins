@@ -1,5 +1,5 @@
 import type { RuntimeSegment } from '../../content/types.ts';
-import type { MemoqFillFailureCode } from '../../shared/types.ts';
+import type { MemoqFillFailureCode } from '../../shared/fill-outcome-types.ts';
 import { normalizeText } from '../../shared/utils.ts';
 
 export type MemoqFillValidationFailureCode = Extract<

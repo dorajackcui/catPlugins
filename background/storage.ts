@@ -1,15 +1,14 @@
 import { normalizeFillOptions } from '../domain/fill-options.ts';
 import { storageGet, storageSet } from '../shared/chrome-api.ts';
 import { DEFAULT_RUN_STATE, normalizeRunState } from '../domain/run-state.ts';
-import { STORAGE_KEYS } from '../shared/types.ts';
+import { STORAGE_KEYS } from '../shared/storage-keys.ts';
 import type {
   FillOptions,
   PreviewResult,
-  RunState,
-  RuntimeState,
   TranslationEntry,
   UploadMeta
-} from '../shared/types.ts';
+} from '../shared/translation-types.ts';
+import type { RunState, RuntimeState } from '../shared/state-types.ts';
 
 type RawState = Partial<Record<(typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS], unknown>>;
 export type RuntimeStateUpdate = Partial<RuntimeState>;

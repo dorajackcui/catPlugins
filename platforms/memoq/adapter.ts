@@ -15,7 +15,8 @@ import {
 } from './accessibility-textbox.ts';
 import { serializeMemoqContent } from './text.ts';
 import { writeTrustedTextToElement } from '../../content/trusted-text-writer.ts';
-import type { ApiResponse, BackgroundRequest, FillOutcome } from '../../shared/types.ts';
+import type { FillOutcome } from '../../shared/fill-outcome-types.ts';
+import type { ApiResponse, BackgroundRequest } from '../../shared/message-types.ts';
 import {
   containsNoBreakSpace,
   normalizeText,

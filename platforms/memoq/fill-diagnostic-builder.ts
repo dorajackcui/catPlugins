@@ -5,7 +5,7 @@ import type {
   MemoqFillFailureDiagnostic,
   MemoqFillSuccessDiagnostic,
   MemoqVisibleRowSnapshot
-} from '../../shared/types.ts';
+} from '../../shared/fill-outcome-types.ts';
 import type { MemoqDomProfileId } from './dom-profile-types.ts';
 
 export interface MemoqFillDiagnosticBuilderOptions {

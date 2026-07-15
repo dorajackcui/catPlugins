@@ -11,14 +11,18 @@ import {
 import type {
   ApiResponse,
   BackgroundRequest,
-  ContentRequest,
+  ContentRequest
+} from '../shared/message-types.ts';
+import type {
   ExportSourcesResult,
   FillRunResult,
-  PageSegment,
+  PageSegment
+} from '../shared/translation-types.ts';
+import type {
   RunState,
   RuntimeState,
   StatusKind
-} from '../shared/types.ts';
+} from '../shared/state-types.ts';
 import {
   isGientTransUrl,
   isMemsourceEditorFrameUrl,
