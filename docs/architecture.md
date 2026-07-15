@@ -12,6 +12,7 @@ Supporting code is grouped by responsibility:
 - `content/` contains page-side infrastructure: DOM helpers, segment traversal, start markers, fill orchestration, and trusted text writes.
 - `domain/` contains business rules for matching, fill options, failure policy, throttling, and run state. These modules should not perform Chrome API calls or mutate editor DOM.
 - `platforms/` owns editor-specific selectors, text normalization, row discovery, and writes for memoQ, GientTrans, and Phrase.
+- `popup/` separates popup workflow coordination from DOM rendering and downloads.
 - `shared/` contains cross-layer Chrome wrappers, message/state contracts, and general utilities.
 - `tests/` mirrors these boundaries with direct unit and adapter regression coverage.
 
