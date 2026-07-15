@@ -1,4 +1,4 @@
-import type { RuntimeSegment } from '../../content/dom.ts';
+import type { RuntimeSegment } from '../../content/types.ts';
 import type {
   FillOutcome,
   MemoqFillFailureCode,

@@ -2,12 +2,12 @@ import { extractPlaceholderTokens } from '../../domain/qa.ts';
 import type { FillOutcome } from '../../shared/types.ts';
 import { normalizeText, waitForNormalizedTextMatch } from '../../shared/utils.ts';
 import { PhraseEditorWriter } from './editor-writer.ts';
+import type { ContentScriptDomHelpers } from '../../content/dom.ts';
 import type {
-  ContentScriptDomHelpers,
   EditableElement,
   RuntimeSegment,
   ScrollContext
-} from '../../content/dom.ts';
+} from '../../content/types.ts';
 
 const ROW_SELECTORS = ['.segment-row[role="row"]', '.segment-row', '.twe_segment'];
 const SOURCE_ROW_SELECTORS = [

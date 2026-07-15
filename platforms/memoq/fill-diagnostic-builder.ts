@@ -1,4 +1,4 @@
-import type { RuntimeSegment } from '../../content/dom.ts';
+import type { RuntimeSegment } from '../../content/types.ts';
 import type {
   MemoqFillDiagnosticBase,
   MemoqFillFailureCode,
@@ -6,7 +6,7 @@ import type {
   MemoqFillSuccessDiagnostic,
   MemoqVisibleRowSnapshot
 } from '../../shared/types.ts';
-import type { MemoqDomProfileId } from './dom-profile.ts';
+import type { MemoqDomProfileId } from './dom-profile-types.ts';
 
 export interface MemoqFillDiagnosticBuilderOptions {
   profileId: MemoqDomProfileId;

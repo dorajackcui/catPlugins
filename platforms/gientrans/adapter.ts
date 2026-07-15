@@ -12,11 +12,8 @@ import {
   GientTransEditorWriter,
   type NativeWriteDiagnostic
 } from './editor-writer.ts';
-import type {
-  ContentScriptDomHelpers,
-  RuntimeSegment,
-  ScrollContext
-} from '../../content/dom.ts';
+import type { ContentScriptDomHelpers } from '../../content/dom.ts';
+import type { RuntimeSegment, ScrollContext } from '../../content/types.ts';
 
 const GIENTRANS_ROOT_SELECTOR = '#o-editor.online-editor';
 const GIENTRANS_TABLE_SELECTOR = '.editor__table';

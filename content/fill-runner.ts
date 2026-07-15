@@ -1,4 +1,4 @@
-import type { RuntimeSegment } from './dom.ts';
+import type { RuntimeSegment } from './types.ts';
 import { normalizeFillOptions } from '../domain/fill-options.ts';
 import { describeFillStopReason, shouldStopAfterFillFailure } from '../domain/fill-failure.ts';
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFillForPlatform } from '../domain/fill-throttle.ts';

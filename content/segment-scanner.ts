@@ -1,4 +1,4 @@
-import type { RuntimeSegment, ScrollContext } from './dom.ts';
+import type { RuntimeSegment, ScrollContext } from './types.ts';
 import {
   hasRepeatedSyntheticSignature,
   isRecentSyntheticDuplicate,

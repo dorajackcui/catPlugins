@@ -1,10 +1,7 @@
 import { extractPlaceholderTokens } from '../../domain/qa.ts';
 import { normalizeText } from '../../shared/utils.ts';
-import type {
-  ContentScriptDomHelpers,
-  RuntimeSegment,
-  ScrollContext
-} from '../../content/dom.ts';
+import type { ContentScriptDomHelpers } from '../../content/dom.ts';
+import type { RuntimeSegment, ScrollContext } from '../../content/types.ts';
 import { readMemoqAccessibilityTextBoxValue } from './accessibility-textbox.ts';
 import type { MemoqDomProfile } from './dom-profile.ts';
 import { serializeMemoqContent } from './text.ts';

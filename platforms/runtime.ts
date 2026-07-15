@@ -1,9 +1,9 @@
-import {
-  ContentScriptDomHelpers,
-  type EditableElement,
-  type RuntimeSegment,
-  type ScrollContext
-} from '../content/dom.ts';
+import { ContentScriptDomHelpers } from '../content/dom.ts';
+import type {
+  EditableElement,
+  RuntimeSegment,
+  ScrollContext
+} from '../content/types.ts';
 import type { FillOutcome } from '../shared/types.ts';
 import { normalizeText } from '../shared/utils.ts';
 import { GientTransAdapter } from './gientrans/adapter.ts';

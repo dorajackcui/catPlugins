@@ -1,7 +1,5 @@
-import type {
-  ContentScriptDomHelpers,
-  ScrollContext
-} from '../../content/dom.ts';
+import type { ContentScrollHelpers } from '../../content/scroll.ts';
+import type { ScrollContext } from '../../content/types.ts';
 import type { MemoqDomProfile } from './dom-profile.ts';
 
 export interface MemoqScrollEnvironment {
@@ -23,7 +21,7 @@ function createBrowserScrollEnvironment(): MemoqScrollEnvironment {
 export class MemoqScrollContextResolver {
   constructor(
     private readonly profile: MemoqDomProfile,
-    private readonly helpers: ContentScriptDomHelpers,
+    private readonly helpers: ContentScrollHelpers,
     private readonly environment: MemoqScrollEnvironment = createBrowserScrollEnvironment()
   ) {}
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ContentScriptDomHelpers } from '../content/dom.ts';
+import type { ContentScrollHelpers } from '../content/scroll.ts';
 import type { MemoqDomProfile } from '../platforms/memoq/dom-profile.ts';
 import {
   MemoqScrollContextResolver,
@@ -57,7 +57,7 @@ test('MemoqScrollContextResolver preserves synthetic wheel, PageDown, and Home i
     toElementScrollContext: () => {
       throw new Error('native scrolling should not be selected');
     }
-  } as unknown as ContentScriptDomHelpers;
+  } as unknown as ContentScrollHelpers;
   const environment: MemoqScrollEnvironment = {
     root,
     getViewportHeight: () => 600,

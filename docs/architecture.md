@@ -16,6 +16,15 @@ Supporting code is grouped by responsibility:
 - `shared/` contains cross-layer Chrome wrappers, message/state contracts, and general utilities.
 - `tests/` mirrors these boundaries with direct unit and adapter regression coverage.
 
+## Content DOM foundation
+
+- `content/types.ts` defines page-side segment, editable element, and scroll contracts.
+- `content/scroll.ts` owns generic scroll contexts, container selection, visibility, and visual ordering.
+- `content/dom.ts` owns editor DOM queries and input event helpers, while extending the scroll helper as a compatibility facade.
+
+Modules that only need `RuntimeSegment` or `ScrollContext` should import `content/types.ts`. Platform
+scroll resolvers should depend on `ContentScrollHelpers` unless they also need editor DOM operations.
+
 ## memoQ DOM profiles
 
 memoQ supports two editor generations behind one stable profile API:
