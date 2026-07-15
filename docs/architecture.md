@@ -27,13 +27,16 @@ scroll resolvers should depend on `ContentScrollHelpers` unless they also need e
 
 ## Fill execution
 
+- `content/request-handler.ts` routes the typed content-script protocol and normalizes request options.
+- `content/run-service.ts` owns page-run stop state, scan result serialization, and composition of the scanner and fill runner.
 - `content/fill-runner.ts` owns run-level preparation, scanner startup, and completion logging.
 - `content/fill-segment-processor.ts` owns per-segment classification, write safety, progress, throttling, stop conditions, and rescan decisions.
 - `content/fill-runner-contracts.ts` defines the scanner, runtime, and reporting ports shared by those layers.
 
-The runner must prepare memoQ trusted input before the scanner captures its first DOM snapshot. The
-segment processor remains platform-neutral except for explicit behavior policies exposed by platform
-and domain modules.
+The root `content-script.ts` only assembles browser-backed ports and registers listeners. The runner
+must prepare memoQ trusted input before the scanner captures its first DOM snapshot. The segment
+processor remains platform-neutral except for explicit behavior policies exposed by platform and
+domain modules.
 
 ## Shared contracts
 
