@@ -54,20 +54,26 @@ test('GientTransRowReader prefers the dedicated table scroll container', () => {
 
 test('GientTransRowReader re-resolves a target and reads source tag HTML from its row', () => {
   const previousDocument = globalThis.document;
-  const tagHtml =
-    '<span class="tagspan"><input type="tag" tfull="{1}"></span>';
-  const tagInput = {
-    value: '{1}',
-    getAttribute(name: string) {
-      return name === 'tfull' ? '{1}' : null;
-    }
-  };
-  const tagContainer = {
-    outerHTML: tagHtml,
-    querySelector: () => tagInput
-  };
+  const firstToken = '❮ph equiv-text="❰color=#FFA500❱" id="148"/❯';
+  const secondToken = '❮ph equiv-text="❰color=#FFA500❱" id="150"/❯';
+  const firstTagHtml =
+    '<span class="tagspan" data-id="148"><input type="tag"></span>';
+  const secondTagHtml =
+    '<span class="tagspan" data-id="150"><input type="tag"></span>';
+  const makeTagContainer = (token: string, outerHTML: string) => ({
+    outerHTML,
+    querySelector: () => ({
+      value: 'ph',
+      getAttribute(name: string) {
+        return name === 'tfull' ? token : null;
+      }
+    })
+  });
   const source = {
-    querySelectorAll: () => [tagContainer]
+    querySelectorAll: () => [
+      makeTagContainer(firstToken, firstTagHtml),
+      makeTagContainer(secondToken, secondTagHtml)
+    ]
   };
   const row = {
     querySelector: () => source
@@ -95,7 +101,9 @@ test('GientTransRowReader re-resolves a target and reads source tag HTML from it
     );
     assert.deepEqual(
       reader.collectSourceTagHtmlByToken(currentTarget as never),
-      new Map([['{1}', [tagHtml]]])
+      new Map([
+        ['❮color=#FFA500❯', [firstTagHtml, secondTagHtml]]
+      ])
     );
   } finally {
     globalThis.document = previousDocument;

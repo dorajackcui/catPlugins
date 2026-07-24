@@ -7,6 +7,7 @@ import {
   gientransTextToEditorHtml,
   normalizeGientTransEditorText
 } from '../platforms/gientrans/editor-text.ts';
+import { normalizeGientTransDomTagToken } from '../domain/gientrans-markup.ts';
 
 const ROW_SELECTOR = '.editor__table tbody > tr.el-table__row';
 const TARGET_SELECTOR = 'td.target-cell pre.edit__input[editortype="target"]';
@@ -303,6 +304,31 @@ test('normalizeGientTransEditorText removes editor-only invisible markers', () =
   );
 });
 
+test('normalizeGientTransDomTagToken unwraps new ph equiv-text tags', () => {
+  assert.equal(
+    normalizeGientTransDomTagToken('❮ph equiv-text="{0}" id="86"/❯'),
+    '{0}'
+  );
+  assert.equal(
+    normalizeGientTransDomTagToken(
+      '❮ph equiv-text="❰color=#FFA500❱" id="148"/❯'
+    ),
+    '❮color=#FFA500❯'
+  );
+  assert.equal(
+    normalizeGientTransDomTagToken(
+      '❮ph equiv-text="❰/color❱" id="149"/❯'
+    ),
+    '❮/color❯'
+  );
+  assert.equal(
+    normalizeGientTransDomTagToken(
+      '❮ph equiv-text="&lt;link=9&gt;" id="87"/❯'
+    ),
+    '❮link=9❯'
+  );
+});
+
 test('gientransTextToEditorHtml escapes text and preserves visible spaces', () => {
   assert.equal(
     gientransTextToEditorHtml('A <tag> & B'),
@@ -343,6 +369,57 @@ test('gientransTextToEditorHtml converts XML-like GientTrans tags to tag HTML', 
   );
 
   assert.equal(html, `${openSize}${openColor}Cabichou${closeColor}${closeSize}`);
+});
+
+test('gientransTextToEditorHtml preserves distinct IDs for repeated ph tags', () => {
+  const firstOpen = '<span data-id="148">open-1</span>';
+  const firstClose = '<span data-id="149">close-1</span>';
+  const secondOpen = '<span data-id="150">open-2</span>';
+  const secondClose = '<span data-id="151">close-2</span>';
+  const html = gientransTextToEditorHtml(
+    '<color=#FFA500>Rosépaon</color> puis <color=#FFA500>Licornel</color>',
+    new Map([
+      ['❮color=#FFA500❯', [firstOpen, secondOpen]],
+      ['❮/color❯', [firstClose, secondClose]]
+    ])
+  );
+
+  assert.equal(
+    html,
+    `${firstOpen}Rosépaon${firstClose}<span class="whitechar sp" contenteditable="false"> </span>\u200Bpuis<span class="whitechar sp" contenteditable="false"> </span>\u200B${secondOpen}Licornel${secondClose}`
+  );
+});
+
+test('GientTransAdapter serializes new ph wrappers as their source tokens', () => {
+  const source = makeEditor('source', 'target-ph', '');
+  setChildNodes(source, [
+    makeTagNode('❮ph equiv-text="{0}" id="86"/❯'),
+    makeTagNode('❮ph equiv-text="❰link=9❱" id="87"/❯'),
+    makeTextNode('防御'),
+    makeTagNode('❮ph equiv-text="❰/link❱" id="90"/❯')
+  ]);
+  const row = new FakeRow(
+    '6',
+    source,
+    makeEditor('target', 'target-ph', '')
+  );
+  const restore = installFakeDocument([row]);
+  const restoreConsole = silenceConsoleInfo();
+
+  try {
+    const adapter = new GientTransAdapter(createHelpers());
+    const segments = adapter.collectVisibleSegments(fakeScrollContext());
+
+    assert.equal(segments[0]?.sourceRaw, '{0}❮link=9❯防御❮/link❯');
+    assert.deepEqual(segments[0]?.placeholderTokens, [
+      '{0}',
+      '❮link=9❯',
+      '❮/link❯'
+    ]);
+  } finally {
+    restoreConsole();
+    restore();
+  }
 });
 
 test('gientransTextToEditorHtml converts generic XML-like closing tags to tag HTML', () => {

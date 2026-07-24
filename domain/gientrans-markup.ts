@@ -11,6 +11,10 @@ const GIENTRANS_XML_OPEN_TAG_PATTERN = /^<([A-Za-z][\w-]*)(=[^<>]+)>$/;
 const GIENTRANS_XML_BARE_OPEN_TAG_PATTERN = /^<([A-Za-z][\w-]*)>$/;
 const GIENTRANS_XML_CLOSE_TAG_PATTERN = /^<\/([A-Za-z][\w-]*)>$/;
 const GIENTRANS_KNOWN_XML_TAG_NAMES = new Set(['color', 'size']);
+const GIENTRANS_PH_WRAPPER_PATTERN = /^(?:❮|<)ph\b[\s\S]*\/(?:❯|>)$/;
+const GIENTRANS_PH_EQUIV_TEXT_PATTERN =
+  /\bequiv-text\s*=\s*(?:"([^"]*)"|'([^']*)')/;
+const GIENTRANS_NESTED_TAG_PATTERN = /❰([^❰❱]+)❱/g;
 
 export interface GientTransMarkupToken {
   raw: string;
@@ -97,7 +101,53 @@ export function gientransXmlTagToDefaultToken(raw: string): string | null {
 }
 
 export function normalizeGientTransDomTagToken(token: string): string {
-  return token;
+  if (!GIENTRANS_PH_WRAPPER_PATTERN.test(token)) {
+    return token;
+  }
+
+  const equivTextMatch = token.match(GIENTRANS_PH_EQUIV_TEXT_PATTERN);
+  const encodedEquivText = equivTextMatch?.[1] ?? equivTextMatch?.[2];
+  if (encodedEquivText === undefined) {
+    return token;
+  }
+
+  const equivText = decodeGientTransAttributeValue(encodedEquivText).replace(
+    GIENTRANS_NESTED_TAG_PATTERN,
+    '❮$1❯'
+  );
+  const xmlToken = gientransXmlTagToDefaultToken(equivText);
+
+  return xmlToken ?? equivText;
+}
+
+function decodeGientTransAttributeValue(value: string): string {
+  return value.replace(
+    /&(?:quot|apos|amp|lt|gt|#\d+|#x[\da-f]+);/gi,
+    (entity) => {
+      switch (entity.toLowerCase()) {
+        case '&quot;':
+          return '"';
+        case '&apos;':
+          return "'";
+        case '&amp;':
+          return '&';
+        case '&lt;':
+          return '<';
+        case '&gt;':
+          return '>';
+        default: {
+          const numericValue = entity.startsWith('&#x') || entity.startsWith('&#X')
+            ? Number.parseInt(entity.slice(3, -1), 16)
+            : Number.parseInt(entity.slice(2, -1), 10);
+          return Number.isFinite(numericValue) &&
+            numericValue >= 0 &&
+            numericValue <= 0x10ffff
+            ? String.fromCodePoint(numericValue)
+            : entity;
+        }
+      }
+    }
+  );
 }
 
 function findGientTransDefaultTagTokenAt(
