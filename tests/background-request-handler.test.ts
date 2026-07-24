@@ -394,6 +394,32 @@ test('BackgroundRequestHandler exports all scanned sources with a stable date', 
   assert.equal(request.payload.scanFromTop, true);
 });
 
+test('BackgroundRequestHandler names GientTrans exports with the current task ID', async () => {
+  const harness = createHarness({
+    tab: {
+      id: 77,
+      url: 'https://gentrans.genplus.cn/#/olEditor?parentTaskId=2079851761669750786&taskId=2079851761669750786&taskSubWorkflowId=&fileIds=2079850833514655746'
+    },
+    responses: [{ ok: true, data: [SEGMENT] } satisfies ApiResponse<PageSegment[]>]
+  });
+
+  const response = await harness.handler.handle({ type: 'EXPORT_SOURCES' });
+  const result = response.ok
+    ? (response.data as {
+        fileName: string;
+        bytes: number[];
+        segmentCount: number;
+      })
+    : null;
+
+  assert.equal(
+    result?.fileName,
+    'gientrans-sources-2079851761669750786-2026-07-15.xlsx'
+  );
+  assert.equal(result?.segmentCount, 1);
+  assert.equal(Boolean(result?.bytes.length), true);
+});
+
 test('BackgroundRequestHandler finalizes failed Preview runs as errors', async () => {
   const harness = createHarness({
     state: makeRuntimeState({ translationEntries: [ENTRY] }),

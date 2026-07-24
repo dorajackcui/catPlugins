@@ -136,3 +136,30 @@ test('buildSourceExportWorkbook writes row number source target and occurrence c
     ['273', 'Unique Privilege<1>Unlimited Summons', '', 1]
   ]);
 });
+
+test('buildSourceExportWorkbook preserves normalized GientTrans placeholders', () => {
+  const buffer = buildSourceExportWorkbook([
+    {
+      domId: '2079851062074056723',
+      rowNumber: '19',
+      sourceRaw: '{0}看呆了，急忙上前想要抢下一颗苹果。',
+      sourceNormalized: '{0}看呆了，急忙上前想要抢下一颗苹果。',
+      occurrenceIndex: 1,
+      targetRaw: '',
+      isEmptyTarget: true,
+      placeholderTokens: ['{0}'],
+      platform: 'gientrans'
+    }
+  ]);
+
+  const workbook = read(buffer, { type: 'array' });
+  const rows = xlsxUtils.sheet_to_json<unknown[]>(workbook.Sheets.Sources, {
+    header: 1,
+    defval: ''
+  });
+
+  assert.deepEqual(rows, [
+    ['rowNumber', 'source', 'target', 'occurrenceIndex'],
+    ['19', '{0}看呆了，急忙上前想要抢下一颗苹果。', '', 1]
+  ]);
+});

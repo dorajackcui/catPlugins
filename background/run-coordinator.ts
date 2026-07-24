@@ -15,7 +15,7 @@ import {
   BackgroundEditorSession,
   type BackgroundEditorSessionPort
 } from './editor-session.ts';
-import { isMemoqUrl } from './editor-url.ts';
+import { isGientTransUrl, isMemoqUrl } from './editor-url.ts';
 import { buildSourceExportWorkbook } from './excel.ts';
 import {
   BackgroundRunLifecycle,
@@ -117,7 +117,7 @@ export class BackgroundRunCoordinator {
 
       const workbookBytes = buildSourceExportWorkbook(segments);
       const result: ExportSourcesResult = {
-        fileName: this.createSourceExportFileName(),
+        fileName: this.createSourceExportFileName(tab.url),
         bytes: Array.from(workbookBytes),
         segmentCount: segments.length
       };
@@ -242,8 +242,33 @@ export class BackgroundRunCoordinator {
     return isMemoqUrl(url) ? applyMemoqPreviewCorrection(preview) : preview;
   }
 
-  private createSourceExportFileName(): string {
+  private createSourceExportFileName(url?: string): string {
     const date = this.port.now().toISOString().slice(0, 10);
+    if (isGientTransUrl(url)) {
+      const taskId = url ? extractGientTransTaskId(url) : null;
+      return taskId
+        ? `gientrans-sources-${taskId}-${date}.xlsx`
+        : `gientrans-sources-${date}.xlsx`;
+    }
+
     return `memoq-sources-${date}.xlsx`;
+  }
+}
+
+function extractGientTransTaskId(url: string): string | null {
+  try {
+    const hash = new URL(url).hash;
+    const queryIndex = hash.indexOf('?');
+    if (queryIndex === -1) {
+      return null;
+    }
+
+    const taskId = new URLSearchParams(hash.slice(queryIndex + 1))
+      .get('taskId')
+      ?.trim();
+
+    return taskId && /^[A-Za-z0-9_-]+$/.test(taskId) ? taskId : null;
+  } catch {
+    return null;
   }
 }
