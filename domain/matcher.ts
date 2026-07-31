@@ -106,6 +106,9 @@ export function classifySegment(
     };
   }
 
+  // Excel source/target markup is trusted. When memoQ replaces source spans
+  // with accessibility markers, validating against the rendered source would
+  // report placeholder errors for a presentation-only difference.
   if (
     normalizedFillOptions.validatePlaceholders &&
     !usesMemoqProtectedSourceBridge(entry, segment) &&

@@ -230,6 +230,37 @@ test('buildPreview falls back to a unique memoQ source when an imported row numb
   assert.equal(preview.items[0]?.translation, 'Correct translation');
 });
 
+test('buildPreview rejects a marker-only memoQ source without visible matching evidence', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 158,
+        rowNumber: '158',
+        sourceRaw: 'Completely unrelated source',
+        sourceNormalized: 'Completely unrelated source',
+        targetRaw: 'Wrong translation',
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: '158',
+        rowNumber: '158',
+        sourceRaw: '<1>',
+        sourceNormalized: '<1>',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: ['<1>'],
+        platform: 'memoq'
+      }
+    ]
+  );
+
+  assert.equal(preview.items[0]?.status, 'unmatched');
+  assert.equal(preview.items[0]?.translation, undefined);
+});
+
 test('memoQ preview correction preserves legitimate unmatched rows', () => {
   const preview = buildPreview([], [
     {

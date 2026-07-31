@@ -39,6 +39,27 @@ test('memoQ protected-source matching still rejects changed visible text', () =>
   );
 });
 
+test('memoQ protected-source matching rejects marker-only fuzzy matches', () => {
+  assert.equal(
+    memoqProtectedSourceMatchesExcelSource(
+      '<1>',
+      'Completely unrelated source'
+    ),
+    false
+  );
+  assert.equal(
+    memoqProtectedSourceMatchesExcelSource(
+      '{1><1}',
+      'Another unrelated source'
+    ),
+    false
+  );
+  assert.equal(
+    memoqProtectedSourceMatchesExcelSource('<1>', '<1>'),
+    true
+  );
+});
+
 test('memoQ protected-source matching refuses an unbounded protected span', () => {
   assert.equal(
     memoqProtectedSourceMatchesExcelSource(

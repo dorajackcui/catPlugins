@@ -33,6 +33,12 @@ export function memoqProtectedSourceMatchesExcelSource(
     return false;
   }
 
+  // Marker-only sources contain no visible evidence that can identify an
+  // Excel row, so treating their protected gap as a wildcard is unsafe.
+  if (!pattern.anchors.some((anchor) => anchor.length > 0)) {
+    return false;
+  }
+
   const firstAnchor = pattern.anchors[0] ?? '';
   if (!normalizedExcelSource.startsWith(firstAnchor)) {
     return false;
