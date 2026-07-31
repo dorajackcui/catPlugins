@@ -5,7 +5,8 @@ import type { ScrollContext } from '../content/dom.ts';
 import { GientTransAdapter } from '../platforms/gientrans/adapter.ts';
 import {
   gientransTextToEditorHtml,
-  normalizeGientTransEditorText
+  normalizeGientTransEditorText,
+  prepareGientTransTargetText
 } from '../platforms/gientrans/editor-text.ts';
 import { normalizeGientTransDomTagToken } from '../domain/gientrans-markup.ts';
 
@@ -301,6 +302,13 @@ test('normalizeGientTransEditorText removes editor-only invisible markers', () =
   assert.equal(
     normalizeGientTransEditorText('Le\u00a0\u200BCocoricou\uFEFF'),
     'Le Cocoricou'
+  );
+});
+
+test('prepareGientTransTargetText removes only whitespace before real line breaks', () => {
+  assert.equal(
+    prepareGientTransTargetText('Lance \r\n  Dracopousse\t\nFin\\nTag'),
+    'Lance\n  Dracopousse\nFin\\nTag'
   );
 });
 
@@ -755,6 +763,73 @@ test('GientTransAdapter.fillSegment uses GientTrans beforeinput paste when avail
     globalThis.InputEvent = previousInputEvent;
     globalThis.DataTransfer = previousDataTransfer;
     globalThis.document.execCommand = previousExecCommand;
+    restoreConsole();
+    restore();
+  }
+});
+
+test('GientTransAdapter.fillSegment removes trailing line whitespace before writing', async () => {
+  const calls: string[] = [];
+  const row = new FakeRow(
+    '6',
+    makeEditor('source', 'target-6', '兰斯 \n草龙宝宝'),
+    makeEditor('target', 'target-6', 'Old target')
+  );
+  const restore = installFakeDocument([row]);
+  const restoreConsole = silenceConsoleInfo();
+  const previousInputEvent = globalThis.InputEvent;
+  const previousDataTransfer = globalThis.DataTransfer;
+  const originalDispatchEvent = row.target.dispatchEvent.bind(row.target);
+
+  globalThis.InputEvent = FakeInputEvent as never;
+  globalThis.DataTransfer = FakeDataTransfer as never;
+  row.target.dispatchEvent = ((event: Event) => {
+    if (event.type === 'beforeinput') {
+      const inputEvent = event as InputEvent & { dataTransfer?: DataTransfer };
+      calls.push(
+        `beforeinput:${inputEvent.dataTransfer?.getData('text/plain') ?? ''}`
+      );
+      row.target.innerHTML =
+        inputEvent.dataTransfer?.getData('text/segment') ?? '';
+      event.preventDefault();
+      return false;
+    }
+
+    return originalDispatchEvent(event);
+  }) as never;
+
+  try {
+    const adapter = new GientTransAdapter(createHelpers(calls));
+    const outcome = await adapter.fillSegment(
+      {
+        domId: 'target-6',
+        rowNumber: '6',
+        sourceRaw: '兰斯 \n草龙宝宝',
+        sourceNormalized: '兰斯 草龙宝宝',
+        occurrenceIndex: 1,
+        targetRaw: 'Old target',
+        isEmptyTarget: false,
+        placeholderTokens: [],
+        targetElement: row.target as never,
+        platform: 'gientrans'
+      },
+      'Lance \r\nDracopousse'
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.deepEqual(
+      calls.filter((call) => call.startsWith('beforeinput:')),
+      ['beforeinput:Lance\nDracopousse']
+    );
+    assert.equal(
+      adapter.getEditableValue(row.target as never),
+      'Lance\nDracopousse'
+    );
+    assert.equal(row.target.innerHTML.includes('whitechar lf'), true);
+    assert.equal(row.target.innerHTML.includes('whitechar sp'), false);
+  } finally {
+    globalThis.InputEvent = previousInputEvent;
+    globalThis.DataTransfer = previousDataTransfer;
     restoreConsole();
     restore();
   }

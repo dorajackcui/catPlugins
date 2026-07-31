@@ -1,5 +1,5 @@
-import { normalizeText } from '../../shared/utils.ts';
 import {
+  normalizeGientTransEditorText,
   readGientTransEditorText,
   readGientTransEditorTextPreservingNbsp,
   stripEditorMarkers
@@ -79,7 +79,7 @@ export class GientTransEditorWriter {
     return {
       method: 'insertText',
       attempted: true,
-      ok: after.normalized === normalizeText(value),
+      ok: this.isTextMatch(target, value),
       execResult,
       selected,
       before,
@@ -258,17 +258,30 @@ export class GientTransEditorWriter {
   }
 
   private isTextMatch(target: HTMLElement, expected: string): boolean {
-    const normalizedExpected = normalizeGientTransInlineMarkup(stripEditorMarkers(expected));
+    const expectedWithoutMarkers = normalizeLineEndings(
+      stripEditorMarkers(expected)
+    );
     if (expected.includes('\u00A0')) {
       return (
-        normalizeGientTransInlineMarkup(readGientTransEditorTextPreservingNbsp(target)) ===
-        normalizedExpected
+        normalizeGientTransInlineMarkup(
+          normalizeLineEndings(
+            readGientTransEditorTextPreservingNbsp(target)
+          )
+        ) === normalizeGientTransInlineMarkup(expectedWithoutMarkers)
       );
     }
 
     return (
-      normalizeText(normalizeGientTransInlineMarkup(readGientTransEditorText(target))) ===
-      normalizeText(normalizedExpected)
+      normalizeGientTransInlineMarkup(
+        normalizeLineEndings(readGientTransEditorText(target))
+      ) ===
+      normalizeGientTransInlineMarkup(
+        normalizeGientTransEditorText(expectedWithoutMarkers)
+      )
     );
   }
+}
+
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n?/g, '\n');
 }

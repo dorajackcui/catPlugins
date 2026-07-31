@@ -156,6 +156,30 @@ test('GientTransEditorWriter writes text through execCommand with diagnostics', 
   }
 });
 
+test('GientTransEditorWriter does not collapse a missing line break during confirmation', () => {
+  const target = new TestEditor(
+    { contenteditable: 'true' },
+    'Lance Dracopousse'
+  );
+  const restore = installDomGlobals({
+    execCommand(_command, _showDefaultUi, value) {
+      target.innerHTML = (value ?? '').replace('\n', ' ');
+      return true;
+    }
+  });
+
+  try {
+    const diagnostic = createWriter().writeText(
+      target as unknown as HTMLElement,
+      'Lance\nDracopousse'
+    );
+
+    assert.equal(diagnostic.ok, false);
+  } finally {
+    restore();
+  }
+});
+
 test('GientTransEditorWriter sends plain text and editor HTML through beforeinput', () => {
   const previousInputEvent = globalThis.InputEvent;
   const previousDataTransfer = globalThis.DataTransfer;

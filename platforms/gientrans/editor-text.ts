@@ -8,6 +8,18 @@ const ZERO_WIDTH_EDITOR_MARKERS = /[\u200B\uFEFF\u2060]/g;
 
 export type GientTransTagHtmlLookup = ReadonlyMap<string, readonly string[]>;
 
+/**
+ * GientTrans flags horizontal whitespace immediately before a real line break
+ * as "Space at end of line". Excel keeps that whitespace verbatim, so remove
+ * only the invalid line-ending padding while preserving indentation and
+ * literal backslash-n tag tokens.
+ */
+export function prepareGientTransTargetText(value: string): string {
+  return value
+    .replace(/[ \t]+(?=\r\n|\r|\n)/g, '')
+    .replace(/\r\n?/g, '\n');
+}
+
 export function normalizeGientTransEditorText(value: string): string {
   return value
     .replace(/\u00A0/g, ' ')
