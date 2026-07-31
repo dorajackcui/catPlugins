@@ -36,7 +36,12 @@ export class MemoqScrollContextResolver {
 
     const visibleTargets = this.getVisibleProfileTargets();
     const scrollContainer = this.helpers.findBestScrollContainer(visibleTargets);
-    if (scrollContainer) {
+    if (
+      scrollContainer &&
+      visibleTargets.some((target) =>
+        this.isSameOrAncestor(scrollContainer, target)
+      )
+    ) {
       return this.helpers.toElementScrollContext(scrollContainer);
     }
 
@@ -81,6 +86,23 @@ export class MemoqScrollContextResolver {
 
     return [...candidates.entries()]
       .sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+  }
+
+  private isSameOrAncestor(
+    possibleAncestor: HTMLElement,
+    element: HTMLElement
+  ): boolean {
+    let cursor: HTMLElement | null = element;
+
+    while (cursor) {
+      if (cursor === possibleAncestor) {
+        return true;
+      }
+
+      cursor = cursor.parentElement;
+    }
+
+    return false;
   }
 
   private createSyntheticScrollContext(target: HTMLElement): ScrollContext {

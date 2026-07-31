@@ -123,6 +123,113 @@ test('buildPreview rejects a memoQ row-number match when the Excel source differ
   );
 });
 
+test('buildPreview matches memoQ protected markers against the original Excel source', () => {
+  const excelSource =
+    '1. 活动期间。\\r\\n2. 搭配师可自由选择。\\r\\n3. 若已解锁。\\r\\n4. 可以补购。\\r\\n5. 获得权益。';
+  const memoqSource =
+    '1. 活动期间。\\r{1>2. 搭配师可自由选择。\\r{1>3. 若已解锁。\\r{1>4. 可以补购。\\r{1>5. 获得权益。';
+  const target =
+    '1. Pendant.\\r\\n\\r\\n2. Choisissez.\\r\\n\\r\\n3. Débloqué.\\r\\n\\r\\n4. Achat.\\r\\n5. Privilèges.';
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 158,
+        sourceRaw: excelSource,
+        sourceNormalized: excelSource,
+        targetRaw: target,
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: 'memoq-protected-158',
+        sourceRaw: memoqSource,
+        sourceNormalized: memoqSource,
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: ['{1>', '{1>', '{1>', '{1>'],
+        platform: 'memoq'
+      }
+    ]
+  );
+
+  assert.equal(preview.items[0]?.status, 'ready');
+  assert.equal(preview.items[0]?.translation, target);
+  assert.equal(preview.readyToFill, 1);
+  assert.equal(preview.placeholderErrors, 0);
+});
+
+test('buildPreview accepts a row-number memoQ match through protected markers', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 158,
+        rowNumber: '158',
+        sourceRaw: 'Before\\nAfter',
+        sourceNormalized: 'Before\\nAfter',
+        targetRaw: 'Target',
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: '158',
+        rowNumber: '158',
+        sourceRaw: 'Before{1>After',
+        sourceNormalized: 'Before{1>After',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: ['{1>'],
+        platform: 'memoq'
+      }
+    ]
+  );
+
+  assert.equal(preview.items[0]?.status, 'ready');
+  assert.equal(preview.items[0]?.translation, 'Target');
+});
+
+test('buildPreview falls back to a unique memoQ source when an imported row number is unrelated', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 2,
+        rowNumber: '158',
+        sourceRaw: 'Unrelated source assigned to imported row 158',
+        sourceNormalized: 'Unrelated source assigned to imported row 158',
+        targetRaw: 'Wrong translation',
+        occurrenceIndex: 1
+      },
+      {
+        rowIndex: 3,
+        rowNumber: '999',
+        sourceRaw: String.raw`Before\r\nAfter`,
+        sourceNormalized: String.raw`Before\r\nAfter`,
+        targetRaw: 'Correct translation',
+        occurrenceIndex: 7
+      }
+    ],
+    [
+      {
+        domId: '158',
+        rowNumber: '158',
+        sourceRaw: String.raw`Before\r{1>After`,
+        sourceNormalized: String.raw`Before\r{1>After`,
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: ['{1>'],
+        platform: 'memoq'
+      }
+    ]
+  );
+
+  assert.equal(preview.items[0]?.status, 'ready');
+  assert.equal(preview.items[0]?.translation, 'Correct translation');
+});
+
 test('memoQ preview correction preserves legitimate unmatched rows', () => {
   const preview = buildPreview([], [
     {

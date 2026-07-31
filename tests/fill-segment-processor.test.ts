@@ -85,8 +85,9 @@ test('FillSegmentProcessor rejects a stale memoQ row before any write', async ()
   assert.deepEqual(progressReports, [
     { scannedCount: 1, filledCount: 0, plannedFillCount: 1 }
   ]);
-  assert.equal(warningLogs[0]?.label, 'memoQ fill:match-rejected');
+  assert.equal(warningLogs[0]?.label, 'memoQ fill:skipped');
   assert.equal(warningLogs[0]?.payload.rowNumber, '42');
+  assert.equal(warningLogs[0]?.payload.status, 'unmatched');
   assert.equal(result.filledCount, 0);
   assert.equal(result.preview.items[0]?.status, 'unmatched');
   assert.equal(

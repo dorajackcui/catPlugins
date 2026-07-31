@@ -156,6 +156,21 @@ test('serializeMemoqContent uses aggregated descendant text for mixed nested con
   assert.equal(serializeMemoqContent(root as unknown as HTMLElement), 'A{1>BCD');
 });
 
+test('serializeMemoqContent converts memoQ whitespace display spans back to spaces', () => {
+  const root = fakeElement({
+    children: [
+      fakeText('1.'),
+      fakeElement({
+        className: 'editor-char space ws-space',
+        textContent: MIDDLE_DOT
+      }),
+      fakeText('Source')
+    ]
+  });
+
+  assert.equal(serializeMemoqContent(root as unknown as HTMLElement), '1. Source');
+});
+
 test('fake DOM keeps own textContent alongside descendant text', () => {
   const root = fakeElement({
     textContent: 'A',

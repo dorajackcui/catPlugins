@@ -98,6 +98,56 @@ test('MemoqScrollContextResolver preserves synthetic wheel, PageDown, and Home i
   assert.equal(context?.getTop(), 0);
 });
 
+test('MemoqScrollContextResolver ignores an unrelated scrollable TM pane', () => {
+  const source = fakeElement({ textContent: 'Source' });
+  const target = Object.assign(fakeElement({ textContent: 'Target' }), {
+    clientHeight: 280,
+    focus: () => undefined,
+    dispatchEvent: () => true
+  });
+  const row = fakeElement({ children: [source, target] });
+  const unrelatedTmPane = fakeElement({ textContent: 'TM results' });
+  const root = fakeDocument(
+    fakeElement({ children: [row, unrelatedTmPane] })
+  );
+  const profile: MemoqDomProfile = {
+    id: 'legacy-webtrans',
+    matches: () => true,
+    findVisibleRows: () => [row as unknown as HTMLElement],
+    findCells: () => ({
+      source: source as unknown as HTMLElement,
+      target: target as unknown as HTMLElement
+    }),
+    readRowNumber: () => '158',
+    findScrollRoot: () => null,
+    findCurrentTargetByRowNumber: () => target as unknown as HTMLElement,
+    getContentRoot: (cell) => cell,
+    getWriteTarget: (cell) => cell,
+    createSyntheticScrollTarget: () => target as unknown as HTMLElement
+  };
+  let nativeContextCalls = 0;
+  const helpers = {
+    isElementVisible: () => true,
+    isScrollableContainer: () => false,
+    findBestScrollContainer: () => unrelatedTmPane as unknown as HTMLElement,
+    toElementScrollContext: () => {
+      nativeContextCalls += 1;
+      throw new Error('The unrelated TM pane must not be selected.');
+    }
+  } as unknown as ContentScrollHelpers;
+  const environment: MemoqScrollEnvironment = {
+    root,
+    getViewportHeight: () => 600,
+    createKeyboardEvent: (type, init) => ({ type, ...init }) as unknown as KeyboardEvent,
+    createWheelEvent: (type, init) => ({ type, ...init }) as unknown as WheelEvent
+  };
+
+  const context = new MemoqScrollContextResolver(profile, helpers, environment).resolve();
+
+  assert.equal(context?.mode, 'synthetic');
+  assert.equal(nativeContextCalls, 0);
+});
+
 function toRecordedEvent(
   receiver: RecordedEvent['receiver'],
   event: Event

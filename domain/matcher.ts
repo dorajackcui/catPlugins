@@ -11,8 +11,17 @@ import {
   normalizeGientTransInlineMarkup,
   stripGientTransInlineMarkup
 } from './gientrans-markup.ts';
+import {
+  hasMemoqInlineTagMarkup,
+  memoqProtectedSourceMatchesExcelSource
+} from './memoq-markup.ts';
 import { normalizePhraseTagClipText } from './phrase-markup.ts';
 import { normalizeText } from '../shared/utils.ts';
+
+const entriesByLookup = new WeakMap<
+  Map<string, TranslationEntry>,
+  TranslationEntry[]
+>();
 
 export function buildMatchKey(sourceNormalized: string, occurrenceIndex: number): string {
   return `source:${sourceNormalized}::${occurrenceIndex}`;
@@ -26,6 +35,7 @@ export function createEntryLookup(
   entries: TranslationEntry[]
 ): Map<string, TranslationEntry> {
   const lookup = new Map<string, TranslationEntry>();
+  entriesByLookup.set(lookup, entries);
 
   for (const entry of entries) {
     if (entry.rowNumber) {
@@ -55,12 +65,19 @@ export function classifySegment(
   const rowNumberEntry = segment.rowNumber
     ? entryLookup.get(buildRowNumberMatchKey(segment.rowNumber))
     : undefined;
+  const matchingRowNumberEntry =
+    rowNumberEntry &&
+    (segment.platform !== 'memoq' || memoqSourcesMatch(rowNumberEntry, segment))
+      ? rowNumberEntry
+      : undefined;
+  const sourceEntry = findEntryBySource(entryLookup, segment);
 
   if (
     segment.platform === 'memoq' &&
     segment.rowNumber &&
     rowNumberEntry &&
-    normalizeText(rowNumberEntry.sourceNormalized) !== normalizeText(segment.sourceNormalized)
+    !matchingRowNumberEntry &&
+    !sourceEntry
   ) {
     return {
       ...segment,
@@ -69,7 +86,7 @@ export function classifySegment(
     };
   }
 
-  const entry = rowNumberEntry ?? findEntryBySource(entryLookup, segment);
+  const entry = matchingRowNumberEntry ?? sourceEntry;
 
   if (!entry) {
     return {
@@ -91,6 +108,7 @@ export function classifySegment(
 
   if (
     normalizedFillOptions.validatePlaceholders &&
+    !usesMemoqProtectedSourceBridge(entry, segment) &&
     !placeholdersMatch(segment.sourceRaw, entry.targetRaw)
   ) {
     return {
@@ -122,6 +140,30 @@ function findEntryBySource(
   }
 
   if (segment.platform !== 'gientrans') {
+    if (segment.platform === 'memoq') {
+      const protectedSourceMatches = (entriesByLookup.get(entryLookup) ?? [])
+        .filter((entry) =>
+          memoqProtectedSourceMatchesExcelSource(
+            segment.sourceRaw,
+            entry.sourceRaw
+          )
+        );
+      const occurrenceMatches = protectedSourceMatches.filter(
+        (entry) => entry.occurrenceIndex === segment.occurrenceIndex
+      );
+
+      if (occurrenceMatches.length === 1) {
+        return occurrenceMatches[0];
+      }
+
+      // Synthetic memoQ navigation can begin in the middle of a document, so
+      // its scan-local occurrence index is not always the workbook occurrence
+      // index. A globally unique source remains safe to match.
+      return protectedSourceMatches.length === 1
+        ? protectedSourceMatches[0]
+        : undefined;
+    }
+
     if (segment.platform === 'phrase' || segment.platform === 'generic') {
       const canonicalPhraseSource = normalizePhraseTagClipText(segment.sourceRaw);
       return entryLookup.get(
@@ -149,6 +191,28 @@ function findEntryBySource(
 
   return entryLookup.get(
     buildMatchKey(sourceWithoutGientTransTags, segment.occurrenceIndex)
+  );
+}
+
+function memoqSourcesMatch(
+  entry: TranslationEntry,
+  segment: PageSegment
+): boolean {
+  return (
+    normalizeText(entry.sourceNormalized) === normalizeText(segment.sourceNormalized) ||
+    memoqProtectedSourceMatchesExcelSource(segment.sourceRaw, entry.sourceRaw)
+  );
+}
+
+function usesMemoqProtectedSourceBridge(
+  entry: TranslationEntry,
+  segment: PageSegment
+): boolean {
+  return (
+    segment.platform === 'memoq' &&
+    hasMemoqInlineTagMarkup(segment.sourceRaw) &&
+    normalizeText(entry.sourceNormalized) !== normalizeText(segment.sourceNormalized) &&
+    memoqProtectedSourceMatchesExcelSource(segment.sourceRaw, entry.sourceRaw)
   );
 }
 

@@ -108,6 +108,11 @@ export function serializeMemoqContent(content: HTMLElement): string {
       return;
     }
 
+    if (element.classList.contains('ws-space')) {
+      fragments.push(' ');
+      return;
+    }
+
     for (const child of Array.from(element.childNodes)) {
       visit(child);
     }

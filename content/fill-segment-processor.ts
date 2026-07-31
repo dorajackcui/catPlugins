@@ -1,6 +1,7 @@
 import type { RuntimeSegment } from './types.ts';
 import { normalizeFillOptions } from '../domain/fill-options.ts';
 import { describeFillStopReason, shouldStopAfterFillFailure } from '../domain/fill-failure.ts';
+import { memoqProtectedSourceMatchesExcelSource } from '../domain/memoq-markup.ts';
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFillForPlatform } from '../domain/fill-throttle.ts';
 import {
   applyFilledToPreview,
@@ -20,12 +21,15 @@ import type {
   PreviewItem,
   TranslationEntry
 } from '../shared/translation-types.ts';
+import { normalizeText } from '../shared/utils.ts';
 import type { FillSegmentProcessorPort } from './fill-runner-contracts.ts';
 import { shouldRescanAfterSegmentFill } from './scan-dedupe.ts';
 import type { SegmentScanCallback, SegmentScanContext } from './segment-scanner.ts';
 
 const DEFAULT_INTER_FILL_DELAY_MS = 180;
 const MEMOQ_INTER_FILL_DELAY_MS = 320;
+const MAX_MEMOQ_SKIP_LOGS = 5;
+const MEMOQ_INLINE_TAG_PATTERN = /\{\d+>|<\d+\}|<\d+>/g;
 
 export interface FillSegmentProcessorOptions {
   runId: string;
@@ -47,6 +51,7 @@ export class FillSegmentProcessor {
   private stoppedByAutoStop = false;
   private stopReason: string | undefined;
   private memoqFillSequence = 0;
+  private memoqSkipLogCount = 0;
 
   readonly autoStopAfterFilledCount: number | null;
 
@@ -176,20 +181,70 @@ export class FillSegmentProcessor {
   }
 
   private logMemoqMatchRejection(segment: RuntimeSegment, item: PreviewItem): void {
-    if (
-      segment.platform !== 'memoq' ||
-      !item.reason?.includes('source does not match')
-    ) {
+    if (segment.platform !== 'memoq' || this.memoqSkipLogCount >= MAX_MEMOQ_SKIP_LOGS) {
       return;
     }
 
-    this.port.logWarn('memoQ fill:match-rejected', {
+    this.memoqSkipLogCount += 1;
+    this.port.logWarn('memoQ fill:skipped', {
       runId: this.options.runId,
       rowNumber: segment.rowNumber,
       domId: segment.domId,
+      occurrenceIndex: segment.occurrenceIndex,
+      status: item.status,
       source: segment.sourceRaw,
-      reason: item.reason
+      target: segment.targetRaw,
+      reason: item.reason ?? 'No translation value was available.',
+      sourceDiagnostics: this.buildMemoqSourceDiagnostics(segment)
     });
+  }
+
+  private buildMemoqSourceDiagnostics(segment: RuntimeSegment): {
+    protectedSourceMatchCount: number;
+    sameOccurrenceMatchCount: number;
+    closestExcelSources: Array<Record<string, unknown>>;
+  } {
+    const protectedSourceMatches = this.options.entries.filter((entry) =>
+      memoqProtectedSourceMatchesExcelSource(segment.sourceRaw, entry.sourceRaw)
+    );
+    const normalizedSource = normalizeText(segment.sourceRaw);
+    const tagMatches = [...normalizedSource.matchAll(MEMOQ_INLINE_TAG_PATTERN)];
+    const firstTagIndex = tagMatches[0]?.index ?? normalizedSource.length;
+    const lastTag = tagMatches[tagMatches.length - 1];
+    const lastTagEnd = lastTag
+      ? (lastTag.index ?? 0) + lastTag[0].length
+      : 0;
+    const prefix = normalizedSource.slice(0, firstTagIndex);
+    const suffix = normalizedSource.slice(lastTagEnd);
+    const closestExcelSources = this.options.entries
+      .map((entry) => {
+        const excelSource = normalizeText(entry.sourceRaw);
+        return {
+          excelRowIndex: entry.rowIndex,
+          rowNumber: entry.rowNumber,
+          occurrenceIndex: entry.occurrenceIndex,
+          commonPrefixLength: countCommonPrefix(prefix, excelSource),
+          commonSuffixLength: countCommonSuffix(suffix, excelSource),
+          sourceLength: excelSource.length,
+          sourcePreview:
+            excelSource.length > 160
+              ? `${excelSource.slice(0, 157)}...`
+              : excelSource
+        };
+      })
+      .sort((left, right) =>
+        (right.commonPrefixLength + right.commonSuffixLength) -
+        (left.commonPrefixLength + left.commonSuffixLength)
+      )
+      .slice(0, 3);
+
+    return {
+      protectedSourceMatchCount: protectedSourceMatches.length,
+      sameOccurrenceMatchCount: protectedSourceMatches.filter(
+        (entry) => entry.occurrenceIndex === segment.occurrenceIndex
+      ).length,
+      closestExcelSources
+    };
   }
 
   private createMemoqContext(
@@ -256,6 +311,31 @@ export class FillSegmentProcessor {
       ? MEMOQ_INTER_FILL_DELAY_MS
       : DEFAULT_INTER_FILL_DELAY_MS;
   }
+}
+
+function countCommonPrefix(left: string, right: string): number {
+  const length = Math.min(left.length, right.length);
+  let index = 0;
+
+  while (index < length && left[index] === right[index]) {
+    index += 1;
+  }
+
+  return index;
+}
+
+function countCommonSuffix(left: string, right: string): number {
+  const length = Math.min(left.length, right.length);
+  let count = 0;
+
+  while (
+    count < length &&
+    left[left.length - count - 1] === right[right.length - count - 1]
+  ) {
+    count += 1;
+  }
+
+  return count;
 }
 
 export function normalizeAutoStopAfterFilledCount(

@@ -7,6 +7,15 @@ import type { MemoqDomProfile } from './dom-profile-types.ts';
 
 const LEGACY_CELL_SELECTOR = '.editor-cell';
 const LEGACY_CONTENT_SELECTOR = '.content-container';
+const LEGACY_GRID_SELECTOR = '[aria-label="Translation grid"]';
+
+function findLegacyGridScope(root: ParentNode): ParentNode {
+  if (typeof root.querySelector !== 'function') {
+    return root;
+  }
+
+  return root.querySelector<HTMLElement>(LEGACY_GRID_SELECTOR) ?? root;
+}
 
 function findLegacyRowContainer(cell: HTMLElement): HTMLElement | null {
   let cursor = cell.parentElement;
@@ -46,13 +55,20 @@ function readLegacyRowNumber(row: HTMLElement): string | undefined {
 export const legacyWebtransMemoqProfile: MemoqDomProfile = {
   id: 'legacy-webtrans',
   matches(root) {
-    return queryMemoqElements(root, LEGACY_CELL_SELECTOR).length > 0;
+    return queryMemoqElements(
+      findLegacyGridScope(root),
+      LEGACY_CELL_SELECTOR
+    ).length > 0;
   },
   findVisibleRows(root) {
     const rows: HTMLElement[] = [];
     const seen = new Set<HTMLElement>();
+    const gridScope = findLegacyGridScope(root);
 
-    for (const cell of queryMemoqElements(root, LEGACY_CELL_SELECTOR).filter(isMemoqElementVisible)) {
+    for (const cell of queryMemoqElements(
+      gridScope,
+      LEGACY_CELL_SELECTOR
+    ).filter(isMemoqElementVisible)) {
       const row = findLegacyRowContainer(cell);
       if (!row || seen.has(row)) {
         continue;
@@ -104,7 +120,15 @@ export const legacyWebtransMemoqProfile: MemoqDomProfile = {
   getWriteTarget(targetCell) {
     return targetCell;
   },
-  createSyntheticScrollTarget() {
-    return null;
+  createSyntheticScrollTarget(root) {
+    const row = legacyWebtransMemoqProfile.findVisibleRows(root)[0];
+    if (row) {
+      return legacyWebtransMemoqProfile.findCells(row)?.target ?? row;
+    }
+
+    return queryMemoqElements(
+      findLegacyGridScope(root),
+      LEGACY_CELL_SELECTOR
+    )[0] ?? null;
   }
 };

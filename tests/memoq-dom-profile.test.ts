@@ -106,6 +106,51 @@ test('legacy memoQ rows are detected and selected when only legacy cells exist',
     sourceCell.querySelector('.content-container')
   );
   assert.equal(legacyWebtransMemoqProfile.findCurrentTargetByRowNumber(documentRoot, '48'), targetCell);
+  assert.equal(legacyWebtransMemoqProfile.createSyntheticScrollTarget(documentRoot), targetCell);
+});
+
+test('legacy memoQ profile excludes editor cells from the TM comparison pane', () => {
+  const sourceCell = fakeElement({
+    className: 'editor-cell',
+    rect: { left: 120 },
+    textContent: 'Grid source'
+  });
+  const targetCell = fakeElement({
+    className: 'editor-cell',
+    rect: { left: 260 },
+    textContent: 'Grid target'
+  });
+  const gridRow = fakeElement({
+    attributes: { 'aria-rowindex': '158' },
+    children: [fakeElement({ textContent: '158.' }), sourceCell, targetCell]
+  });
+  const translationGrid = fakeElement({
+    attributes: { 'aria-label': 'Translation grid' },
+    children: [gridRow]
+  });
+  const tmSource = fakeElement({
+    className: 'editor-cell',
+    rect: { left: 120 },
+    textContent: 'TM source'
+  });
+  const tmTarget = fakeElement({
+    className: 'editor-cell',
+    rect: { left: 260 },
+    textContent: 'TM target'
+  });
+  const tmRow = fakeElement({ children: [tmSource, tmTarget] });
+  const documentRoot = fakeDocument(
+    fakeElement({ children: [translationGrid, tmRow] })
+  );
+
+  assert.deepEqual(
+    legacyWebtransMemoqProfile.findVisibleRows(documentRoot),
+    [gridRow]
+  );
+  assert.equal(
+    legacyWebtransMemoqProfile.createSyntheticScrollTarget(documentRoot),
+    targetCell
+  );
 });
 
 test('modern memoQ rows are detected and preferred when present', () => {
