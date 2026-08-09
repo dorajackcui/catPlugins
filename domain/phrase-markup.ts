@@ -11,17 +11,20 @@ export type PhraseMarkupPart =
     };
 
 const PHRASE_XML_LIKE_TAG_SOURCE =
-  String.raw`<\/?[\w-]+(?:\s*=\s*[^<>\s]+)?(?:\s+[^<>]*)?\/?>`;
+  String.raw`(?:<\/\>|<\/?[\w-]+(?:\s*=\s*[^<>\s]+)?(?:\s+[^<>]*)?\/?>)`;
 const PHRASE_TAG_TOKEN_PATTERN = new RegExp(
   String.raw`\{\d+\}|${PHRASE_XML_LIKE_TAG_SOURCE}`,
   'g'
 );
-const PHRASE_XML_LIKE_TAG_CLIP_PATTERN =
-  /\d+\s*(<\/?[\w-]+(?:\s*=\s*[^<>\s]+)?(?:\s+[^<>]*)?\/?>)/g;
+const PHRASE_XML_LIKE_TAG_CLIP_PATTERN = new RegExp(
+  String.raw`\d+\s*(${PHRASE_XML_LIKE_TAG_SOURCE})`,
+  'g'
+);
 
 export function normalizePhraseTagClipText(value: string): string {
   return normalizeText(value)
     .replace(/\d+\s*(\{[^{}<>]+\})/g, '$1')
+    .replace(/\d+\s*([|}])/g, '$1')
     .replace(PHRASE_XML_LIKE_TAG_CLIP_PATTERN, '$1');
 }
 

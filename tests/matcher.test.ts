@@ -508,6 +508,72 @@ test('buildPreview matches Phrase tag clips against plain placeholder source tex
   assert.equal(preview.items[0]?.translation, '奮力争抢の有効範囲が{1}m増加する。');
 });
 
+test('buildPreview matches Phrase delimiter tag clips against gender source text', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 7,
+        sourceRaw: '可这次的事件毕竟牵扯到神弃者同盟和军团，{性别：他|她}的处境非常危险。',
+        sourceNormalized: '可这次的事件毕竟牵扯到神弃者同盟和军团，{性别：他|她}的处境非常危险。',
+        targetRaw: 'ですが、今回は帝国軍まで動いています。{性别：彼|彼女}の身に何かあってからでは――',
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: 'phrase-gender-tag-clips',
+        sourceRaw: '可这次的事件毕竟牵扯到神弃者同盟和军团，{性别：他1|她2}的处境非常危险。',
+        sourceNormalized: '可这次的事件毕竟牵扯到神弃者同盟和军团，{性别：他1|她2}的处境非常危险。',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: ['{性别：他1|她2}'],
+        platform: 'phrase'
+      }
+    ],
+    {
+      autoStopAfterFilledCount: null,
+      validatePlaceholders: false
+    }
+  );
+
+  assert.equal(preview.readyToFill, 1);
+  assert.equal(preview.items[0]?.status, 'ready');
+});
+
+test('buildPreview matches Phrase numbered empty closing tags', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 508,
+        sourceRaw: '因为我<H>亲眼看见了</>。',
+        sourceNormalized: '因为我<H>亲眼看见了</>。',
+        targetRaw: '私は、<H>この目で見た</>から。',
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: 'phrase-empty-closing-tag-clips',
+        sourceRaw: '因为我1<H>亲眼看见了2</>。',
+        sourceNormalized: '因为我1<H>亲眼看见了2</>。',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: ['<H>', '</>'],
+        platform: 'phrase'
+      }
+    ],
+    {
+      autoStopAfterFilledCount: null,
+      validatePlaceholders: false
+    }
+  );
+
+  assert.equal(preview.readyToFill, 1);
+  assert.equal(preview.items[0]?.status, 'ready');
+});
+
 test('buildPreview matches Phrase repeated placeholder tag clips with different chip numbers', () => {
   const preview = buildPreview(
     [
