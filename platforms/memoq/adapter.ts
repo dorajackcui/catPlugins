@@ -14,9 +14,18 @@ import {
   readMemoqAccessibilityTextBoxValue
 } from './accessibility-textbox.ts';
 import { serializeMemoqContent } from './text.ts';
-import { writeTrustedTextToElement } from '../../content/trusted-text-writer.ts';
+import {
+  writeTrustedInputSequenceToElement,
+  writeTrustedTextToElement
+} from '../../content/trusted-text-writer.ts';
 import type { FillOutcome } from '../../shared/fill-outcome-types.ts';
-import type { ApiResponse, BackgroundRequest } from '../../shared/message-types.ts';
+import type {
+  ApiResponse,
+  BackgroundRequest,
+  DebuggerInputOperation
+} from '../../shared/message-types.ts';
+import type { MemoqMarkerFillPlan } from '../../domain/memoq-marker-fill.ts';
+import { hasMemoqInlineTagMarkup } from '../../domain/memoq-markup.ts';
 import {
   containsNoBreakSpace,
   normalizeText,
@@ -44,6 +53,7 @@ export interface MemoqFillExecutionContext {
   scanPass: number;
   scrollTop: number;
   scrollMode: 'native' | 'synthetic';
+  markerFillPlan?: MemoqMarkerFillPlan;
 }
 
 export class MemoqAdapter {
@@ -118,26 +128,46 @@ export class MemoqAdapter {
     }
 
     const reader = new MemoqRowReader({ profile, helpers: this.helpers });
+    const markerFillPlan = context?.markerFillPlan;
     const transaction = new MemoqFillTransaction({
       profile,
       readTargetText: (target) => reader.getEditableValue(target),
       readSourceText: (currentSegment) => reader.getCurrentSourceValue(currentSegment),
       resolveCurrentTarget: (rowNumber) => reader.findCurrentTargetByRowNumber(rowNumber),
       collectNearbyRows: (rowNumber) => reader.collectVisibleRowDiagnostics(rowNumber),
-      writeTrustedText: (target, text) =>
-        writeTrustedTextToElement(target, text, {
+      writeTrustedText: (target, text) => {
+        const resolveOptions = segment.rowNumber
+          ? {
+              requireResolvedElement: true,
+              resolveElement: () => {
+                const currentTarget = reader.findCurrentTargetByRowNumber(segment.rowNumber);
+                return currentTarget ? profile.getWriteTarget(currentTarget) : null;
+              }
+            }
+          : {};
+
+        if (markerFillPlan) {
+          return writeTrustedInputSequenceToElement(
+            target,
+            toDebuggerMarkerOperations(markerFillPlan),
+            {
+              settleMs: 20,
+              ...resolveOptions
+            }
+          );
+        }
+
+        if (hasMemoqInlineTagMarkup(segment.sourceRaw)) {
+          throw new Error('memoQ marker fill requires an explicit experimental marker plan.');
+        }
+
+        return writeTrustedTextToElement(target, text, {
           requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
           settleMs: 20,
-          ...(segment.rowNumber
-            ? {
-                requireResolvedElement: true,
-                resolveElement: () => {
-                  const currentTarget = reader.findCurrentTargetByRowNumber(segment.rowNumber);
-                  return currentTarget ? profile.getWriteTarget(currentTarget) : null;
-                }
-              }
-            : {})
-        }),
+          ...resolveOptions
+        });
+      },
+      expectedCommittedValue: markerFillPlan?.expectedTarget,
       runId: context?.runId,
       sequence: context?.sequence,
       scanPass: context?.scanPass,
@@ -220,4 +250,22 @@ export class MemoqAdapter {
       throw new Error(response.error);
     }
   }
+}
+
+function toDebuggerMarkerOperations(
+  plan: MemoqMarkerFillPlan
+): DebuggerInputOperation[] {
+  const operations: DebuggerInputOperation[] = [];
+
+  for (const operation of plan.operations) {
+    if (operation.type === 'text') {
+      operations.push({ type: 'text', text: operation.text });
+      continue;
+    }
+
+    operations.push({ type: 'key', key: 'F9' });
+    operations.push({ type: 'wait', milliseconds: 80 });
+  }
+
+  return operations;
 }

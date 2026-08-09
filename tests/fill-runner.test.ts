@@ -228,6 +228,47 @@ test('FillRunner preserves memoQ preparation, platform routing, and fill timing'
   assert.equal(harness.getAssertNotStoppedCalls(), 6);
 });
 
+test('FillRunner carries an enabled memoQ marker plan separately from plain fills', async () => {
+  const segment = makeSegment(
+    'memoq',
+    'memoq-marker-1',
+    '到达等级<1>后解锁'
+  );
+  segment.placeholderTokens = ['<1>'];
+  const harness = createHarness({ segments: [segment], memoqActive: true });
+
+  const result = await harness.runner.run(
+    'run-marker',
+    [
+      {
+        rowIndex: 2,
+        sourceRaw: '到达等级{0}后解锁',
+        sourceNormalized: '到达等级{0}后解锁',
+        targetRaw: 'レベル{0}到達で解放',
+        occurrenceIndex: 1
+      }
+    ],
+    {
+      autoStopAfterFilledCount: null,
+      validatePlaceholders: true,
+      enableMemoqMarkerFill: true
+    },
+    1
+  );
+
+  assert.equal(result.filledCount, 1);
+  assert.deepEqual(harness.fillCalls[0]?.context?.markerFillPlan, {
+    expectedTarget: 'レベル<1>到達で解放',
+    markerCount: 1,
+    markerSequenceCount: 1,
+    operations: [
+      { type: 'text', text: 'レベル' },
+      { type: 'markerSequence', markers: ['<1>'] },
+      { type: 'text', text: '到達で解放' }
+    ]
+  });
+});
+
 test('FillRunner stops Phrase when a target becomes non-empty before writing', async () => {
   const segment = makeSegment('phrase', 'phrase-1', 'Phrase source');
   const harness = createHarness({

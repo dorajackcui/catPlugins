@@ -122,7 +122,11 @@ test('ContentRequestHandler normalizes fill options and starts at the marker', a
   assert.deepEqual(harness.getFillCall(), [
     'fill-1',
     [entry],
-    { autoStopAfterFilledCount: 2, validatePlaceholders: false },
+    {
+      autoStopAfterFilledCount: 2,
+      validatePlaceholders: false,
+      enableMemoqMarkerFill: false
+    },
     7,
     {
       maxPasses: 56,

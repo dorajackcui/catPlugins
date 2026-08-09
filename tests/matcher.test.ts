@@ -123,7 +123,7 @@ test('buildPreview rejects a memoQ row-number match when the Excel source differ
   );
 });
 
-test('buildPreview matches memoQ protected markers against the original Excel source', () => {
+test('buildPreview gates matched memoQ protected markers while marker fill is disabled', () => {
   const excelSource =
     '1. 活动期间。\\r\\n2. 搭配师可自由选择。\\r\\n3. 若已解锁。\\r\\n4. 可以补购。\\r\\n5. 获得权益。';
   const memoqSource =
@@ -154,13 +154,13 @@ test('buildPreview matches memoQ protected markers against the original Excel so
     ]
   );
 
-  assert.equal(preview.items[0]?.status, 'ready');
+  assert.equal(preview.items[0]?.status, 'placeholderError');
   assert.equal(preview.items[0]?.translation, target);
-  assert.equal(preview.readyToFill, 1);
-  assert.equal(preview.placeholderErrors, 0);
+  assert.equal(preview.readyToFill, 0);
+  assert.equal(preview.placeholderErrors, 1);
 });
 
-test('buildPreview accepts a row-number memoQ match through protected markers', () => {
+test('buildPreview gates a row-number memoQ marker match while marker fill is disabled', () => {
   const preview = buildPreview(
     [
       {
@@ -187,11 +187,11 @@ test('buildPreview accepts a row-number memoQ match through protected markers', 
     ]
   );
 
-  assert.equal(preview.items[0]?.status, 'ready');
+  assert.equal(preview.items[0]?.status, 'placeholderError');
   assert.equal(preview.items[0]?.translation, 'Target');
 });
 
-test('buildPreview falls back to a unique memoQ source when an imported row number is unrelated', () => {
+test('buildPreview still resolves the correct marker source before applying the disabled gate', () => {
   const preview = buildPreview(
     [
       {
@@ -226,8 +226,42 @@ test('buildPreview falls back to a unique memoQ source when an imported row numb
     ]
   );
 
-  assert.equal(preview.items[0]?.status, 'ready');
+  assert.equal(preview.items[0]?.status, 'placeholderError');
   assert.equal(preview.items[0]?.translation, 'Correct translation');
+});
+
+test('buildPreview enables strictly mapped memoQ marker rows independently', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 2,
+        sourceRaw: '{ZoneName}{RankName}第{RankIndex}名',
+        sourceNormalized: '{ZoneName}{RankName}第{RankIndex}名',
+        targetRaw: '{ZoneName}{RankName}第{RankIndex}位',
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: 'memoq-marker-row',
+        sourceRaw: '<1><2>第<3>名',
+        sourceNormalized: '<1><2>第<3>名',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: ['<1>', '<2>', '<3>'],
+        platform: 'memoq'
+      }
+    ],
+    {
+      autoStopAfterFilledCount: null,
+      validatePlaceholders: true,
+      enableMemoqMarkerFill: true
+    }
+  );
+
+  assert.equal(preview.items[0]?.status, 'ready');
+  assert.equal(preview.readyToFill, 1);
 });
 
 test('buildPreview rejects a marker-only memoQ source without visible matching evidence', () => {

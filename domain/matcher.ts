@@ -15,6 +15,7 @@ import {
   hasMemoqInlineTagMarkup,
   memoqProtectedSourceMatchesExcelSource
 } from './memoq-markup.ts';
+import { createMemoqMarkerFillPlan } from './memoq-marker-fill.ts';
 import { normalizePhraseTagClipText } from './phrase-markup.ts';
 import { normalizeText } from '../shared/utils.ts';
 
@@ -104,6 +105,36 @@ export function classifySegment(
       excelRowIndex: entry.rowIndex,
       reason: 'Segment already has a translation.'
     };
+  }
+
+  if (
+    segment.platform === 'memoq' &&
+    hasMemoqInlineTagMarkup(segment.sourceRaw)
+  ) {
+    if (normalizedFillOptions.enableMemoqMarkerFill !== true) {
+      return {
+        ...segment,
+        status: 'placeholderError',
+        translation: entry.targetRaw,
+        excelRowIndex: entry.rowIndex,
+        reason: 'memoQ source contains markers and experimental marker fill is disabled.'
+      };
+    }
+
+    const markerPlan = createMemoqMarkerFillPlan(
+      entry.sourceRaw,
+      segment.sourceRaw,
+      entry.targetRaw
+    );
+    if (!markerPlan.ok) {
+      return {
+        ...segment,
+        status: 'placeholderError',
+        translation: entry.targetRaw,
+        excelRowIndex: entry.rowIndex,
+        reason: `memoQ marker fill is not safe for this row: ${markerPlan.reason}`
+      };
+    }
   }
 
   // Excel source/target markup is trusted. When memoQ replaces source spans

@@ -84,11 +84,13 @@ test('buildPreviewItemsHtml preserves the no-fillable fallback', () => {
 test('parsePopupFillOptions preserves blank, validation, and integer rules', () => {
   assert.deepEqual(parsePopupFillOptions('', true), {
     autoStopAfterFilledCount: null,
-    validatePlaceholders: true
+    validatePlaceholders: true,
+    enableMemoqMarkerFill: false
   });
-  assert.deepEqual(parsePopupFillOptions(' 12.9 ', false), {
+  assert.deepEqual(parsePopupFillOptions(' 12.9 ', false, true), {
     autoStopAfterFilledCount: 12,
-    validatePlaceholders: false
+    validatePlaceholders: false,
+    enableMemoqMarkerFill: true
   });
 
   let parseError: unknown;

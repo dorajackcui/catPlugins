@@ -38,6 +38,12 @@
           <span>Validate tag / placeholder tokens before fill</span>
         </label>
         <p class="field-hint muted">Turn this off to fill even when tags like `&lt;color&gt;`, `%s`, or `{name}` do not exactly match.</p>
+
+        <label class="checkbox-field" for="enable-memoq-marker-fill">
+          <input id="enable-memoq-marker-fill" type="checkbox" />
+          <span>Experimental: fill memoQ sources containing markers</span>
+        </label>
+        <p class="field-hint muted">Off: memoQ fills only rows whose source has no markers. On: marker rows use the experimental native-marker path too.</p>
       </section>
 
       <section class="card actions">

@@ -1,5 +1,9 @@
 import { runtimeSendMessage } from '../shared/chrome-api.ts';
-import type { ApiResponse, BackgroundRequest } from '../shared/message-types.ts';
+import type {
+  ApiResponse,
+  BackgroundRequest,
+  DebuggerInputOperation
+} from '../shared/message-types.ts';
 
 export type TrustedTextWriteRequestType = 'MEMOQ_DEBUGGER_WRITE_TEXT' | 'DEBUGGER_WRITE_TEXT';
 
@@ -9,6 +13,11 @@ export interface TrustedTextWriteOptions {
   resolveElement?: () => HTMLElement | null | undefined;
   requireResolvedElement?: boolean;
 }
+
+export type TrustedInputSequenceOptions = Omit<
+  TrustedTextWriteOptions,
+  'requestType'
+>;
 
 type TrustedTextWriteRequest = Extract<BackgroundRequest, { type: TrustedTextWriteRequestType }>;
 const REQUIRED_RESOLVE_ATTEMPTS = 4;
@@ -86,6 +95,65 @@ export async function writeTrustedTextToElement(
       x,
       y,
       text
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(response.error);
+  }
+}
+
+export async function writeTrustedInputSequenceToElement(
+  targetElement: HTMLElement,
+  operations: DebuggerInputOperation[],
+  options: TrustedInputSequenceOptions = {}
+): Promise<void> {
+  const resolveTarget = async (fallback: HTMLElement): Promise<HTMLElement> => {
+    if (!options.resolveElement) {
+      return fallback;
+    }
+
+    const attempts = options.requireResolvedElement ? REQUIRED_RESOLVE_ATTEMPTS : 1;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const resolved = options.resolveElement();
+      if (resolved) {
+        return resolved;
+      }
+
+      if (attempt < attempts) {
+        await delay(REQUIRED_RESOLVE_DELAY_MS);
+      }
+    }
+
+    if (options.requireResolvedElement) {
+      throw new Error('Trusted input sequence target could not be re-resolved safely.');
+    }
+
+    return fallback;
+  };
+
+  const scrollTarget = await resolveTarget(targetElement);
+  scrollTarget.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+  await delay(options.settleMs ?? 0);
+
+  const measureTarget = await resolveTarget(scrollTarget);
+  const rect = measureTarget.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const y = rect.top + rect.height / 2;
+
+  if (!Number.isFinite(x) || !Number.isFinite(y) || rect.width <= 0 || rect.height <= 0) {
+    throw new Error('Trusted input sequence target element is not visible enough to write.');
+  }
+
+  const response = await runtimeSendMessage<
+    Extract<BackgroundRequest, { type: 'DEBUGGER_INPUT_SEQUENCE' }>,
+    ApiResponse<null>
+  >({
+    type: 'DEBUGGER_INPUT_SEQUENCE',
+    payload: {
+      x,
+      y,
+      operations
     }
   });
 

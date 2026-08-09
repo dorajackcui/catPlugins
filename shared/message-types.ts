@@ -82,6 +82,14 @@ export type DebuggerInputOperation =
       text: string;
     }
   | {
+      type: 'key';
+      key: 'F9';
+    }
+  | {
+      type: 'wait';
+      milliseconds: number;
+    }
+  | {
       type: 'click';
       x: number;
       y: number;

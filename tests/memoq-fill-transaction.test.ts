@@ -175,6 +175,42 @@ test('MemoqFillTransaction writes once and confirms same-row target text', async
   }
 });
 
+test('MemoqFillTransaction confirms marker fills against the serialized editor target', async () => {
+  const restoreTimer = installImmediateTimer();
+  const target = {} as HTMLElement;
+  let targetText = '';
+  const transaction = new MemoqFillTransaction({
+    profile: createProfile(target),
+    readTargetText: () => targetText,
+    readSourceText: () => '到达等级<1>后解锁',
+    collectNearbyRows: () => [],
+    writeTrustedText: async (_writeTarget, value) => {
+      assert.equal(value, 'レベル{0}到達で解放');
+      targetText = 'レベル<1>到達で解放';
+    },
+    expectedCommittedValue: 'レベル<1>到達で解放'
+  });
+
+  try {
+    const outcome = await transaction.fillSegment(
+      createSegment({
+        sourceRaw: '到达等级<1>后解锁',
+        sourceNormalized: '到达等级<1>后解锁'
+      }),
+      'レベル{0}到達で解放'
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.equal(outcome.diagnostic?.targetAfter, 'レベル<1>到達で解放');
+    assert.equal(
+      outcome.diagnostic?.expectedTranslation,
+      'レベル{0}到達で解放'
+    );
+  } finally {
+    restoreTimer();
+  }
+});
+
 test('MemoqFillTransaction re-resolves the current target while confirming the write', async () => {
   const restoreTimer = installImmediateTimer();
   const originalTarget = {} as HTMLElement;

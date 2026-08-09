@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { writeTrustedTextToElement } from '../content/trusted-text-writer.ts';
+import {
+  writeTrustedInputSequenceToElement,
+  writeTrustedTextToElement
+} from '../content/trusted-text-writer.ts';
 
 function installChromeRecorder(
   messages: unknown[],
@@ -52,6 +55,43 @@ test('writeTrustedTextToElement sends memoQ debugger text write with center coor
         x: 50,
         y: 40,
         text: 'Bonjour'
+      }
+    }
+  ]);
+});
+
+test('writeTrustedInputSequenceToElement sends one focused marker sequence request', async () => {
+  const messages: unknown[] = [];
+  const restoreChrome = installChromeRecorder(messages);
+  const target = {
+    scrollIntoView: () => undefined,
+    getBoundingClientRect: () => ({
+      left: 10,
+      top: 20,
+      width: 80,
+      height: 40
+    })
+  } as unknown as HTMLElement;
+  const operations = [
+    { type: 'text' as const, text: 'レベル' },
+    { type: 'key' as const, key: 'F9' as const },
+    { type: 'wait' as const, milliseconds: 80 },
+    { type: 'text' as const, text: '到達で解放' }
+  ];
+
+  try {
+    await writeTrustedInputSequenceToElement(target, operations);
+  } finally {
+    restoreChrome();
+  }
+
+  assert.deepEqual(messages, [
+    {
+      type: 'DEBUGGER_INPUT_SEQUENCE',
+      payload: {
+        x: 50,
+        y: 40,
+        operations
       }
     }
   ]);

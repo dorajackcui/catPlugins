@@ -71,6 +71,16 @@ export class PopupController {
             'error'
           );
         });
+      },
+      onMemoqMarkerFillChange: () => {
+        void this.persistFillOptions().catch((error) => {
+          this.port.view.renderStatus(
+            error instanceof Error
+              ? error.message
+              : 'Failed to save memoQ marker fill setting.',
+            'error'
+          );
+        });
       }
     });
 

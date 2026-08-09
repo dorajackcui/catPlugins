@@ -53,6 +53,11 @@ export interface UploadMeta {
 export interface FillOptions {
   autoStopAfterFilledCount: number | null;
   validatePlaceholders: boolean;
+  /**
+   * Experimental memoQ path. When disabled, rows whose rendered memoQ source
+   * contains inline markers are excluded from preview and fill.
+   */
+  enableMemoqMarkerFill?: boolean;
 }
 
 export interface ParseExcelResult {

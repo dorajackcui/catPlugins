@@ -143,6 +143,8 @@ test('DebuggerInputController preserves trusted input sequence order', async () 
 
   await harness.controller.runSequence(13, 10, 20, [
     { type: 'text', text: 'A' },
+    { type: 'key', key: 'F9' },
+    { type: 'wait', milliseconds: 80 },
     { type: 'click', x: 50, y: 60 },
     { type: 'text', text: '' },
     { type: 'text', text: 'B' }
@@ -172,6 +174,26 @@ test('DebuggerInputController preserves trusted input sequence order', async () 
         }
       },
       { method: 'Input.insertText', params: { text: 'A' } },
+      {
+        method: 'Input.dispatchKeyEvent',
+        params: {
+          type: 'rawKeyDown',
+          key: 'F9',
+          code: 'F9',
+          windowsVirtualKeyCode: 120,
+          nativeVirtualKeyCode: 120
+        }
+      },
+      {
+        method: 'Input.dispatchKeyEvent',
+        params: {
+          type: 'keyUp',
+          key: 'F9',
+          code: 'F9',
+          windowsVirtualKeyCode: 120,
+          nativeVirtualKeyCode: 120
+        }
+      },
       {
         method: 'Input.dispatchMouseEvent',
         params: {

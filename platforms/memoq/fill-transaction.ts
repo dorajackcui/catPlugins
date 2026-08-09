@@ -22,6 +22,7 @@ export interface MemoqFillTransactionOptions {
   resolveCurrentTarget?(rowNumber: string): HTMLElement | null;
   collectNearbyRows(rowNumber?: string): MemoqVisibleRowSnapshot[];
   writeTrustedText(target: HTMLElement, value: string): Promise<void>;
+  expectedCommittedValue?: string;
   runId?: string;
   sequence?: number;
   scanPass?: number;
@@ -120,7 +121,7 @@ export class MemoqFillTransaction {
     const confirmation = await confirmMemoqTargetText({
       target,
       rowNumber,
-      value,
+      value: this.options.expectedCommittedValue ?? value,
       readTargetText: (currentTarget) => this.options.readTargetText(currentTarget),
       resolveCurrentTargetByRowNumber: (currentRowNumber) =>
         this.resolveCurrentTargetByRowNumber(currentRowNumber)

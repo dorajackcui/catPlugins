@@ -12,12 +12,17 @@ export type DebuggerInputControllerOptions = DebuggerSessionOptions;
 /** Validates and dispatches trusted editor input through a debugger session. */
 export class DebuggerInputController {
   private readonly session: DebuggerSession;
+  private readonly sleep: (delayMs: number) => Promise<void>;
 
   constructor(
     api: ChromeDebuggerInputApi,
     options: DebuggerInputControllerOptions = {}
   ) {
     this.session = new DebuggerSession(api, options);
+    this.sleep =
+      options.sleep ??
+      ((delayMs) =>
+        new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
   }
 
   prepare(tabId: number): Promise<void> {
@@ -97,10 +102,46 @@ export class DebuggerInputController {
       return;
     }
 
+    if (operation.type === 'key') {
+      await this.dispatchF9(target);
+      return;
+    }
+
+    if (operation.type === 'wait') {
+      if (
+        !Number.isFinite(operation.milliseconds) ||
+        operation.milliseconds < 0 ||
+        operation.milliseconds > 1000
+      ) {
+        throw new Error('Invalid trusted sequence wait duration.');
+      }
+
+      await this.sleep(operation.milliseconds);
+      return;
+    }
+
     if (operation.text) {
       await this.session.sendCommand(target, 'Input.insertText', {
         text: operation.text
       });
     }
+  }
+
+  private async dispatchF9(target: DebuggerTarget): Promise<void> {
+    const keyParams = {
+      key: 'F9',
+      code: 'F9',
+      windowsVirtualKeyCode: 120,
+      nativeVirtualKeyCode: 120
+    };
+
+    await this.session.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'rawKeyDown',
+      ...keyParams
+    });
+    await this.session.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      ...keyParams
+    });
   }
 }

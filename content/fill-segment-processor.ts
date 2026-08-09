@@ -1,7 +1,11 @@
 import type { RuntimeSegment } from './types.ts';
 import { normalizeFillOptions } from '../domain/fill-options.ts';
 import { describeFillStopReason, shouldStopAfterFillFailure } from '../domain/fill-failure.ts';
-import { memoqProtectedSourceMatchesExcelSource } from '../domain/memoq-markup.ts';
+import {
+  hasMemoqInlineTagMarkup,
+  memoqProtectedSourceMatchesExcelSource
+} from '../domain/memoq-markup.ts';
+import { createMemoqMarkerFillPlan } from '../domain/memoq-marker-fill.ts';
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFillForPlatform } from '../domain/fill-throttle.ts';
 import {
   applyFilledToPreview,
@@ -91,7 +95,15 @@ export class FillSegmentProcessor {
       return;
     }
 
-    const memoqContext = this.createMemoqContext(segment, scanContext);
+    const matchedEntry = item.excelRowIndex === undefined
+      ? undefined
+      : this.options.entries.find((entry) => entry.rowIndex === item.excelRowIndex);
+    const memoqContext = this.createMemoqContext(
+      segment,
+      scanContext,
+      matchedEntry,
+      item.translation
+    );
     if (memoqContext) {
       this.port.logInfo('memoQ fill:attempt', {
         ...memoqContext,
@@ -249,18 +261,34 @@ export class FillSegmentProcessor {
 
   private createMemoqContext(
     segment: RuntimeSegment,
-    scanContext: SegmentScanContext
+    scanContext: SegmentScanContext,
+    matchedEntry: TranslationEntry | undefined,
+    translation: string
   ): MemoqFillExecutionContext | undefined {
     if (segment.platform !== 'memoq') {
       return undefined;
     }
+
+    const markerPlanResult =
+      this.normalizedFillOptions.enableMemoqMarkerFill === true &&
+      hasMemoqInlineTagMarkup(segment.sourceRaw) &&
+      matchedEntry
+        ? createMemoqMarkerFillPlan(
+            matchedEntry.sourceRaw,
+            segment.sourceRaw,
+            translation
+          )
+        : null;
 
     return {
       runId: this.options.runId,
       sequence: ++this.memoqFillSequence,
       scanPass: scanContext.scanPass,
       scrollTop: scanContext.scrollTop,
-      scrollMode: scanContext.scrollMode
+      scrollMode: scanContext.scrollMode,
+      ...(markerPlanResult?.ok
+        ? { markerFillPlan: markerPlanResult.plan }
+        : {})
     };
   }
 
