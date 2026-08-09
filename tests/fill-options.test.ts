@@ -3,10 +3,10 @@ import test from 'node:test';
 
 import { normalizeFillOptions } from '../domain/fill-options.ts';
 
-test('normalizeFillOptions defaults to placeholder validation enabled', () => {
+test('normalizeFillOptions defaults to placeholder validation disabled', () => {
   assert.deepEqual(normalizeFillOptions(undefined), {
     autoStopAfterFilledCount: null,
-    validatePlaceholders: true,
+    validatePlaceholders: false,
     enableMemoqMarkerFill: false
   });
 });

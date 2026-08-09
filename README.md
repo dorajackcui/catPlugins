@@ -1,6 +1,6 @@
 # Phrase Bulk Fill
 
-Chrome Manifest V3 extension for importing Excel translations, previewing source matches, and filling Phrase, memoQ, and GientTrans editors.
+Chrome Manifest V3 extension for importing Excel translations and filling Phrase, memoQ, and GientTrans editors.
 
 ## Development
 

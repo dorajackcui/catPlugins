@@ -49,7 +49,6 @@ class FakePopupView implements PopupViewPort {
   readonly busyValues: boolean[] = [];
   readonly stoppingValues: boolean[] = [];
   readonly statuses: Array<{ message: string; kind: StatusKind }> = [];
-  readonly previews: Array<PreviewResult | null> = [];
   readonly popupStates: PopupState[] = [];
   readonly renderedFillOptions: Array<FillOptions | null | undefined> = [];
   readonly downloads: ExportSourcesResult[] = [];
@@ -73,10 +72,6 @@ class FakePopupView implements PopupViewPort {
 
   renderStatus(message: string, kind: StatusKind = 'default'): void {
     this.statuses.push({ message, kind });
-  }
-
-  renderPreview(preview: PreviewResult | null): void {
-    this.previews.push(preview);
   }
 
   renderFileInfo(popupState: PopupState): void {
@@ -173,7 +168,6 @@ test('PopupController refreshes all views and manages the active-run timer', asy
   assert.deepEqual(harness.view.stoppingValues, [false]);
   assert.deepEqual(harness.intervalCalls, [{ timerId: 1, delayMs: 1000 }]);
   assert.equal(harness.view.popupStates[0], activeState);
-  assert.equal(harness.view.previews[0], preview);
   assert.equal(harness.view.renderedFillOptions[0], activeState.fillOptions);
 
   await harness.controller.refreshState();
@@ -222,37 +216,6 @@ test('PopupController uploads bytes, refreshes state, and clears file selection'
     harness.view.statuses.some(
       ({ message }) =>
         message === 'Loaded 3 translation rows from translations.xlsx.'
-    ),
-    true
-  );
-});
-
-test('PopupController runs Preview with current options and refreshes afterward', async () => {
-  const preview = makePreview({ readyToFill: 4 });
-  const harness = createHarness([
-    preview,
-    makePopupState({ previewResult: preview })
-  ]);
-  harness.view.fillOptions = {
-    autoStopAfterFilledCount: 7,
-    validatePlaceholders: false
-  };
-
-  await harness.controller.handlePreview();
-
-  assert.deepEqual(harness.messages, [
-    {
-      type: 'RUN_PREVIEW',
-      payload: { fillOptions: harness.view.fillOptions }
-    },
-    { type: 'GET_STATE' }
-  ]);
-  assert.deepEqual(harness.intervalCalls, [{ timerId: 1, delayMs: 1000 }]);
-  assert.equal(harness.view.previews.includes(preview), true);
-  assert.equal(
-    harness.view.statuses.some(
-      ({ message }) =>
-        message === 'Preview ready. 4 segment(s) can be filled.'
     ),
     true
   );

@@ -339,7 +339,11 @@ test('buildPreview marks placeholder mismatches', () => {
         occurrenceIndex: 1
       }
     ],
-    segments
+    segments,
+    {
+      autoStopAfterFilledCount: null,
+      validatePlaceholders: true
+    }
   );
 
   assert.equal(preview.placeholderErrors, 1);

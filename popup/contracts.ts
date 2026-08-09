@@ -1,9 +1,5 @@
 import type { BackgroundRequest } from '../shared/message-types.ts';
-import type {
-  ExportSourcesResult,
-  FillOptions,
-  PreviewResult
-} from '../shared/translation-types.ts';
+import type { ExportSourcesResult, FillOptions } from '../shared/translation-types.ts';
 import type { PopupState, StatusKind } from '../shared/state-types.ts';
 
 export interface PopupFile {
@@ -14,11 +10,9 @@ export interface PopupFile {
 export interface PopupViewHandlers {
   onUpload(file: PopupFile): void;
   onExport(): void;
-  onPreview(): void;
   onFill(): void;
   onStop(): void;
   onAutoStopChange(): void;
-  onValidationChange(): void;
   onMemoqMarkerFillChange(): void;
 }
 
@@ -27,7 +21,6 @@ export interface PopupViewPort {
   setBusy(busy: boolean): void;
   setStopping(stopping: boolean): void;
   renderStatus(message: string, kind?: StatusKind): void;
-  renderPreview(preview: PreviewResult | null): void;
   renderFileInfo(popupState: PopupState): void;
   renderFillOptions(fillOptions?: FillOptions | null): void;
   readFillOptions(): FillOptions;

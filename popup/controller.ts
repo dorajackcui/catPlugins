@@ -2,8 +2,7 @@ import { describeRunFailure } from '../domain/run-stop.ts';
 import type {
   ExportSourcesResult,
   FillOptions,
-  FillRunResult,
-  PreviewResult
+  FillRunResult
 } from '../shared/translation-types.ts';
 import type { PopupState } from '../shared/state-types.ts';
 import type {
@@ -43,9 +42,6 @@ export class PopupController {
       onExport: () => {
         void this.handleExportSources();
       },
-      onPreview: () => {
-        void this.handlePreview();
-      },
       onFill: () => {
         void this.handleFill();
       },
@@ -58,16 +54,6 @@ export class PopupController {
             error instanceof Error
               ? error.message
               : 'Failed to save auto stop setting.',
-            'error'
-          );
-        });
-      },
-      onValidationChange: () => {
-        void this.persistFillOptions().catch((error) => {
-          this.port.view.renderStatus(
-            error instanceof Error
-              ? error.message
-              : 'Failed to save validation setting.',
             'error'
           );
         });
@@ -98,7 +84,6 @@ export class PopupController {
     });
     this.runMonitor.renderRunState(popupState.runState);
     this.port.view.renderFileInfo(popupState);
-    this.port.view.renderPreview(popupState.previewResult);
     this.port.view.renderFillOptions(popupState.fillOptions);
   }
 
@@ -136,26 +121,6 @@ export class PopupController {
     }
   }
 
-  async handlePreview(): Promise<void> {
-    try {
-      const fillOptions = this.port.view.readFillOptions();
-      this.runMonitor.beginRun('Scanning Phrase segments...');
-      const preview = await this.port.sendMessage<PreviewResult>({
-        type: 'RUN_PREVIEW',
-        payload: { fillOptions }
-      });
-      this.port.view.renderPreview(preview);
-      this.port.view.renderStatus(
-        `Preview ready. ${preview.readyToFill} segment(s) can be filled.`
-      );
-    } catch (error) {
-      this.renderOperationError(error, 'Preview failed.');
-    } finally {
-      this.runMonitor.finishRun();
-      await this.refreshState();
-    }
-  }
-
   async handleExportSources(): Promise<void> {
     try {
       this.runMonitor.beginRun('Exporting source segments...');
@@ -182,7 +147,6 @@ export class PopupController {
         type: 'RUN_FILL',
         payload: { fillOptions }
       });
-      this.port.view.renderPreview(result.preview);
       const message =
         result.stopReason ??
         (result.stoppedByAutoStop &&

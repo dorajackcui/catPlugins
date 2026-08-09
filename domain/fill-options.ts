@@ -2,13 +2,13 @@ import type { FillOptions } from '../shared/translation-types.ts';
 
 export const DEFAULT_FILL_OPTIONS: FillOptions = {
   autoStopAfterFilledCount: null,
-  validatePlaceholders: true,
+  validatePlaceholders: false,
   enableMemoqMarkerFill: false
 };
 
 export function normalizeFillOptions(fillOptions?: FillOptions | null): FillOptions {
   const autoStopAfterFilledCount = fillOptions?.autoStopAfterFilledCount;
-  const validatePlaceholders = fillOptions?.validatePlaceholders !== false;
+  const validatePlaceholders = fillOptions?.validatePlaceholders === true;
   const enableMemoqMarkerFill = fillOptions?.enableMemoqMarkerFill === true;
 
   if (

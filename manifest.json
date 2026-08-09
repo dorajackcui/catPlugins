@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Phrase Bulk Fill",
   "version": "0.1.0",
-  "description": "Upload Excel translations, preview Phrase matches, and fill empty targets in bulk.",
+  "description": "Upload Excel translations and fill supported CAT editors in bulk.",
   "permissions": ["storage", "activeTab", "scripting", "webNavigation", "debugger"],
   "host_permissions": [
     "https://app.phrase.com/*",

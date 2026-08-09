@@ -3,75 +3,53 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Phrase Bulk Fill</title>
+    <title>catPlugin</title>
     <link rel="stylesheet" href="./popup.css" />
   </head>
   <body>
     <main class="popup">
-      <header class="hero">
-        <p class="eyebrow">Phrase Bulk Fill</p>
-        <h1>MVP</h1>
-        <p class="subtitle">Upload Excel, preview matches, then fill empty targets.</p>
+      <header class="header">
+        <span class="mark" aria-hidden="true">C</span>
+        <div>
+          <h1>catPlugin</h1>
+          <p>Excel translation fill</p>
+        </div>
       </header>
 
-      <section class="card">
+      <section class="workspace">
         <input id="file-input" type="file" accept=".xlsx,.xls" hidden />
-        <button id="upload-button" class="primary" type="button">Upload Excel</button>
-        <p id="file-info" class="muted">No Excel file uploaded yet.</p>
-      </section>
+        <button id="upload-button" class="upload" type="button">
+          <span>Choose Excel file</span>
+          <span aria-hidden="true">＋</span>
+        </button>
+        <p id="file-info" class="file-info">No file selected</p>
 
-      <section class="card">
-        <label class="field-label" for="auto-stop-count">Auto Stop After Filled Rows</label>
-        <input
-          id="auto-stop-count"
-          class="number-input"
-          type="number"
-          min="1"
-          step="1"
-          inputmode="numeric"
-          placeholder="Leave blank for no limit"
-        />
-        <p class="field-hint muted">Example: set to 500 to stop automatically after 500 successful fills.</p>
+        <div class="actions">
+          <button id="export-button" class="secondary" type="button">Export</button>
+          <button id="fill-button" class="primary" type="button" disabled>Fill</button>
+        </div>
+        <button id="stop-button" class="stop" type="button" disabled>Stop current run</button>
 
-        <label class="checkbox-field" for="validate-placeholders">
-          <input id="validate-placeholders" type="checkbox" checked />
-          <span>Validate tag / placeholder tokens before fill</span>
-        </label>
-        <p class="field-hint muted">Turn this off to fill even when tags like `&lt;color&gt;`, `%s`, or `{name}` do not exactly match.</p>
+        <details class="options">
+          <summary>Options</summary>
+          <div class="option-row">
+            <label for="auto-stop-count">Stop after</label>
+            <input
+              id="auto-stop-count"
+              type="number"
+              min="1"
+              step="1"
+              inputmode="numeric"
+              placeholder="No limit"
+            />
+          </div>
+          <label class="toggle" for="enable-memoq-marker-fill">
+            <input id="enable-memoq-marker-fill" type="checkbox" />
+            <span>memoQ marker fill (experimental)</span>
+          </label>
+        </details>
 
-        <label class="checkbox-field" for="enable-memoq-marker-fill">
-          <input id="enable-memoq-marker-fill" type="checkbox" />
-          <span>Experimental: fill memoQ sources containing markers</span>
-        </label>
-        <p class="field-hint muted">Off: memoQ fills only rows whose source has no markers. On: marker rows use the experimental native-marker path too.</p>
-      </section>
-
-      <section class="card actions">
-        <button id="export-button" type="button">Export Sources</button>
-        <button id="preview-button" type="button" disabled>Preview</button>
-        <button id="fill-button" class="accent" type="button" disabled>Fill</button>
-        <button id="stop-button" class="ghost" type="button" disabled>Stop</button>
-      </section>
-
-      <section class="card">
-        <p id="status" class="status" data-kind="default">Ready.</p>
-      </section>
-
-      <section class="card">
-        <h2>Preview Summary</h2>
-        <ul id="preview-summary" class="summary-list">
-          <li>Total segments: -</li>
-          <li>Matched: -</li>
-          <li>Already translated: -</li>
-          <li>Tag / placeholder errors: -</li>
-          <li>Ready to fill: -</li>
-          <li>Skipped: -</li>
-        </ul>
-      </section>
-
-      <section class="card">
-        <h2>Sample Matches</h2>
-        <ul id="preview-items" class="items-list"></ul>
+        <p id="status" class="status" data-kind="default">Ready</p>
       </section>
     </main>
     <script src="./popup.js"></script>
