@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createMemoqMarkerFillPlan } from '../domain/memoq-marker-fill.ts';
+import {
+  countMemoqCursorUnitsBeforeAnchor,
+  createMemoqMarkerFillPlan
+} from '../domain/memoq-marker-fill.ts';
 
 test('memoQ marker plan maps one Excel placeholder to one native marker', () => {
   const result = createMemoqMarkerFillPlan(
@@ -14,18 +17,13 @@ test('memoQ marker plan maps one Excel placeholder to one native marker', () => 
     ok: true,
     plan: {
       expectedTarget: 'レベル<1>到達で解放',
-      markerCount: 1,
-      markerSequenceCount: 1,
-      operations: [
-        { type: 'text', text: 'レベル' },
-        { type: 'markerSequence', markers: ['<1>'] },
-        { type: 'text', text: '到達で解放' }
-      ]
+      skeletonTarget: 'レベル\uE000到達で解放',
+      anchors: [{ sentinel: '\uE000', markers: ['<1>'] }]
     }
   });
 });
 
-test('memoQ marker plan preserves adjacent marker sequences', () => {
+test('memoQ marker plan creates one anchor per native marker sequence', () => {
   const result = createMemoqMarkerFillPlan(
     '{ZoneName}{RankName}第{RankIndex}名',
     '<1><2>第<3>名',
@@ -36,13 +34,10 @@ test('memoQ marker plan preserves adjacent marker sequences', () => {
     ok: true,
     plan: {
       expectedTarget: '<1><2>第<3>位',
-      markerCount: 3,
-      markerSequenceCount: 2,
-      operations: [
-        { type: 'markerSequence', markers: ['<1>', '<2>'] },
-        { type: 'text', text: '第' },
-        { type: 'markerSequence', markers: ['<3>'] },
-        { type: 'text', text: '位' }
+      skeletonTarget: '\uE000第\uE001位',
+      anchors: [
+        { sentinel: '\uE000', markers: ['<1>', '<2>'] },
+        { sentinel: '\uE001', markers: ['<3>'] }
       ]
     }
   });
@@ -72,16 +67,60 @@ test('memoQ marker plan rejects reordered or regrouped target placeholders', () 
   );
 });
 
-test('memoQ marker plan keeps paired markers outside the experimental scope', () => {
+test('memoQ marker plan maps paired Excel tags to native memoQ markers', () => {
   const result = createMemoqMarkerFillPlan(
-    'Before{name}After',
-    'Before{1>After',
-    'Avant{name}Après'
+    '吾王只能<BlueBold>仰视</>着您。',
+    '吾王只能{1>仰视<2}着您。',
+    'Mon Roi doit <BlueBold>lever les yeux vers vous</>°!'
+  );
+
+  assert.deepEqual(result, {
+    ok: true,
+    plan: {
+      expectedTarget: 'Mon Roi doit {1>lever les yeux vers vous<2}°!',
+      skeletonTarget: 'Mon Roi doit \uE000lever les yeux vers vous\uE001°!',
+      anchors: [
+        { sentinel: '\uE000', markers: ['{1>'] },
+        { sentinel: '\uE001', markers: ['<2}'] }
+      ]
+    }
+  });
+});
+
+test('memoQ marker plan avoids private-use characters already present in text', () => {
+  const result = createMemoqMarkerFillPlan(
+    'Before{0}',
+    'Before<1>',
+    `Avant\uE000{0}`
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok ? result.plan.anchors[0]?.sentinel : '', '\uE001');
+});
+
+test('memoQ cursor offsets use immutable skeleton graphemes without parsing literal marker text', () => {
+  assert.equal(
+    countMemoqCursorUnitsBeforeAnchor('A👨‍👩‍👧‍👦<1>\uE000', '\uE000'),
+    5
+  );
+  assert.equal(
+    countMemoqCursorUnitsBeforeAnchor('\uE000A\uE001', '\uE001'),
+    2
+  );
+  assert.equal(countMemoqCursorUnitsBeforeAnchor('\uE000x\uE000', '\uE000'), null);
+  assert.equal(countMemoqCursorUnitsBeforeAnchor('text', '\uE000'), null);
+});
+
+test('memoQ marker plan rejects mismatched paired marker kinds', () => {
+  const result = createMemoqMarkerFillPlan(
+    'Before<BlueBold>name</>After',
+    'Before<1>name<2>After',
+    'Avant<BlueBold>nom</>Après'
   );
 
   assert.equal(result.ok, false);
   assert.equal(
     result.ok ? '' : result.reason,
-    'Paired memoQ markers are not supported by the experimental path yet.'
+    'Excel markup types do not match memoQ marker types.'
   );
 });

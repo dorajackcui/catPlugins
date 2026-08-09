@@ -259,13 +259,8 @@ test('FillRunner carries an enabled memoQ marker plan separately from plain fill
   assert.equal(result.filledCount, 1);
   assert.deepEqual(harness.fillCalls[0]?.context?.markerFillPlan, {
     expectedTarget: 'レベル<1>到達で解放',
-    markerCount: 1,
-    markerSequenceCount: 1,
-    operations: [
-      { type: 'text', text: 'レベル' },
-      { type: 'markerSequence', markers: ['<1>'] },
-      { type: 'text', text: '到達で解放' }
-    ]
+    skeletonTarget: 'レベル\uE000到達で解放',
+    anchors: [{ sentinel: '\uE000', markers: ['<1>'] }]
   });
 });
 

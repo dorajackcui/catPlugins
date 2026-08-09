@@ -93,6 +93,19 @@ export type DebuggerInputOperation =
       type: 'click';
       x: number;
       y: number;
+    }
+  | {
+      type: 'documentHome';
+    }
+  | {
+      type: 'moveRight';
+      count: number;
+    }
+  | {
+      type: 'deleteForward';
+    }
+  | {
+      type: 'undo';
     };
 
 export interface DebuggerInputSequenceRequest {

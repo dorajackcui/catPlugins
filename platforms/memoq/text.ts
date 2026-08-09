@@ -79,7 +79,7 @@ export function formatMemoqInlineTag(className: string, tagText: string): string
   return `<${tagId}>`;
 }
 
-export function serializeMemoqContent(content: HTMLElement): string {
+export function serializeMemoqContentExact(content: HTMLElement): string {
   const fragments: string[] = [];
 
   const visit = (node: ChildNode): void => {
@@ -122,6 +122,9 @@ export function serializeMemoqContent(content: HTMLElement): string {
     visit(child);
   }
 
-  const serialized = fragments.join('');
-  return normalizeText(serialized || content.innerText || content.textContent || '');
+  return fragments.join('') || content.innerText || content.textContent || '';
+}
+
+export function serializeMemoqContent(content: HTMLElement): string {
+  return normalizeText(serializeMemoqContentExact(content));
 }

@@ -5,7 +5,8 @@ import {
   formatMemoqInlineTag,
   isMemoqCommittedTargetText,
   memoQAccessibilityTextToRenderedText,
-  serializeMemoqContent
+  serializeMemoqContent,
+  serializeMemoqContentExact
 } from '../platforms/memoq/text.ts';
 import { fakeElement, fakeText } from './memoq-test-dom.ts';
 
@@ -169,6 +170,20 @@ test('serializeMemoqContent converts memoQ whitespace display spans back to spac
   });
 
   assert.equal(serializeMemoqContent(root as unknown as HTMLElement), '1. Source');
+});
+
+test('serializeMemoqContentExact preserves cursor-significant repeated spaces', () => {
+  const space = () =>
+    fakeElement({
+      className: 'editor-char space ws-space',
+      textContent: MIDDLE_DOT
+    });
+  const root = fakeElement({
+    children: [fakeText('A'), space(), space(), fakeText('B')]
+  });
+
+  assert.equal(serializeMemoqContentExact(root as unknown as HTMLElement), 'A  B');
+  assert.equal(serializeMemoqContent(root as unknown as HTMLElement), 'A B');
 });
 
 test('fake DOM keeps own textContent alongside descendant text', () => {

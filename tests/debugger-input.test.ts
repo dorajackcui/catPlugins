@@ -138,83 +138,103 @@ test('DebuggerInputController writes text after a trusted press and release', as
   ]);
 });
 
-test('DebuggerInputController preserves trusted input sequence order', async () => {
+test('DebuggerInputController dispatches absolute memoQ navigation atomically', async () => {
   const harness = createHarness();
 
   await harness.controller.runSequence(13, 10, 20, [
-    { type: 'text', text: 'A' },
-    { type: 'key', key: 'F9' },
-    { type: 'wait', milliseconds: 80 },
-    { type: 'click', x: 50, y: 60 },
-    { type: 'text', text: '' },
-    { type: 'text', text: 'B' }
+    { type: 'documentHome' },
+    { type: 'moveRight', count: 2 },
+    { type: 'deleteForward' },
+    { type: 'undo' },
+    { type: 'key', key: 'F9' }
   ]);
 
   assert.deepEqual(
-    harness.commands.map(({ method, params }) => ({ method, params })),
+    harness.commands.map(({ method, params }) => ({
+      method,
+      type: params.type,
+      key: params.key,
+      modifiers: params.modifiers
+    })),
     [
       {
         method: 'Input.dispatchMouseEvent',
-        params: {
-          type: 'mousePressed',
-          x: 10,
-          y: 20,
-          button: 'left',
-          clickCount: 1
-        }
+        type: 'mousePressed',
+        key: undefined,
+        modifiers: undefined
       },
       {
         method: 'Input.dispatchMouseEvent',
-        params: {
-          type: 'mouseReleased',
-          x: 10,
-          y: 20,
-          button: 'left',
-          clickCount: 1
-        }
-      },
-      { method: 'Input.insertText', params: { text: 'A' } },
-      {
-        method: 'Input.dispatchKeyEvent',
-        params: {
-          type: 'rawKeyDown',
-          key: 'F9',
-          code: 'F9',
-          windowsVirtualKeyCode: 120,
-          nativeVirtualKeyCode: 120
-        }
+        type: 'mouseReleased',
+        key: undefined,
+        modifiers: undefined
       },
       {
         method: 'Input.dispatchKeyEvent',
-        params: {
-          type: 'keyUp',
-          key: 'F9',
-          code: 'F9',
-          windowsVirtualKeyCode: 120,
-          nativeVirtualKeyCode: 120
-        }
+        type: 'rawKeyDown',
+        key: 'Control',
+        modifiers: 2
       },
       {
-        method: 'Input.dispatchMouseEvent',
-        params: {
-          type: 'mousePressed',
-          x: 50,
-          y: 60,
-          button: 'left',
-          clickCount: 1
-        }
+        method: 'Input.dispatchKeyEvent',
+        type: 'rawKeyDown',
+        key: 'Home',
+        modifiers: 2
       },
       {
-        method: 'Input.dispatchMouseEvent',
-        params: {
-          type: 'mouseReleased',
-          x: 50,
-          y: 60,
-          button: 'left',
-          clickCount: 1
-        }
+        method: 'Input.dispatchKeyEvent',
+        type: 'keyUp',
+        key: 'Home',
+        modifiers: 2
       },
-      { method: 'Input.insertText', params: { text: 'B' } }
+      {
+        method: 'Input.dispatchKeyEvent',
+        type: 'keyUp',
+        key: 'Control',
+        modifiers: 0
+      },
+      {
+        method: 'Input.dispatchKeyEvent',
+        type: 'rawKeyDown',
+        key: 'ArrowRight',
+        modifiers: 0
+      },
+      {
+        method: 'Input.dispatchKeyEvent',
+        type: 'keyUp',
+        key: 'ArrowRight',
+        modifiers: 0
+      },
+      {
+        method: 'Input.dispatchKeyEvent',
+        type: 'rawKeyDown',
+        key: 'ArrowRight',
+        modifiers: 0
+      },
+      {
+        method: 'Input.dispatchKeyEvent',
+        type: 'keyUp',
+        key: 'ArrowRight',
+        modifiers: 0
+      },
+      {
+        method: 'Input.dispatchKeyEvent',
+        type: 'rawKeyDown',
+        key: 'Delete',
+        modifiers: 0
+      },
+      {
+        method: 'Input.dispatchKeyEvent',
+        type: 'keyUp',
+        key: 'Delete',
+        modifiers: 0
+      },
+      { method: 'Input.dispatchKeyEvent', type: 'rawKeyDown', key: 'Control', modifiers: 2 },
+      { method: 'Input.dispatchKeyEvent', type: 'rawKeyDown', key: 'z', modifiers: 2 },
+      { method: 'Input.dispatchKeyEvent', type: 'keyUp', key: 'z', modifiers: 2 },
+      { method: 'Input.dispatchKeyEvent', type: 'keyUp', key: 'Control', modifiers: 0 },
+      { method: 'Input.dispatchKeyEvent', type: 'rawKeyDown', key: 'F9', modifiers: 0 },
+      { method: 'Input.dispatchKeyEvent', type: 'keyUp', key: 'F9', modifiers: 0 }
     ]
   );
 });

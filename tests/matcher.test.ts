@@ -264,6 +264,46 @@ test('buildPreview enables strictly mapped memoQ marker rows independently', () 
   assert.equal(preview.readyToFill, 1);
 });
 
+test('buildPreview enables paired memoQ markers mapped from XML-like Excel tags', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 2,
+        rowNumber: '138',
+        sourceRaw: '吾王只能<BlueBold>仰视</>着您。',
+        sourceNormalized: '吾王只能<BlueBold>仰视</>着您。',
+        targetRaw: 'Mon Roi doit <BlueBold>lever les yeux vers vous</>°!',
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: '138',
+        rowNumber: '138',
+        sourceRaw: '吾王只能{1>仰视<2}着您。',
+        sourceNormalized: '吾王只能{1>仰视<2}着您。',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: ['{1>', '<2}'],
+        platform: 'memoq'
+      }
+    ],
+    {
+      autoStopAfterFilledCount: null,
+      validatePlaceholders: false,
+      enableMemoqMarkerFill: true
+    }
+  );
+
+  assert.equal(preview.items[0]?.status, 'ready');
+  assert.equal(
+    preview.items[0]?.translation,
+    'Mon Roi doit <BlueBold>lever les yeux vers vous</>°!'
+  );
+  assert.equal(preview.readyToFill, 1);
+});
+
 test('buildPreview rejects a marker-only memoQ source without visible matching evidence', () => {
   const preview = buildPreview(
     [

@@ -1,31 +1,33 @@
 import { normalizeText } from '../shared/utils.ts';
 
-const EXCEL_PLACEHOLDER_PATTERN = /\{[^{}<>]+\}/g;
+const EXCEL_MARKUP_PATTERN =
+  /\{[^{}<>]+\}|<\/>|<\/[A-Za-z][^<>]*>|<[A-Za-z][^<>]*\/?>/g;
 const MEMOQ_MARKER_PATTERN = /\{\d+>|<\d+\}|<\d+>/g;
-const MEMOQ_EMPTY_MARKER_PATTERN = /^<\d+>$/;
 const SKELETON_TOKEN = '\ufffc';
+const ANCHOR_CODE_POINT_START = 0xe000;
+const ANCHOR_CODE_POINT_END = 0xf8ff;
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, {
+  granularity: 'grapheme'
+});
+
+type MarkerKind = 'empty' | 'open' | 'close';
 
 interface TokenSpan {
   token: string;
   start: number;
   end: number;
+  kind: MarkerKind;
 }
 
-export type MemoqMarkerFillOperation =
-  | {
-      type: 'text';
-      text: string;
-    }
-  | {
-      type: 'markerSequence';
-      markers: string[];
-    };
+export interface MemoqMarkerAnchor {
+  sentinel: string;
+  markers: string[];
+}
 
 export interface MemoqMarkerFillPlan {
   expectedTarget: string;
-  markerCount: number;
-  markerSequenceCount: number;
-  operations: MemoqMarkerFillOperation[];
+  skeletonTarget: string;
+  anchors: MemoqMarkerAnchor[];
 }
 
 export type MemoqMarkerFillPlanResult =
@@ -39,31 +41,30 @@ export type MemoqMarkerFillPlanResult =
     };
 
 /**
- * Builds the deliberately narrow first version of memoQ native-marker fill.
- * It supports empty markers only and requires source/target placeholder order
- * plus adjacent-sequence grouping to remain unchanged.
+ * Builds a marker-agnostic target skeleton. Excel placeholders and XML-like
+ * paired tags become private-use sentinels that can later be replaced with
+ * memoQ's native marker sequences through deterministic editor navigation.
  */
 export function createMemoqMarkerFillPlan(
   excelSource: string,
   memoqSource: string,
   excelTarget: string
 ): MemoqMarkerFillPlanResult {
-  const sourcePlaceholders = collectTokenSpans(
+  const sourcePlaceholders = collectExcelTokenSpans(
     excelSource,
-    EXCEL_PLACEHOLDER_PATTERN
+    EXCEL_MARKUP_PATTERN
   );
-  const memoqMarkers = collectTokenSpans(memoqSource, MEMOQ_MARKER_PATTERN);
-  const targetPlaceholders = collectTokenSpans(
+  const memoqMarkers = collectMemoqTokenSpans(
+    memoqSource,
+    MEMOQ_MARKER_PATTERN
+  );
+  const targetPlaceholders = collectExcelTokenSpans(
     excelTarget,
-    EXCEL_PLACEHOLDER_PATTERN
+    EXCEL_MARKUP_PATTERN
   );
 
   if (sourcePlaceholders.length === 0 || memoqMarkers.length === 0) {
     return failure('The source does not expose a placeholder-to-marker mapping.');
-  }
-
-  if (memoqMarkers.some(({ token }) => !MEMOQ_EMPTY_MARKER_PATTERN.test(token))) {
-    return failure('Paired memoQ markers are not supported by the experimental path yet.');
   }
 
   if (sourcePlaceholders.length !== memoqMarkers.length) {
@@ -71,7 +72,7 @@ export function createMemoqMarkerFillPlan(
   }
 
   if (
-    buildSkeleton(excelSource, EXCEL_PLACEHOLDER_PATTERN) !==
+    buildSkeleton(excelSource, EXCEL_MARKUP_PATTERN) !==
     buildSkeleton(memoqSource, MEMOQ_MARKER_PATTERN)
   ) {
     return failure('Excel placeholders cannot be aligned exactly with memoQ source markers.');
@@ -83,70 +84,177 @@ export function createMemoqMarkerFillPlan(
     return failure('Target placeholders must preserve the source placeholder order.');
   }
 
-  const markerGroupSizes = collectAdjacentGroupSizes(memoqMarkers);
+  const sourceKinds = sourcePlaceholders.map(({ kind }) => kind);
+  const memoqKinds = memoqMarkers.map(({ kind }) => kind);
+  const targetKinds = targetPlaceholders.map(({ kind }) => kind);
+  if (
+    !arraysEqual(sourceKinds, memoqKinds) ||
+    !arraysEqual(sourceKinds, targetKinds)
+  ) {
+    return failure('Excel markup types do not match memoQ marker types.');
+  }
+
+  if (
+    !hasBalancedPairedMarkup(sourcePlaceholders) ||
+    !hasBalancedPairedMarkup(targetPlaceholders)
+  ) {
+    return failure('Paired Excel markup is not balanced safely.');
+  }
+
+  const sourceGroupSizes = collectAdjacentGroupSizes(sourcePlaceholders);
+  const memoqGroupSizes = collectAdjacentGroupSizes(memoqMarkers);
   const targetGroupSizes = collectAdjacentGroupSizes(targetPlaceholders);
-  if (!arraysEqual(markerGroupSizes, targetGroupSizes)) {
+  if (
+    !arraysEqual(sourceGroupSizes, memoqGroupSizes) ||
+    !arraysEqual(memoqGroupSizes, targetGroupSizes)
+  ) {
     return failure('Target placeholder grouping does not match memoQ marker sequences.');
   }
 
-  const operations: MemoqMarkerFillOperation[] = [];
-  let targetCursor = 0;
-  let markerCursor = 0;
-  let placeholderCursor = 0;
-
-  for (const groupSize of targetGroupSizes) {
-    const firstPlaceholder = targetPlaceholders[placeholderCursor];
-    const lastPlaceholder = targetPlaceholders[placeholderCursor + groupSize - 1];
-    if (!firstPlaceholder || !lastPlaceholder) {
-      return failure('Target placeholder grouping could not be resolved safely.');
-    }
-
-    appendTextOperation(
-      operations,
-      excelTarget.slice(targetCursor, firstPlaceholder.start)
-    );
-    operations.push({
-      type: 'markerSequence',
-      markers: memoqMarkers
-        .slice(markerCursor, markerCursor + groupSize)
-        .map(({ token }) => token)
-    });
-
-    targetCursor = lastPlaceholder.end;
-    markerCursor += groupSize;
-    placeholderCursor += groupSize;
+  const sentinels = allocateAnchorSentinels(
+    targetGroupSizes.length,
+    `${excelSource}${memoqSource}${excelTarget}`
+  );
+  if (!sentinels) {
+    return failure('No safe private-use marker anchors are available.');
   }
 
-  appendTextOperation(operations, excelTarget.slice(targetCursor));
+  const skeletonParts: string[] = [];
+  const expectedParts: string[] = [];
+  const anchors: MemoqMarkerAnchor[] = [];
+  let targetCursor = 0;
+  let tokenCursor = 0;
+
+  for (let groupIndex = 0; groupIndex < targetGroupSizes.length; groupIndex += 1) {
+    const groupSize = targetGroupSizes[groupIndex] ?? 0;
+    const firstPlaceholder = targetPlaceholders[tokenCursor];
+    const lastPlaceholder = targetPlaceholders[tokenCursor + groupSize - 1];
+    const markers = memoqMarkers
+      .slice(tokenCursor, tokenCursor + groupSize)
+      .map(({ token }) => token);
+    const sentinel = sentinels[groupIndex];
+    if (
+      !groupSize ||
+      !firstPlaceholder ||
+      !lastPlaceholder ||
+      markers.length !== groupSize ||
+      !sentinel
+    ) {
+      return failure('Target marker anchors could not be resolved safely.');
+    }
+
+    const text = excelTarget.slice(targetCursor, firstPlaceholder.start);
+    skeletonParts.push(text, sentinel);
+    expectedParts.push(text, markers.join(''));
+    anchors.push({ sentinel, markers });
+    targetCursor = lastPlaceholder.end;
+    tokenCursor += groupSize;
+  }
+
+  const suffix = excelTarget.slice(targetCursor);
+  skeletonParts.push(suffix);
+  expectedParts.push(suffix);
 
   return {
     ok: true,
     plan: {
-      expectedTarget: operations
-        .map((operation) =>
-          operation.type === 'text'
-            ? operation.text
-            : operation.markers.join('')
-        )
-        .join(''),
-      markerCount: memoqMarkers.length,
-      markerSequenceCount: markerGroupSizes.length,
-      operations
+      expectedTarget: expectedParts.join(''),
+      skeletonTarget: skeletonParts.join(''),
+      anchors
     }
   };
 }
 
-function collectTokenSpans(value: string, pattern: RegExp): TokenSpan[] {
+/**
+ * Counts editor cursor atoms before one unique skeleton sentinel. The caller
+ * adds the expansion from earlier multi-marker sequences after this base
+ * offset is calculated from the immutable skeleton.
+ */
+export function countMemoqCursorUnitsBeforeAnchor(
+  value: string,
+  sentinel: string
+): number | null {
+  const anchorIndex = value.indexOf(sentinel);
+  if (
+    anchorIndex < 0 ||
+    value.indexOf(sentinel, anchorIndex + sentinel.length) >= 0
+  ) {
+    return null;
+  }
+
+  return countGraphemeClusters(value.slice(0, anchorIndex));
+}
+
+function collectExcelTokenSpans(
+  value: string,
+  pattern: RegExp
+): TokenSpan[] {
+  return collectTokenSpans(value, pattern, classifyExcelToken);
+}
+
+function collectMemoqTokenSpans(
+  value: string,
+  pattern: RegExp
+): TokenSpan[] {
+  return collectTokenSpans(value, pattern, classifyMemoqToken);
+}
+
+function collectTokenSpans(
+  value: string,
+  pattern: RegExp,
+  classify: (token: string) => MarkerKind
+): TokenSpan[] {
   return [...value.matchAll(new RegExp(pattern.source, pattern.flags))].map(
     (match) => {
       const start = match.index ?? 0;
       return {
         token: match[0],
         start,
-        end: start + match[0].length
+        end: start + match[0].length,
+        kind: classify(match[0])
       };
     }
   );
+}
+
+function classifyExcelToken(token: string): MarkerKind {
+  if (token.startsWith('{')) {
+    return 'empty';
+  }
+
+  if (token.startsWith('</')) {
+    return 'close';
+  }
+
+  return token.endsWith('/>') ? 'empty' : 'open';
+}
+
+function classifyMemoqToken(token: string): MarkerKind {
+  if (token.startsWith('{')) {
+    return 'open';
+  }
+
+  return token.endsWith('}') ? 'close' : 'empty';
+}
+
+function hasBalancedPairedMarkup(spans: TokenSpan[]): boolean {
+  let depth = 0;
+
+  for (const span of spans) {
+    if (span.kind === 'open') {
+      depth += 1;
+      continue;
+    }
+
+    if (span.kind === 'close') {
+      if (depth === 0) {
+        return false;
+      }
+      depth -= 1;
+    }
+  }
+
+  return depth === 0;
 }
 
 function buildSkeleton(value: string, pattern: RegExp): string {
@@ -177,13 +285,25 @@ function collectAdjacentGroupSizes(spans: TokenSpan[]): number[] {
   return sizes;
 }
 
-function appendTextOperation(
-  operations: MemoqMarkerFillOperation[],
-  text: string
-): void {
-  if (text) {
-    operations.push({ type: 'text', text });
+function allocateAnchorSentinels(count: number, occupied: string): string[] | null {
+  const sentinels: string[] = [];
+
+  for (
+    let codePoint = ANCHOR_CODE_POINT_START;
+    codePoint <= ANCHOR_CODE_POINT_END && sentinels.length < count;
+    codePoint += 1
+  ) {
+    const candidate = String.fromCodePoint(codePoint);
+    if (!occupied.includes(candidate)) {
+      sentinels.push(candidate);
+    }
   }
+
+  return sentinels.length === count ? sentinels : null;
+}
+
+function countGraphemeClusters(value: string): number {
+  return Array.from(GRAPHEME_SEGMENTER.segment(value)).length;
 }
 
 function arraysEqual<T>(left: T[], right: T[]): boolean {
