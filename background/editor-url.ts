@@ -1,6 +1,6 @@
-const MEMOQ_LEGACY_URL_RE = /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/(?:webpm\/)?webtrans\//;
+const MEMOQ_LEGACY_URL_RE = /^https:\/\/memoq\.[^/]+\/memoqweb\/(?:webpm\/)?webtrans\//;
 const MEMOQ_MODERN_URL_RE =
-  /^https:\/\/memoq\.[^/]+\.net\/memoqweb\/editor\/projects\/[^/]+\/docs\/[^/?#]+\/?(?:[?#].*)?$/;
+  /^https:\/\/memoq\.[^/]+\/memoqweb\/editor\/projects\/[^/]+\/docs\/[^/?#]+\/?(?:[?#].*)?$/;
 const MEMSOURCE_JOB_URL_RE =
   /^https:\/\/cloud\.memsource\.com\/web\/job\/[^/]+\/translate(?:[/?#]|$)/;
 const MEMSOURCE_EDITOR_FRAME_URL_RE =

@@ -41,6 +41,14 @@ test('memoQ webtrans URLs without the webpm segment are supported', () => {
   assert.equal(isSupportedEditorUrl(url), true);
 });
 
+test('memoQ webtrans URLs on non-.net hosts are supported', () => {
+  const url =
+    'https://memoq.global.sarosgame.com/memoqweb/webpm/webtrans/Translation.aspx?prj=554e1b42-14f0-ee11-aaf8-000d3a504d39&doc=f3dd4e57-d8ec-44ea-b6ef-64e751b99931';
+
+  assert.equal(isMemoqUrl(url), true);
+  assert.equal(isSupportedEditorUrl(url), true);
+});
+
 test('modern memoQ editor document URLs are supported', () => {
   const url =
     'https://memoq.example.net/memoqweb/editor/projects/project-123/docs/doc-456/?view=translation#row-12';
