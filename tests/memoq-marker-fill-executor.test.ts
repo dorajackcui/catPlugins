@@ -40,6 +40,19 @@ function makeAdjacentPlan() {
   return result.plan;
 }
 
+function makeFlattenedWebtransPlan() {
+  const result = createMemoqMarkerFillPlan(
+    '技能冷却时间降低<span color=\\"#FF8E33\\">5</>秒。',
+    '技能冷却时间降低<1>5<2>秒。',
+    'スキルのクールタイムが<span color=\\"#FF8E33\\">5</>秒短縮される。'
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    throw new Error(result.reason);
+  }
+  return result.plan;
+}
+
 function tokenizeEditorAtoms(value: string): string[] {
   const atoms: string[] = [];
   let cursor = 0;
@@ -229,6 +242,26 @@ test('MemoqMarkerFillExecutor materializes each adjacent marker sequence with on
   );
 });
 
+test('MemoqMarkerFillExecutor materializes flattened webTrans tag pairs', async () => {
+  const harness = createEditorHarness({ plan: makeFlattenedWebtransPlan() });
+
+  await harness.executor.execute();
+
+  assert.equal(
+    harness.value(),
+    'スキルのクールタイムが<1>5<2>秒短縮される。'
+  );
+  assert.deepEqual(
+    harness.inputCalls.map((operations) => operations.at(-1)),
+    [
+      { type: 'deleteForward' },
+      { type: 'key', key: 'F9' },
+      { type: 'deleteForward' },
+      { type: 'key', key: 'F9' }
+    ]
+  );
+});
+
 test('MemoqMarkerFillExecutor clears partial targets after stable verification fails', async () => {
   const harness = createEditorHarness({ wrongMarker: true });
 
@@ -316,17 +349,17 @@ test('MemoqMarkerFillExecutor catches drift during the final exact hold', async 
   assert.equal(harness.value(), '');
 });
 
-test('buildAbsoluteCursorOperations does not depend on a prior editor cursor', () => {
+test('buildAbsoluteCursorOperations relies on the trusted text-origin click, not Ctrl+Home', () => {
   assert.deepEqual(
     buildAbsoluteCursorOperations(7, { type: 'key', key: 'F9' }),
     [
-      { type: 'documentHome' },
+      { type: 'moveLeft', count: 1 },
       { type: 'moveRight', count: 7 },
       { type: 'key', key: 'F9' }
     ]
   );
   assert.deepEqual(
     buildAbsoluteCursorOperations(0, { type: 'deleteForward' }),
-    [{ type: 'documentHome' }, { type: 'deleteForward' }]
+    [{ type: 'moveLeft', count: 1 }, { type: 'deleteForward' }]
   );
 });

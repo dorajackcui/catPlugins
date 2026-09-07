@@ -60,7 +60,7 @@ test('writeTrustedTextToElement sends memoQ debugger text write with center coor
   ]);
 });
 
-test('writeTrustedInputSequenceToElement sends one focused marker sequence request', async () => {
+test('writeTrustedInputSequenceToElement focuses the target text origin for marker navigation', async () => {
   const messages: unknown[] = [];
   const restoreChrome = installChromeRecorder(messages);
   const target = {
@@ -80,7 +80,9 @@ test('writeTrustedInputSequenceToElement sends one focused marker sequence reque
   ];
 
   try {
-    await writeTrustedInputSequenceToElement(target, operations);
+    await writeTrustedInputSequenceToElement(target, operations, {
+      focusPosition: 'text-start'
+    });
   } finally {
     restoreChrome();
   }
@@ -89,8 +91,8 @@ test('writeTrustedInputSequenceToElement sends one focused marker sequence reque
     {
       type: 'DEBUGGER_INPUT_SEQUENCE',
       payload: {
-        x: 50,
-        y: 40,
+        x: 11,
+        y: 27,
         operations
       }
     }

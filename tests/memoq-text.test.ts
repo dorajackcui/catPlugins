@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  escapeMemoqPlainTargetText,
   formatMemoqInlineTag,
   isMemoqCommittedTargetText,
   memoQAccessibilityTextToRenderedText,
@@ -14,6 +15,20 @@ const NBSP = String.fromCharCode(0x00a0);
 const NARROW_NBSP = String.fromCharCode(0x202f);
 const MIDDLE_DOT = String.fromCharCode(0x00b7);
 const DEGREE = String.fromCharCode(0x00b0);
+
+test('escapeMemoqPlainTargetText escapes numeric placeholders for plain input', () => {
+  assert.equal(
+    escapeMemoqPlainTargetText('能力=${1}; 数量={12}'),
+    '能力=${{1}; 数量={{12}'
+  );
+});
+
+test('escapeMemoqPlainTargetText leaves named placeholders and marker markup alone', () => {
+  assert.equal(
+    escapeMemoqPlainTargetText('A{name}B<1>C{2>D<2}'),
+    'A{name}B<1>C{2>D<2}'
+  );
+});
 
 test('formatMemoqInlineTag converts memoQ tag DOM classes to placeholder markup', () => {
   assert.equal(formatMemoqInlineTag('tag inline-empty editor-char', '1'), '<1>');

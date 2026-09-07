@@ -88,8 +88,8 @@ export function createMemoqMarkerFillPlan(
   const memoqKinds = memoqMarkers.map(({ kind }) => kind);
   const targetKinds = targetPlaceholders.map(({ kind }) => kind);
   if (
-    !arraysEqual(sourceKinds, memoqKinds) ||
-    !arraysEqual(sourceKinds, targetKinds)
+    !arraysEqual(sourceKinds, targetKinds) ||
+    !memoqMarkerKindsPreserveExcelOrder(sourceKinds, memoqKinds)
   ) {
     return failure('Excel markup types do not match memoQ marker types.');
   }
@@ -235,6 +235,26 @@ function classifyMemoqToken(token: string): MarkerKind {
   }
 
   return token.endsWith('}') ? 'close' : 'empty';
+}
+
+/**
+ * memoQ webTrans can import XML-like pairs as two independent inline-empty
+ * markers. That flattening is safe here because exact token order, visible
+ * text, adjacency groups, and the balanced Excel source/target structure are
+ * validated separately. A non-empty memoQ marker must still retain its Excel
+ * marker kind.
+ */
+function memoqMarkerKindsPreserveExcelOrder(
+  excelKinds: MarkerKind[],
+  memoqKinds: MarkerKind[]
+): boolean {
+  return (
+    excelKinds.length === memoqKinds.length &&
+    excelKinds.every(
+      (excelKind, index) =>
+        memoqKinds[index] === excelKind || memoqKinds[index] === 'empty'
+    )
+  );
 }
 
 function hasBalancedPairedMarkup(spans: TokenSpan[]): boolean {

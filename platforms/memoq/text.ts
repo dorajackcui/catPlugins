@@ -1,5 +1,16 @@
 import { normalizeText } from '../../shared/utils.ts';
 
+const MEMOQ_NUMERIC_PLACEHOLDER_PATTERN = /\{(\d+)\}/g;
+
+/**
+ * Escapes literal numeric placeholders for memoQ's plain-text input path.
+ * memoQ interprets `{n}` as a native marker while `{{n}` commits as the
+ * intended literal `{n}`.
+ */
+export function escapeMemoqPlainTargetText(value: string): string {
+  return value.replace(MEMOQ_NUMERIC_PLACEHOLDER_PATTERN, '{{$1}');
+}
+
 function stripMemoqInlineTagMarkup(value: string): string {
   return value
     .replace(/\{(\d+)>/g, '$1')

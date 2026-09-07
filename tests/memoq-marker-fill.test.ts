@@ -111,11 +111,76 @@ test('memoQ cursor offsets use immutable skeleton graphemes without parsing lite
   assert.equal(countMemoqCursorUnitsBeforeAnchor('text', '\uE000'), null);
 });
 
-test('memoQ marker plan rejects mismatched paired marker kinds', () => {
+test('memoQ marker plan accepts paired Excel tags flattened to empty memoQ markers', () => {
   const result = createMemoqMarkerFillPlan(
     'Before<BlueBold>name</>After',
     'Before<1>name<2>After',
     'Avant<BlueBold>nom</>Après'
+  );
+
+  assert.deepEqual(result, {
+    ok: true,
+    plan: {
+      expectedTarget: 'Avant<1>nom<2>Après',
+      skeletonTarget: 'Avant\uE000nom\uE001Après',
+      anchors: [
+        { sentinel: '\uE000', markers: ['<1>'] },
+        { sentinel: '\uE001', markers: ['<2>'] }
+      ]
+    }
+  });
+});
+
+test('memoQ marker plan maps the real webTrans span representation', () => {
+  const result = createMemoqMarkerFillPlan(
+    '技能冷却时间降低<span color=\\"#FF8E33\\">5</>秒。',
+    '技能冷却时间降低<1>5<2>秒。',
+    'スキルのクールタイムが<span color=\\"#FF8E33\\">5</>秒短縮される。'
+  );
+
+  assert.deepEqual(result, {
+    ok: true,
+    plan: {
+      expectedTarget: 'スキルのクールタイムが<1>5<2>秒短縮される。',
+      skeletonTarget: 'スキルのクールタイムが\uE0005\uE001秒短縮される。',
+      anchors: [
+        { sentinel: '\uE000', markers: ['<1>'] },
+        { sentinel: '\uE001', markers: ['<2>'] }
+      ]
+    }
+  });
+});
+
+test('memoQ marker plan maps the repeated span, hyperlink, and counter sequence', () => {
+  const result = createMemoqMarkerFillPlan(
+    '使用猛狩科技的<span color=\\"#FF8E33\\">药剂加工链</>，制造1个<hyperlink color=\\"#FF8E33\\" action=\\"13000000901\\">{2}</>({0}/{1})',
+    '使用猛狩科技的<1>药剂加工链<2>，制造1个<3><4><2>(<5>/<6>)',
+    'ビーストテクノロジーの<span color=\\"#FF8E33\\">薬剤加工ライン</>を使用して、<hyperlink color=\\"#FF8E33\\" action=\\"13000000901\\">{2}</>を1個製造する({0}/{1})'
+  );
+
+  assert.deepEqual(result, {
+    ok: true,
+    plan: {
+      expectedTarget:
+        'ビーストテクノロジーの<1>薬剤加工ライン<2>を使用して、<3><4><2>を1個製造する(<5>/<6>)',
+      skeletonTarget:
+        'ビーストテクノロジーの\uE000薬剤加工ライン\uE001を使用して、\uE002を1個製造する(\uE003/\uE004)',
+      anchors: [
+        { sentinel: '\uE000', markers: ['<1>'] },
+        { sentinel: '\uE001', markers: ['<2>'] },
+        { sentinel: '\uE002', markers: ['<3>', '<4>', '<2>'] },
+        { sentinel: '\uE003', markers: ['<5>'] },
+        { sentinel: '\uE004', markers: ['<6>'] }
+      ]
+    }
+  });
+});
+
+test('memoQ marker plan rejects non-empty marker kind changes', () => {
+  const result = createMemoqMarkerFillPlan(
+    'Before{0}After',
+    'Before{1>After',
+    'Avant{0}Après'
   );
 
   assert.equal(result.ok, false);

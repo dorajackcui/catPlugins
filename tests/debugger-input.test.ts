@@ -138,11 +138,11 @@ test('DebuggerInputController writes text after a trusted press and release', as
   ]);
 });
 
-test('DebuggerInputController dispatches absolute memoQ navigation atomically', async () => {
+test('DebuggerInputController dispatches memoQ marker navigation without global Home', async () => {
   const harness = createHarness();
 
   await harness.controller.runSequence(13, 10, 20, [
-    { type: 'documentHome' },
+    { type: 'moveLeft', count: 1 },
     { type: 'moveRight', count: 2 },
     { type: 'deleteForward' },
     { type: 'undo' },
@@ -172,25 +172,13 @@ test('DebuggerInputController dispatches absolute memoQ navigation atomically', 
       {
         method: 'Input.dispatchKeyEvent',
         type: 'rawKeyDown',
-        key: 'Control',
-        modifiers: 2
-      },
-      {
-        method: 'Input.dispatchKeyEvent',
-        type: 'rawKeyDown',
-        key: 'Home',
-        modifiers: 2
+        key: 'ArrowLeft',
+        modifiers: 0
       },
       {
         method: 'Input.dispatchKeyEvent',
         type: 'keyUp',
-        key: 'Home',
-        modifiers: 2
-      },
-      {
-        method: 'Input.dispatchKeyEvent',
-        type: 'keyUp',
-        key: 'Control',
+        key: 'ArrowLeft',
         modifiers: 0
       },
       {
@@ -236,6 +224,37 @@ test('DebuggerInputController dispatches absolute memoQ navigation atomically', 
       { method: 'Input.dispatchKeyEvent', type: 'rawKeyDown', key: 'F9', modifiers: 0 },
       { method: 'Input.dispatchKeyEvent', type: 'keyUp', key: 'F9', modifiers: 0 }
     ]
+  );
+});
+
+test('DebuggerInputController keeps four consecutive marker sequences on their own segment coordinates', async () => {
+  const harness = createHarness();
+
+  for (const y of [20, 60, 100, 140]) {
+    await harness.controller.runSequence(13, 10, y, [
+      { type: 'deleteForward' }
+    ]);
+  }
+
+  const presses = harness.commands.filter(
+    ({ method, params }) =>
+      method === 'Input.dispatchMouseEvent' && params.type === 'mousePressed'
+  );
+  assert.deepEqual(
+    presses.map(({ params }) => ({ x: params.x, y: params.y })),
+    [
+      { x: 10, y: 20 },
+      { x: 10, y: 60 },
+      { x: 10, y: 100 },
+      { x: 10, y: 140 }
+    ]
+  );
+  assert.equal(
+    harness.commands.some(
+      ({ method, params }) =>
+        method === 'Input.dispatchKeyEvent' && params.key === 'Home'
+    ),
+    false
   );
 });
 

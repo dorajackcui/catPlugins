@@ -39,7 +39,9 @@ export class MemoqMarkerMaterializationError extends Error {
 /**
  * Materializes native memoQ markers as a verified transaction. Text is written
  * once with unique anchors; every anchor is then deleted and replaced through
- * native keyboard navigation plus F9. No step relies on the previous cursor.
+ * native keyboard navigation plus F9. Each input sequence starts with a
+ * trusted click on the first editor atom followed by one ArrowLeft, so no step
+ * relies on the previous cursor or memoQ's global Ctrl+Home shortcut.
  */
 export class MemoqMarkerFillExecutor {
   private readonly wait: (delayMs: number) => Promise<void>;
@@ -245,7 +247,9 @@ export function buildAbsoluteCursorOperations(
     throw new Error('Invalid memoQ marker cursor offset.');
   }
 
-  const operations: DebuggerInputOperation[] = [{ type: 'documentHome' }];
+  const operations: DebuggerInputOperation[] = [
+    { type: 'moveLeft', count: 1 }
+  ];
   if (cursorOffset > 0) {
     operations.push({ type: 'moveRight', count: cursorOffset });
   }

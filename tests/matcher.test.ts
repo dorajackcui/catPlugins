@@ -304,6 +304,43 @@ test('buildPreview enables paired memoQ markers mapped from XML-like Excel tags'
   assert.equal(preview.readyToFill, 1);
 });
 
+test('buildPreview enables XML-like Excel tags flattened by webTrans', () => {
+  const preview = buildPreview(
+    [
+      {
+        rowIndex: 25,
+        rowNumber: '1024',
+        sourceRaw: '技能冷却时间降低<span color=\\"#FF8E33\\">5</>秒。',
+        sourceNormalized: '技能冷却时间降低<span color=\\"#FF8E33\\">5</>秒。',
+        targetRaw:
+          'スキルのクールタイムが<span color=\\"#FF8E33\\">5</>秒短縮される。',
+        occurrenceIndex: 1
+      }
+    ],
+    [
+      {
+        domId: '1024',
+        rowNumber: '1024',
+        sourceRaw: '技能冷却时间降低<1>5<2>秒。',
+        sourceNormalized: '技能冷却时间降低<1>5<2>秒。',
+        occurrenceIndex: 1,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: ['<1>', '<2>'],
+        platform: 'memoq'
+      }
+    ],
+    {
+      autoStopAfterFilledCount: null,
+      validatePlaceholders: false,
+      enableMemoqMarkerFill: true
+    }
+  );
+
+  assert.equal(preview.items[0]?.status, 'ready');
+  assert.equal(preview.readyToFill, 1);
+});
+
 test('buildPreview rejects a marker-only memoQ source without visible matching evidence', () => {
   const preview = buildPreview(
     [

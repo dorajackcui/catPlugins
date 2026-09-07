@@ -13,7 +13,11 @@ import {
   chooseMemoqAccessibilityTextBoxes,
   readMemoqAccessibilityTextBoxValue
 } from './accessibility-textbox.ts';
-import { serializeMemoqContent, serializeMemoqContentExact } from './text.ts';
+import {
+  escapeMemoqPlainTargetText,
+  serializeMemoqContent,
+  serializeMemoqContentExact
+} from './text.ts';
 import {
   writeTrustedInputSequenceToElement,
   writeTrustedTextToElement
@@ -155,6 +159,10 @@ export class MemoqAdapter {
             const currentTarget = resolveTargetCell();
             return currentTarget ? profile.getWriteTarget(currentTarget) : null;
           };
+          const resolveInputTarget = (): HTMLElement | null => {
+            const currentTarget = resolveTargetCell();
+            return currentTarget ? profile.getContentRoot(currentTarget) : null;
+          };
 
           return new MemoqMarkerFillExecutor({
             plan: markerFillPlan,
@@ -172,11 +180,23 @@ export class MemoqAdapter {
                   settleMs: 20,
                   ...resolveOptions
                 }),
-              runInput: (currentTarget, operations) =>
-                writeTrustedInputSequenceToElement(currentTarget, operations, {
+              runInput: async (_currentTarget, operations) => {
+                const inputTarget = resolveInputTarget();
+                if (!inputTarget) {
+                  throw new Error('The memoQ marker input target could not be re-resolved.');
+                }
+
+                await writeTrustedInputSequenceToElement(inputTarget, operations, {
                   settleMs: 20,
-                  ...resolveOptions
-                })
+                  focusPosition: 'text-start',
+                  ...(segment.rowNumber
+                    ? {
+                        requireResolvedElement: true,
+                        resolveElement: resolveInputTarget
+                      }
+                    : {})
+                });
+              }
             }
           }).execute();
         }
@@ -185,11 +205,15 @@ export class MemoqAdapter {
           throw new Error('memoQ marker fill requires an explicit experimental marker plan.');
         }
 
-        return writeTrustedTextToElement(target, text, {
-          requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
-          settleMs: 20,
-          ...resolveOptions
-        });
+        return writeTrustedTextToElement(
+          target,
+          escapeMemoqPlainTargetText(text),
+          {
+            requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
+            settleMs: 20,
+            ...resolveOptions
+          }
+        );
       },
       expectedCommittedValue: markerFillPlan?.expectedTarget,
       runId: context?.runId,

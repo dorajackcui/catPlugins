@@ -487,3 +487,76 @@ test('MemoqAdapter.fillSegment warns when memoQ stores NBSP as plain spaces afte
     globalThis.document = previousDocument;
   }
 });
+
+test('MemoqAdapter escapes numeric placeholders only for plain memoQ input', async () => {
+  const previousDocument = globalThis.document;
+  const restoreTimer = installImmediateTimer();
+  const targetText = { nodeType: 3 as const, textContent: '', parentElement: undefined };
+  const sourceCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 42 source segment'
+    },
+    textContent: '每个饭团提升能力=贩售机倍率×${1}'
+  });
+  const targetCell = fakeElement({
+    className: 'ProseMirror',
+    attributes: {
+      contenteditable: 'true',
+      role: 'gridcell',
+      'aria-label': 'row 42 target segment'
+    },
+    children: [targetText]
+  });
+  const row = fakeElement({
+    attributes: { role: 'row' },
+    children: [sourceCell, targetCell]
+  });
+  const table = fakeElement({
+    attributes: { role: 'table' },
+    children: [row]
+  });
+  const messages: unknown[] = [];
+  const restoreChrome = installChromeRecorder((message) => {
+    messages.push(message);
+    targetText.textContent = '每个おにぎりの能力=${1}';
+  });
+  globalThis.document = fakeDocument(fakeElement({ children: [table] }));
+
+  try {
+    const adapter = new MemoqAdapter(new ContentScriptDomHelpers());
+    const outcome = await adapter.fillSegment(
+      {
+        domId: '42',
+        rowNumber: '42',
+        sourceRaw: '每个饭团提升能力=贩售机倍率×${1}',
+        sourceNormalized: '每个饭团提升能力=贩售机倍率×${1}',
+        occurrenceIndex: 0,
+        targetRaw: '',
+        isEmptyTarget: true,
+        placeholderTokens: [],
+        targetElement: targetCell as never,
+        platform: 'memoq'
+      },
+      '每个おにぎりの能力=${1}'
+    );
+
+    assert.equal(outcome.filled, true);
+    assert.deepEqual(messages, [
+      {
+        type: 'MEMOQ_DEBUGGER_WRITE_TEXT',
+        payload: {
+          x: 60,
+          y: 12,
+          text: '每个おにぎりの能力=${{1}'
+        }
+      }
+    ]);
+  } finally {
+    restoreChrome();
+    restoreTimer();
+    globalThis.document = previousDocument;
+  }
+});

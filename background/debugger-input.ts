@@ -23,17 +23,17 @@ const CONTROL_KEY: DebuggerKeyDescriptor = {
   windowsVirtualKeyCode: 17,
   nativeVirtualKeyCode: 17
 };
-const HOME_KEY: DebuggerKeyDescriptor = {
-  key: 'Home',
-  code: 'Home',
-  windowsVirtualKeyCode: 36,
-  nativeVirtualKeyCode: 36
-};
 const ARROW_RIGHT_KEY: DebuggerKeyDescriptor = {
   key: 'ArrowRight',
   code: 'ArrowRight',
   windowsVirtualKeyCode: 39,
   nativeVirtualKeyCode: 39
+};
+const ARROW_LEFT_KEY: DebuggerKeyDescriptor = {
+  key: 'ArrowLeft',
+  code: 'ArrowLeft',
+  windowsVirtualKeyCode: 37,
+  nativeVirtualKeyCode: 37
 };
 const DELETE_KEY: DebuggerKeyDescriptor = {
   key: 'Delete',
@@ -147,12 +147,7 @@ export class DebuggerInputController {
       return;
     }
 
-    if (operation.type === 'documentHome') {
-      await this.dispatchControlKey(target, HOME_KEY);
-      return;
-    }
-
-    if (operation.type === 'moveRight') {
+    if (operation.type === 'moveLeft' || operation.type === 'moveRight') {
       if (
         !Number.isSafeInteger(operation.count) ||
         operation.count < 1 ||
@@ -162,7 +157,10 @@ export class DebuggerInputController {
       }
 
       for (let index = 0; index < operation.count; index += 1) {
-        await this.dispatchKey(target, ARROW_RIGHT_KEY);
+        await this.dispatchKey(
+          target,
+          operation.type === 'moveLeft' ? ARROW_LEFT_KEY : ARROW_RIGHT_KEY
+        );
       }
       return;
     }

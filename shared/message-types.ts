@@ -95,7 +95,8 @@ export type DebuggerInputOperation =
       y: number;
     }
   | {
-      type: 'documentHome';
+      type: 'moveLeft';
+      count: number;
     }
   | {
       type: 'moveRight';

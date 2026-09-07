@@ -17,7 +17,9 @@ export interface TrustedTextWriteOptions {
 export type TrustedInputSequenceOptions = Omit<
   TrustedTextWriteOptions,
   'requestType'
->;
+> & {
+  focusPosition?: 'center' | 'text-start';
+};
 
 type TrustedTextWriteRequest = Extract<BackgroundRequest, { type: TrustedTextWriteRequestType }>;
 const REQUIRED_RESOLVE_ATTEMPTS = 4;
@@ -138,8 +140,13 @@ export async function writeTrustedInputSequenceToElement(
 
   const measureTarget = await resolveTarget(scrollTarget);
   const rect = measureTarget.getBoundingClientRect();
-  const x = rect.left + rect.width / 2;
-  const y = rect.top + rect.height / 2;
+  const focusPosition = options.focusPosition ?? 'center';
+  const x = focusPosition === 'text-start'
+    ? rect.left + Math.min(1, rect.width / 2)
+    : rect.left + rect.width / 2;
+  const y = focusPosition === 'text-start'
+    ? rect.top + Math.min(7, rect.height / 2)
+    : rect.top + rect.height / 2;
 
   if (!Number.isFinite(x) || !Number.isFinite(y) || rect.width <= 0 || rect.height <= 0) {
     throw new Error('Trusted input sequence target element is not visible enough to write.');
