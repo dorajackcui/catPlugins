@@ -6,7 +6,7 @@ const MEMSOURCE_JOB_URL_RE =
 const MEMSOURCE_EDITOR_FRAME_URL_RE =
   /^https:\/\/editor\.memsource\.com\/twe\/translation\/job\/[^/?#]+/;
 const GIENTRANS_EDITOR_URL_RE =
-  /^https:\/\/gentrans\.genplus\.cn\/#\/olEditor(?:[/?#]|$)/;
+  /^https:\/\/gentrans(?:-saas)?\.genplus\.cn\/#\/olEditor(?:[/?#]|$)/;
 
 export function isMemoqEditorUrl(url?: string): boolean {
   return Boolean(url && (MEMOQ_LEGACY_URL_RE.test(url) || MEMOQ_MODERN_URL_RE.test(url)));

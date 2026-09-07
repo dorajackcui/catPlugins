@@ -8,7 +8,8 @@
     "https://app.phrase.com/*",
     "https://cloud.memsource.com/*",
     "https://editor.memsource.com/*",
-    "https://gentrans.genplus.cn/*"
+    "https://gentrans.genplus.cn/*",
+    "https://gentrans-saas.genplus.cn/*"
   ],
   "action": {
     "default_title": "Phrase Bulk Fill",
@@ -23,7 +24,8 @@
         "https://app.phrase.com/editor/*",
         "https://cloud.memsource.com/web/job/*/translate",
         "https://editor.memsource.com/twe/translation/job/*",
-        "https://gentrans.genplus.cn/*"
+        "https://gentrans.genplus.cn/*",
+        "https://gentrans-saas.genplus.cn/*"
       ],
       "js": ["content-script.js"],
       "run_at": "document_idle",
