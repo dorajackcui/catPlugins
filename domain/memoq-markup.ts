@@ -1,4 +1,5 @@
 import { normalizeText } from '../shared/utils.ts';
+import { memoqSourceSkeletonMatchesExcelSource } from './memoq-marker-mapping.ts';
 
 const MEMOQ_INLINE_TAG_PATTERN = /\{\d+>|<\d+\}|<\d+>/g;
 const MAX_PROTECTED_TEXT_LENGTH_PER_TAG = 256;
@@ -37,6 +38,12 @@ export function memoqProtectedSourceMatchesExcelSource(
   // Excel row, so treating their protected gap as a wildcard is unsafe.
   if (!pattern.anchors.some((anchor) => anchor.length > 0)) {
     return false;
+  }
+
+  // A real line break next to spaces disappears under normalizeText. Compare
+  // protected skeletons first so that gap still has its own marker position.
+  if (memoqSourceSkeletonMatchesExcelSource(memoqSource, excelSource)) {
+    return true;
   }
 
   const firstAnchor = pattern.anchors[0] ?? '';

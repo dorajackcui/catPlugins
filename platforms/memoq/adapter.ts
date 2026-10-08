@@ -15,18 +15,15 @@ import {
 } from './accessibility-textbox.ts';
 import {
   escapeMemoqPlainTargetText,
-  serializeMemoqContent,
-  serializeMemoqContentExact
+  serializeMemoqContent
 } from './text.ts';
-import {
-  writeTrustedInputSequenceToElement,
-  writeTrustedTextToElement
-} from '../../content/trusted-text-writer.ts';
+import { writeTrustedTextToElement } from '../../content/trusted-text-writer.ts';
 import type { FillOutcome } from '../../shared/fill-outcome-types.ts';
 import type { ApiResponse, BackgroundRequest } from '../../shared/message-types.ts';
 import type { MemoqMarkerFillPlan } from '../../domain/memoq-marker-fill.ts';
 import { hasMemoqInlineTagMarkup } from '../../domain/memoq-markup.ts';
 import { MemoqMarkerFillExecutor } from './marker-fill-executor.ts';
+import { createMemoqMarkerEditor } from './marker-editor.ts';
 import {
   containsNoBreakSpace,
   normalizeText,
@@ -148,56 +145,14 @@ export class MemoqAdapter {
           : {};
 
         if (markerFillPlan) {
-          const resolveTargetCell = (): HTMLElement | null => {
-            if (!segment.rowNumber) {
-              return segment.targetElement as HTMLElement;
-            }
-
-            return reader.findCurrentTargetByRowNumber(segment.rowNumber);
-          };
-          const resolveWriteTarget = (): HTMLElement | null => {
-            const currentTarget = resolveTargetCell();
-            return currentTarget ? profile.getWriteTarget(currentTarget) : null;
-          };
-          const resolveInputTarget = (): HTMLElement | null => {
-            const currentTarget = resolveTargetCell();
-            return currentTarget ? profile.getContentRoot(currentTarget) : null;
-          };
-
           return new MemoqMarkerFillExecutor({
             plan: markerFillPlan,
-            editor: {
-              resolveTarget: resolveWriteTarget,
-              readCurrentValue: () => {
-                const currentTarget = resolveTargetCell();
-                return currentTarget
-                  ? serializeMemoqContentExact(profile.getContentRoot(currentTarget))
-                  : null;
-              },
-              writeText: (currentTarget, skeleton) =>
-                writeTrustedTextToElement(currentTarget, skeleton, {
-                  requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
-                  settleMs: 20,
-                  ...resolveOptions
-                }),
-              runInput: async (_currentTarget, operations) => {
-                const inputTarget = resolveInputTarget();
-                if (!inputTarget) {
-                  throw new Error('The memoQ marker input target could not be re-resolved.');
-                }
-
-                await writeTrustedInputSequenceToElement(inputTarget, operations, {
-                  settleMs: 20,
-                  focusPosition: 'text-start',
-                  ...(segment.rowNumber
-                    ? {
-                        requireResolvedElement: true,
-                        resolveElement: resolveInputTarget
-                      }
-                    : {})
-                });
-              }
-            }
+            editor: createMemoqMarkerEditor({
+              profile,
+              segment,
+              resolveTargetByRowNumber: (rowNumber) =>
+                reader.findCurrentTargetByRowNumber(rowNumber)
+            })
           }).execute();
         }
 

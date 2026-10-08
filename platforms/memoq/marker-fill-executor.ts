@@ -3,11 +3,7 @@ import {
   type MemoqMarkerFillPlan
 } from '../../domain/memoq-marker-fill.ts';
 import type { DebuggerInputOperation } from '../../shared/message-types.ts';
-
-const STABLE_MATCHES_REQUIRED = 6;
-const STABLE_READ_ATTEMPTS = 24;
-const STABLE_READ_DELAY_MS = 120;
-const FINAL_EXACT_HOLD_MS = 1500;
+import { canonicalMarkerState, MemoqMarkerStateMonitor } from './marker-state-monitor.ts';
 
 export interface MemoqMarkerEditorPort {
   resolveTarget(): HTMLElement | null;
@@ -44,10 +40,10 @@ export class MemoqMarkerMaterializationError extends Error {
  * relies on the previous cursor or memoQ's global Ctrl+Home shortcut.
  */
 export class MemoqMarkerFillExecutor {
-  private readonly wait: (delayMs: number) => Promise<void>;
+  private readonly monitor: MemoqMarkerStateMonitor;
 
   constructor(private readonly options: MemoqMarkerFillExecutorOptions) {
-    this.wait = options.editor.wait ?? waitForMarkerState;
+    this.monitor = new MemoqMarkerStateMonitor(options.editor);
   }
 
   async execute(): Promise<void> {
@@ -64,7 +60,7 @@ export class MemoqMarkerFillExecutor {
       undoPredecessors.push('');
       await editor.writeText(this.requireTarget(), plan.skeletonTarget);
       let currentExpected = canonicalMarkerState(plan.skeletonTarget);
-      await this.waitForStableValue(currentExpected, stage);
+      await this.monitor.waitForStableValue(currentExpected, stage);
       let materializedSequenceExpansion = 0;
 
       for (let index = 0; index < plan.anchors.length; index += 1) {
@@ -95,7 +91,7 @@ export class MemoqMarkerFillExecutor {
           this.requireTarget(),
           buildAbsoluteCursorOperations(cursorOffset, { type: 'deleteForward' })
         );
-        await this.waitForStableValue(afterDelete, stage);
+        await this.monitor.waitForStableValue(afterDelete, stage);
 
         stage = `materializing native marker sequence ${index + 1}`;
         const afterMarker = replaceUnique(
@@ -111,7 +107,7 @@ export class MemoqMarkerFillExecutor {
             key: 'F9'
           })
         );
-        await this.waitForStableValue(afterMarker, stage);
+        await this.monitor.waitForStableValue(afterMarker, stage);
         currentExpected = afterMarker;
         materializedSequenceExpansion += anchor.markers.length - 1;
       }
@@ -121,7 +117,7 @@ export class MemoqMarkerFillExecutor {
       }
 
       stage = 'holding the final marker target stable';
-      await this.waitForExactHold(currentExpected, stage);
+      await this.monitor.waitForExactHold(currentExpected, stage);
     } catch (error) {
       const rollbackSucceeded = await this.rollback(undoPredecessors);
       throw new MemoqMarkerMaterializationError(
@@ -132,76 +128,12 @@ export class MemoqMarkerFillExecutor {
     }
   }
 
-  private async waitForExactHold(
-    expected: string,
-    stage: string
-  ): Promise<void> {
-    let heldForMs = 0;
-
-    while (heldForMs < FINAL_EXACT_HOLD_MS) {
-      const observed = this.options.editor.readCurrentValue();
-      if (
-        observed === null ||
-        canonicalMarkerState(observed) !== expected
-      ) {
-        throw new Error(`${stage} changed before the hold window completed.`);
-      }
-
-      const delayMs = Math.min(
-        STABLE_READ_DELAY_MS,
-        FINAL_EXACT_HOLD_MS - heldForMs
-      );
-      await this.wait(delayMs);
-      heldForMs += delayMs;
-    }
-
-    const finalObserved = this.options.editor.readCurrentValue();
-    if (
-      finalObserved === null ||
-      canonicalMarkerState(finalObserved) !== expected
-    ) {
-      throw new Error(`${stage} changed at the end of the hold window.`);
-    }
-  }
-
   private requireTarget(): HTMLElement {
     const target = this.options.editor.resolveTarget();
     if (!target) {
       throw new Error('The memoQ target could not be re-resolved.');
     }
     return target;
-  }
-
-  private async waitForStableValue(
-    expected: string,
-    stage: string
-  ): Promise<void> {
-    let consecutiveMatches = 0;
-    let lastObserved = '';
-
-    for (let attempt = 1; attempt <= STABLE_READ_ATTEMPTS; attempt += 1) {
-      const observed = this.options.editor.readCurrentValue();
-      if (observed === null) {
-        lastObserved = '<target unavailable>';
-        consecutiveMatches = 0;
-      } else {
-        lastObserved = canonicalMarkerState(observed);
-        consecutiveMatches =
-          lastObserved === expected ? consecutiveMatches + 1 : 0;
-      }
-
-      if (consecutiveMatches >= STABLE_MATCHES_REQUIRED) {
-        return;
-      }
-
-      if (attempt < STABLE_READ_ATTEMPTS) {
-        await this.wait(STABLE_READ_DELAY_MS);
-      }
-    }
-
-    throw new Error(
-      `${stage} did not stabilize. Expected ${JSON.stringify(expected)}, observed ${JSON.stringify(lastObserved)}.`
-    );
   }
 
   private async rollback(undoPredecessors: string[]): Promise<boolean> {
@@ -225,13 +157,13 @@ export class MemoqMarkerFillExecutor {
         await this.options.editor.runInput(this.requireTarget(), [
           { type: 'undo' }
         ]);
-        await this.waitForStableValue(
+        await this.monitor.waitForStableValue(
           predecessor,
           'rolling back the marker fill'
         );
       }
 
-      await this.waitForStableValue('', 'rolling back the marker fill');
+      await this.monitor.waitForStableValue('', 'rolling back the marker fill');
       return true;
     } catch {
       return false;
@@ -268,19 +200,4 @@ function replaceUnique(
   }
 
   return `${value.slice(0, index)}${replacement}${value.slice(index + sentinel.length)}`;
-}
-
-function canonicalMarkerState(value: string): string {
-  return value.replace(/\r\n?/g, '\n');
-}
-
-function waitForMarkerState(delayMs: number): Promise<void> {
-  const setTimer =
-    typeof window !== 'undefined' && typeof window.setTimeout === 'function'
-      ? window.setTimeout.bind(window)
-      : globalThis.setTimeout.bind(globalThis);
-
-  return new Promise((resolve) => {
-    setTimer(resolve, delayMs);
-  });
 }

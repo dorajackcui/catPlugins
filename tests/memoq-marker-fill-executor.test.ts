@@ -242,6 +242,28 @@ test('MemoqMarkerFillExecutor materializes each adjacent marker sequence with on
   );
 });
 
+test('MemoqMarkerFillExecutor inserts native tags at translated line breaks', async () => {
+  const result = createMemoqMarkerFillPlan(
+    'First\r\n\r\nSecond\r\nThird',
+    'First<7><7>Second<7>Third',
+    'Premier\n\nDeuxième\nTroisième'
+  );
+  if (!result.ok) {
+    throw new Error(result.reason);
+  }
+  const harness = createEditorHarness({ plan: result.plan });
+
+  await harness.executor.execute();
+
+  assert.deepEqual(harness.writes, ['Premier\uE000Deuxième\uE001Troisième']);
+  assert.equal(harness.value(), 'Premier<7><7>Deuxième<7>Troisième');
+  assert.deepEqual(
+    harness.inputCalls.filter((operations) => operations.at(-1)?.type === 'key')
+      .map((operations) => operations.at(-1)),
+    [{ type: 'key', key: 'F9' }, { type: 'key', key: 'F9' }]
+  );
+});
+
 test('MemoqMarkerFillExecutor materializes flattened webTrans tag pairs', async () => {
   const harness = createEditorHarness({ plan: makeFlattenedWebtransPlan() });
 

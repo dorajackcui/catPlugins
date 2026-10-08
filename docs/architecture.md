@@ -105,6 +105,33 @@ but incomplete modern surface must not hide a usable legacy editor.
 - `platforms/memoq/fill-confirmation.ts` owns commit polling and row re-resolution.
 - `platforms/memoq/fill-diagnostic-builder.ts` creates stable success and failure diagnostics.
 
+Experimental marker fills separate translation mapping from editor mechanics:
+
+- `domain/memoq-marker-mapping.ts` resolves source mappings and validates target
+  token order, kinds, balance, and native groups. Its output is ordered literal
+  text and native marker groups, without cursor or sentinel details. Source
+  matching shares these rules without depending on the write-plan compiler.
+- `domain/memoq-marker-fill.ts` compiles those parts into the existing sentinel
+  plan and owns sentinel allocation and grapheme cursor counts.
+- `platforms/memoq/marker-editor.ts` binds a segment and DOM profile to trusted
+  input, exact reads, numeric-placeholder escaping, and row re-resolution.
+- `platforms/memoq/marker-fill-executor.ts` owns the write/delete/F9 sequence and
+  the Undo history for its own writes. `marker-state-monitor.ts` owns exact
+  stability polling and the final hold, shared by forward writes and rollback.
+
+Supported mappings remain line-break-only and fully protected Excel markup.
+LF, CRLF, and CR each count as one break. Compare source skeletons before
+whitespace normalization. If only breaks became tags, other markup stays
+literal; only mapped tokens participate in native order and adjacency checks.
+New mapping rules belong in the mapper and must preserve literal content and
+reject uncertain mappings. Changing an editor input method should not require
+changing how translations are mapped.
+
+The refactor preserves marker-fill opt-in, source/empty-target checks, absolute
+cursor navigation, one F9 per native sequence, stability thresholds, the final
+hold, and owned-history rollback. Sequential typing is not enabled: it requires
+separate live validation of caret and Undo behavior before replacing this writer.
+
 ## Phrase adapter
 
 - `platforms/phrase/row-reader.ts` owns Phrase row selectors, generic editable fallback discovery, tag-chip detection, scroll-container selection, and segment serialization.

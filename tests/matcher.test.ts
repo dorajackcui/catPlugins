@@ -3,6 +3,48 @@ import test from 'node:test';
 
 import { applyMemoqPreviewCorrection, buildPreview } from '../domain/matcher.ts';
 import type { PageSegment, TranslationEntry } from '../shared/types.ts';
+import { normalizeText } from '../shared/utils.ts';
+
+test('buildPreview handles real memoQ line break markers with the existing marker fill gate', () => {
+  for (const [excelSource, memoqSource] of [
+    ['First\nSecond', 'First<1>Second'],
+    ['${1}.First\n${2}.Second', '${1}.First<1>${2}.Second'],
+    ['<color=red>%{name}</c>First\nSecond', '<color=red>%{name}</c>First<1>Second'],
+    ['First \r\n Second', 'First <1> Second'],
+    ['First\n\nSecond', 'First<1><1>Second']
+  ]) {
+    const target = excelSource.replace('First', 'Premier').replace('Second', 'Deuxième');
+    const lineBreakEntries: TranslationEntry[] = [{
+      rowIndex: 2,
+      sourceRaw: excelSource,
+      sourceNormalized: normalizeText(excelSource),
+      targetRaw: target,
+      occurrenceIndex: 1
+    }];
+    const segments: PageSegment[] = [{
+      domId: 'memoq-line-break',
+      sourceRaw: memoqSource,
+      sourceNormalized: memoqSource,
+      occurrenceIndex: 1,
+      targetRaw: '',
+      isEmptyTarget: true,
+      placeholderTokens: ['<1>'],
+      platform: 'memoq'
+    }];
+
+    const enabled = buildPreview(lineBreakEntries, segments, {
+      autoStopAfterFilledCount: null,
+      validatePlaceholders: true,
+      enableMemoqMarkerFill: true
+    });
+    assert.equal(enabled.items[0]?.status, 'ready');
+    assert.equal(enabled.items[0]?.translation, target);
+
+    const disabled = buildPreview(lineBreakEntries, segments);
+    assert.equal(disabled.items[0]?.status, 'placeholderError');
+    assert.equal(/disabled/.test(disabled.items[0]?.reason ?? ''), true);
+  }
+});
 
 const entries: TranslationEntry[] = [
   {
