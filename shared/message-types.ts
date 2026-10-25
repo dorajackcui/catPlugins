@@ -1,4 +1,5 @@
 import type { RunPhase } from './state-types.ts';
+import type { EditorPlatform } from './editor-platform.ts';
 import type { FillOptions, TranslationEntry } from './translation-types.ts';
 
 export interface ParseExcelRequest {
@@ -40,6 +41,11 @@ export interface SetFillOptionsRequest {
   payload: {
     fillOptions: FillOptions;
   };
+}
+
+export interface SetEditorPlatformRequest {
+  type: 'SET_EDITOR_PLATFORM';
+  payload: { editorPlatform: EditorPlatform | null };
 }
 
 export interface ReportRunProgressRequest {
@@ -126,6 +132,7 @@ export type BackgroundRequest =
   | StopRunRequest
   | GetStateRequest
   | SetFillOptionsRequest
+  | SetEditorPlatformRequest
   | ReportRunProgressRequest
   | MemoqDebuggerPrepareRequest
   | MemoqDebuggerWriteTextRequest
@@ -135,6 +142,7 @@ export type BackgroundRequest =
 export interface ContentScanRequest {
   type: 'CONTENT_SCAN';
   payload: {
+    editorPlatform: EditorPlatform;
     runId: string;
     scanFromTop?: boolean;
     maxPasses?: number;
@@ -145,6 +153,7 @@ export interface ContentScanRequest {
 export interface ContentFillRequest {
   type: 'CONTENT_FILL';
   payload: {
+    editorPlatform: EditorPlatform;
     runId: string;
     entries: TranslationEntry[];
     fillOptions: FillOptions;

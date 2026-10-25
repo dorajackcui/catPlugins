@@ -1,3 +1,4 @@
+import type { EditorPlatform } from './editor-platform.ts';
 import type {
   FillOptions,
   PreviewResult,
@@ -27,6 +28,7 @@ export interface RunState {
 }
 
 export interface RuntimeState {
+  editorPlatform: EditorPlatform | null;
   translationEntries: TranslationEntry[];
   previewResult: PreviewResult | null;
   uploadMeta: UploadMeta | null;
@@ -35,6 +37,7 @@ export interface RuntimeState {
 }
 
 export interface PopupState {
+  editorPlatform: EditorPlatform | null;
   uploadMeta: UploadMeta | null;
   previewResult: PreviewResult | null;
   fillOptions: FillOptions;

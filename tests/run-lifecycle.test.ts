@@ -15,6 +15,7 @@ function makeRuntimeState(
   overrides: Partial<RuntimeState> = {}
 ): RuntimeState {
   return {
+    editorPlatform: 'phrase',
     translationEntries: [],
     previewResult: null,
     uploadMeta: null,

@@ -2,12 +2,8 @@ import type {
   ApiResponse,
   ContentRequest
 } from '../shared/message-types.ts';
-import {
-  isGientTransUrl,
-  isMemsourceEditorFrameUrl,
-  isMemoqUrl,
-  isSupportedEditorUrl
-} from './editor-url.ts';
+import { isMemsourceEditorFrameUrl } from './editor-url.ts';
+import { requireEditorPlatform, type EditorPlatform } from '../shared/editor-platform.ts';
 
 export interface PreparedEditorTab {
   id: number;
@@ -42,32 +38,22 @@ export interface BackgroundEditorSessionPort {
 export class BackgroundEditorSession {
   constructor(private readonly port: BackgroundEditorSessionPort) {}
 
-  async prepare(): Promise<PreparedEditorTab> {
+  async prepare(editorPlatform: EditorPlatform | null): Promise<PreparedEditorTab> {
+    const platform = requireEditorPlatform(editorPlatform);
     const tab = await this.port.queryActiveTab();
-
-    if (!isSupportedEditorUrl(tab.url)) {
-      this.port.logInfo('Rejected active tab for CAT run.', { url: tab.url });
-      throw new Error(
-        'Open a Phrase, memoQ, or GientTrans editor tab before running Preview, Fill, or Export.'
-      );
-    }
 
     await this.port.executeScript(tab.id, ['content-script.js'], {
       allFrames: true
     });
 
     const frames = await this.port.getAllFrames(tab.id);
-    const editorFrame = frames.find((frame) =>
+    const editorFrame = platform === 'phrase' ? frames.find((frame) =>
       isMemsourceEditorFrameUrl(frame.url)
-    );
+    ) : undefined;
     this.port.logInfo('Prepared editor tab for CAT run.', {
       tabId: tab.id,
       url: tab.url,
-      platform: isGientTransUrl(tab.url)
-        ? 'gientrans'
-        : isMemoqUrl(tab.url)
-          ? 'memoq'
-          : 'phrase',
+      platform,
       frameId: editorFrame?.frameId ?? null
     });
 
@@ -97,10 +83,10 @@ export class BackgroundEditorSession {
     return response.data;
   }
 
-  async stop(target: EditorRunTarget): Promise<void> {
+  async stop(target: EditorRunTarget, editorPlatform: EditorPlatform | null): Promise<void> {
     const tabId = target.tabId;
     if (typeof tabId !== 'number') {
-      const tab = await this.prepare();
+      const tab = await this.prepare(editorPlatform);
       await this.sendStop(
         tab.id,
         tab.frameId ? { frameId: tab.frameId } : undefined

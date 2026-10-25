@@ -17,6 +17,15 @@
       </header>
 
       <section class="workspace">
+        <div class="platform-picker">
+          <label for="editor-platform">Editor platform</label>
+          <select id="editor-platform">
+            <option value="">Choose a platform</option>
+            <option value="memoq">memoQ</option>
+            <option value="phrase">Phrase / Memsource</option>
+            <option value="gientrans">GientTrans</option>
+          </select>
+        </div>
         <input id="file-input" type="file" accept=".xlsx,.xls" hidden />
         <button id="upload-button" class="upload" type="button">
           <span>Choose Excel file</span>
@@ -25,7 +34,7 @@
         <p id="file-info" class="file-info">No file selected</p>
 
         <div class="actions">
-          <button id="export-button" class="secondary" type="button">Export</button>
+          <button id="export-button" class="secondary" type="button" disabled>Export</button>
           <button id="fill-button" class="primary" type="button" disabled>Fill</button>
         </div>
         <button id="stop-button" class="stop" type="button" disabled>Stop current run</button>

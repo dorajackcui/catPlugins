@@ -1,4 +1,5 @@
 import { normalizeFillOptions } from '../domain/fill-options.ts';
+import type { EditorPlatform } from '../shared/editor-platform.ts';
 import type {
   ApiResponse,
   ContentRequest
@@ -15,6 +16,7 @@ import type {
 } from './run-service.ts';
 
 export interface ContentRequestService {
+  selectPlatform(platform: EditorPlatform): void;
   scanSegments(
     runId: string,
     options?: ContentScanOptions
@@ -36,6 +38,7 @@ export class ContentRequestHandler {
   async handle(request: ContentRequest): Promise<ApiResponse<unknown>> {
     switch (request.type) {
       case 'CONTENT_SCAN': {
+        this.service.selectPlatform(request.payload.editorPlatform);
         const segments = await this.service.scanSegments(
           request.payload.runId,
           {
@@ -48,6 +51,7 @@ export class ContentRequestHandler {
       }
 
       case 'CONTENT_FILL': {
+        this.service.selectPlatform(request.payload.editorPlatform);
         const result = await this.service.fillAll(
           request.payload.runId,
           request.payload.entries,

@@ -1,4 +1,5 @@
 import { describeRunFailure } from '../domain/run-stop.ts';
+import { requireEditorPlatform } from '../shared/editor-platform.ts';
 import type {
   ExportSourcesResult,
   FillOptions,
@@ -23,6 +24,9 @@ export type {
  */
 export class PopupController {
   private readonly runMonitor: PopupRunMonitor;
+  private platformSave: Promise<void> = Promise.resolve();
+  private platformRevision = 0;
+  private platformSavePending = false;
 
   constructor(private readonly port: PopupControllerPort) {
     this.runMonitor = new PopupRunMonitor({
@@ -36,6 +40,14 @@ export class PopupController {
 
   start(): void {
     this.port.view.bind({
+      onEditorPlatformChange: () => {
+        void this.persistEditorPlatform().catch((error) => {
+          this.port.view.renderStatus(
+            error instanceof Error ? error.message : 'Failed to save editor platform.',
+            'error'
+          );
+        });
+      },
       onUpload: (file) => {
         void this.handleUpload(file);
       },
@@ -79,12 +91,34 @@ export class PopupController {
   }
 
   async refreshState(): Promise<void> {
+    const platformRevision = this.platformRevision;
+    const canRestorePlatform = !this.platformSavePending;
     const popupState = await this.port.sendMessage<PopupState>({
       type: 'GET_STATE'
     });
     this.runMonitor.renderRunState(popupState.runState);
     this.port.view.renderFileInfo(popupState);
     this.port.view.renderFillOptions(popupState.fillOptions);
+    if (canRestorePlatform && platformRevision === this.platformRevision) {
+      this.port.view.renderEditorPlatform(popupState.editorPlatform);
+    }
+  }
+
+  persistEditorPlatform(): Promise<void> {
+    const editorPlatform = this.port.view.readEditorPlatform();
+    const platformRevision = ++this.platformRevision;
+    this.platformSavePending = true;
+    this.platformSave = this.platformSave.catch(() => {}).then(async () => {
+      await this.port.sendMessage({
+        type: 'SET_EDITOR_PLATFORM',
+        payload: { editorPlatform }
+      });
+    }).finally(() => {
+      if (platformRevision === this.platformRevision) {
+        this.platformSavePending = false;
+      }
+    });
+    return this.platformSave;
   }
 
   async persistFillOptions(): Promise<void> {
@@ -123,7 +157,9 @@ export class PopupController {
 
   async handleExportSources(): Promise<void> {
     try {
+      requireEditorPlatform(this.port.view.readEditorPlatform());
       this.runMonitor.beginRun('Exporting source segments...');
+      await this.platformSave;
       const result = await this.port.sendMessage<ExportSourcesResult>({
         type: 'EXPORT_SOURCES'
       });
@@ -141,8 +177,10 @@ export class PopupController {
 
   async handleFill(): Promise<void> {
     try {
+      requireEditorPlatform(this.port.view.readEditorPlatform());
       const fillOptions = this.port.view.readFillOptions();
       this.runMonitor.beginRun('Re-scanning and filling segments...');
+      await this.platformSave;
       const result = await this.port.sendMessage<FillRunResult>({
         type: 'RUN_FILL',
         payload: { fillOptions }

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import type { EditorPlatform } from '../shared/editor-platform.ts';
 import test from 'node:test';
 
 import {
@@ -36,6 +37,7 @@ function makePreview(overrides: Partial<PreviewResult> = {}): PreviewResult {
 
 function makePopupState(overrides: Partial<PopupState> = {}): PopupState {
   return {
+    editorPlatform: 'phrase',
     uploadMeta: null,
     previewResult: null,
     fillOptions: { ...DEFAULT_FILL_OPTIONS },
@@ -46,6 +48,9 @@ function makePopupState(overrides: Partial<PopupState> = {}): PopupState {
 
 class FakePopupView implements PopupViewPort {
   handlers: PopupViewHandlers | null = null;
+  editorPlatform: EditorPlatform | null = 'phrase';
+  renderEditorPlatform(platform: EditorPlatform | null): void { this.editorPlatform = platform; }
+  readEditorPlatform(): EditorPlatform | null { return this.editorPlatform; }
   readonly busyValues: boolean[] = [];
   readonly stoppingValues: boolean[] = [];
   readonly statuses: Array<{ message: string; kind: StatusKind }> = [];
@@ -334,4 +339,75 @@ test('PopupController persists the view fill options unchanged', async () => {
       payload: { fillOptions: harness.view.fillOptions }
     }
   ]);
+});
+
+test('PopupController restores and persists the selected platform', async () => {
+  const harness = createHarness([makePopupState({ editorPlatform: 'memoq' }), 'gientrans']);
+  await harness.controller.refreshState();
+  assert.equal(harness.view.editorPlatform, 'memoq');
+  harness.view.editorPlatform = 'gientrans';
+  await harness.controller.persistEditorPlatform();
+  assert.deepEqual(harness.messages[1], {
+    type: 'SET_EDITOR_PLATFORM', payload: { editorPlatform: 'gientrans' }
+  });
+});
+
+test('PopupController waits for platform persistence before exporting', async () => {
+  const harness = createHarness(['memoq', {
+    fileName: 'memoq-sources.xlsx', bytes: [], segmentCount: 0
+  }, makePopupState({ editorPlatform: 'memoq' })]);
+  harness.view.editorPlatform = 'memoq';
+  const saving = harness.controller.persistEditorPlatform();
+  const exporting = harness.controller.handleExportSources();
+  assert.equal(harness.view.busyValues[0], true);
+  await saving;
+  await exporting;
+  assert.deepEqual(harness.messages.map((message) => message.type), [
+    'SET_EDITOR_PLATFORM', 'EXPORT_SOURCES', 'GET_STATE'
+  ]);
+});
+
+test('PopupController requires a platform before exporting', async () => {
+  const harness = createHarness([makePopupState({ editorPlatform: null })]);
+  harness.view.editorPlatform = null;
+  await harness.controller.handleExportSources();
+  assert.deepEqual(harness.messages, [{ type: 'GET_STATE' }]);
+  assert.equal(harness.view.statuses[0]?.message,
+    'Choose an editor platform before running Preview, Fill, or Export.');
+});
+
+test('PopupController does not overwrite a new platform with an older state response', async () => {
+  let resolveState!: (state: PopupState) => void;
+  const delayedState = new Promise<PopupState>((resolve) => {
+    resolveState = resolve;
+  });
+  const harness = createHarness([delayedState, 'phrase']);
+  harness.view.editorPlatform = 'memoq';
+  const refreshing = harness.controller.refreshState();
+  await Promise.resolve();
+  harness.view.editorPlatform = 'phrase';
+  await harness.controller.persistEditorPlatform();
+  resolveState(makePopupState({ editorPlatform: 'memoq' }));
+  await refreshing;
+
+  assert.equal(harness.view.editorPlatform, 'phrase');
+});
+
+test('PopupController keeps the selection when refresh starts during a pending save', async () => {
+  let resolveSave!: (platform: EditorPlatform) => void;
+  let resolveState!: (state: PopupState) => void;
+  const delayedSave = new Promise<EditorPlatform>((resolve) => { resolveSave = resolve; });
+  const delayedState = new Promise<PopupState>((resolve) => { resolveState = resolve; });
+  const harness = createHarness([delayedSave, delayedState]);
+  harness.view.editorPlatform = 'phrase';
+  const saving = harness.controller.persistEditorPlatform();
+  await Promise.resolve();
+  await Promise.resolve();
+  const refreshing = harness.controller.refreshState();
+  resolveSave('phrase');
+  await saving;
+  resolveState(makePopupState({ editorPlatform: 'memoq' }));
+  await refreshing;
+
+  assert.equal(harness.view.editorPlatform, 'phrase');
 });

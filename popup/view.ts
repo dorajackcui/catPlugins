@@ -1,4 +1,5 @@
 import { normalizeFillOptions } from '../domain/fill-options.ts';
+import { normalizeEditorPlatform, type EditorPlatform } from '../shared/editor-platform.ts';
 import type { ExportSourcesResult, FillOptions } from '../shared/translation-types.ts';
 import type { PopupState, StatusKind } from '../shared/state-types.ts';
 import type {
@@ -35,6 +36,7 @@ export function parsePopupFillOptions(
 export class PopupView implements PopupViewPort {
   private busy = false;
   private stopping = false;
+  private hasUpload = false;
 
   private readonly uploadButton: HTMLButtonElement | null;
   private readonly fileInput: HTMLInputElement | null;
@@ -45,11 +47,13 @@ export class PopupView implements PopupViewPort {
   private readonly enableMemoqMarkerFillInput: HTMLInputElement | null;
   private readonly fileInfo: HTMLElement | null;
   private readonly statusNode: HTMLElement | null;
+  private readonly editorPlatformSelect: HTMLSelectElement | null;
 
   constructor(
     private readonly document: Document,
     private readonly window: Window
   ) {
+    this.editorPlatformSelect = document.querySelector<HTMLSelectElement>('#editor-platform');
     this.uploadButton = document.querySelector<HTMLButtonElement>('#upload-button');
     this.fileInput = document.querySelector<HTMLInputElement>('#file-input');
     this.exportButton = document.querySelector<HTMLButtonElement>('#export-button');
@@ -66,6 +70,10 @@ export class PopupView implements PopupViewPort {
   }
 
   bind(handlers: PopupViewHandlers): void {
+    this.editorPlatformSelect?.addEventListener('change', () => {
+      this.updateActionButtons();
+      handlers.onEditorPlatformChange();
+    });
     this.uploadButton?.addEventListener('click', () => this.fileInput?.click());
     this.fileInput?.addEventListener('change', () => {
       const file = this.fileInput?.files?.[0];
@@ -88,9 +96,8 @@ export class PopupView implements PopupViewPort {
 
   setBusy(nextBusy: boolean): void {
     this.busy = nextBusy;
+    if (this.editorPlatformSelect) this.editorPlatformSelect.disabled = nextBusy;
     if (this.uploadButton) this.uploadButton.disabled = nextBusy;
-    if (this.exportButton) this.exportButton.disabled = nextBusy;
-    if (this.fillButton) this.fillButton.disabled = nextBusy;
     if (this.stopButton) {
       this.stopButton.disabled = !nextBusy || this.stopping;
     }
@@ -100,6 +107,7 @@ export class PopupView implements PopupViewPort {
     if (this.enableMemoqMarkerFillInput) {
       this.enableMemoqMarkerFillInput.disabled = nextBusy;
     }
+    this.updateActionButtons();
   }
 
   setStopping(nextStopping: boolean): void {
@@ -122,15 +130,15 @@ export class PopupView implements PopupViewPort {
   }
 
   renderFileInfo(popupState: PopupState): void {
+    this.hasUpload = Boolean(popupState.uploadMeta);
+    this.updateActionButtons();
     if (!this.fileInfo) {
       return;
     }
 
     if (!popupState.uploadMeta) {
       this.fileInfo.textContent = 'No file selected';
-      if (this.exportButton) this.exportButton.disabled = this.busy;
-      if (this.fillButton) this.fillButton.disabled = true;
-      if (this.stopButton) this.stopButton.disabled = true;
+      if (this.stopButton) this.stopButton.disabled = !this.busy || this.stopping;
       return;
     }
 
@@ -138,8 +146,6 @@ export class PopupView implements PopupViewPort {
       `${popupState.uploadMeta.fileName} · ` +
       `${popupState.uploadMeta.entryCount} rows · ` +
       `sheet ${popupState.uploadMeta.sheetName}`;
-    if (this.exportButton) this.exportButton.disabled = this.busy;
-    if (this.fillButton) this.fillButton.disabled = this.busy;
     if (this.stopButton) {
       this.stopButton.disabled = !this.busy || this.stopping;
     }
@@ -157,6 +163,21 @@ export class PopupView implements PopupViewPort {
         : String(normalizedFillOptions.autoStopAfterFilledCount);
     this.enableMemoqMarkerFillInput.checked =
       normalizedFillOptions.enableMemoqMarkerFill === true;
+  }
+
+  renderEditorPlatform(platform: EditorPlatform | null): void {
+    if (this.editorPlatformSelect) this.editorPlatformSelect.value = platform ?? '';
+    this.updateActionButtons();
+  }
+
+  readEditorPlatform(): EditorPlatform | null {
+    return normalizeEditorPlatform(this.editorPlatformSelect?.value);
+  }
+
+  private updateActionButtons(): void {
+    const unavailable = this.busy || !this.readEditorPlatform();
+    if (this.exportButton) this.exportButton.disabled = Boolean(unavailable);
+    if (this.fillButton) this.fillButton.disabled = Boolean(unavailable) || !this.hasUpload;
   }
 
   readFillOptions(): FillOptions {

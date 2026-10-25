@@ -144,63 +144,59 @@ function createHarness(options: HarnessOptions = {}): {
   };
 }
 
-test('PlatformRuntime selects visible segments in memoQ, GientTrans, Phrase order', () => {
+test('PlatformRuntime scans only the explicitly selected platform', () => {
   const scrollContext = makeScrollContext('scan');
   const memoqSegment = makeSegment('memoq');
   const gientransSegment = makeSegment('gientrans');
   const phraseSegment = makeSegment('phrase');
-
-  const memoqHarness = createHarness({
+  const harness = createHarness({
     memoqSegments: [memoqSegment],
     gientransSegments: [gientransSegment],
     phraseSegments: [phraseSegment]
   });
-  assert.deepEqual(memoqHarness.runtime.collectVisibleSegments(scrollContext), [memoqSegment]);
-  assert.deepEqual(memoqHarness.calls, ['memoq.collectVisibleSegments']);
 
-  const gientransHarness = createHarness({
-    gientransSegments: [gientransSegment],
-    phraseSegments: [phraseSegment]
-  });
-  assert.deepEqual(gientransHarness.runtime.collectVisibleSegments(scrollContext), [
-    gientransSegment
-  ]);
-  assert.deepEqual(gientransHarness.calls, [
-    'memoq.collectVisibleSegments',
-    'gientrans.collectVisibleSegments'
-  ]);
-
-  const phraseHarness = createHarness({ phraseSegments: [phraseSegment] });
-  assert.deepEqual(phraseHarness.runtime.collectVisibleSegments(scrollContext), [phraseSegment]);
-  assert.deepEqual(phraseHarness.calls, [
-    'memoq.collectVisibleSegments',
-    'gientrans.collectVisibleSegments',
-    'phrase.collectVisibleSegments'
+  for (const [platform, segment] of [
+    ['memoq', memoqSegment], ['phrase', phraseSegment], ['gientrans', gientransSegment]
+  ] as const) {
+    harness.runtime.selectPlatform(platform);
+    assert.deepEqual(harness.runtime.collectVisibleSegments(scrollContext), [segment]);
+    assert.equal(harness.runtime.isMemoqActive(), platform === 'memoq');
+  }
+  assert.deepEqual(harness.calls, [
+    'memoq.collectVisibleSegments', 'phrase.collectVisibleSegments', 'gientrans.collectVisibleSegments'
   ]);
 });
 
-test('PlatformRuntime selects scroll contexts in platform order with a window fallback', () => {
+test('PlatformRuntime never falls through to another platform when no rows are found', () => {
+  const harness = createHarness({ phraseSegments: [makeSegment('phrase')] });
+  harness.runtime.selectPlatform('memoq');
+  assert.deepEqual(harness.runtime.collectVisibleSegments(makeScrollContext('scan')), []);
+  assert.deepEqual(harness.calls, ['memoq.collectVisibleSegments']);
+});
+
+test('PlatformRuntime uses only the selected scroll context with a window fallback', () => {
   const phraseScrollContext = makeScrollContext('phrase');
-  const phraseHarness = createHarness({ phraseScrollContext });
-
-  assert.equal(phraseHarness.runtime.findScrollContext(), phraseScrollContext);
-  assert.deepEqual(phraseHarness.calls, [
-    'memoq.findScrollContext',
-    'gientrans.findScrollContext',
-    'phrase.findScrollContext'
+  const harness = createHarness({ phraseScrollContext });
+  harness.runtime.selectPlatform('phrase');
+  assert.equal(harness.runtime.findScrollContext(), phraseScrollContext);
+  harness.runtime.selectPlatform('memoq');
+  assert.equal(harness.runtime.findScrollContext(), harness.fallbackScrollContext);
+  assert.deepEqual(harness.calls, [
+    'phrase.findScrollContext', 'memoq.findScrollContext', 'fallback.findScrollContext'
   ]);
+});
 
-  const fallbackHarness = createHarness();
-  assert.equal(
-    fallbackHarness.runtime.findScrollContext(),
-    fallbackHarness.fallbackScrollContext
-  );
-  assert.deepEqual(fallbackHarness.calls, [
-    'memoq.findScrollContext',
-    'gientrans.findScrollContext',
-    'phrase.findScrollContext',
-    'fallback.findScrollContext'
-  ]);
+test('PlatformRuntime requires a selection before scanning', () => {
+  const harness = createHarness();
+  let error: unknown;
+  try {
+    harness.runtime.findScrollContext();
+  } catch (caught) {
+    error = caught;
+  }
+  assert.equal(error instanceof Error ? error.message : null,
+    'Choose an editor platform before running Preview, Fill, or Export.');
+  assert.deepEqual(harness.calls, []);
 });
 
 test('PlatformRuntime keeps memoQ lifecycle and fill context on the memoQ port', async () => {
@@ -214,12 +210,12 @@ test('PlatformRuntime keeps memoQ lifecycle and fill context on the memoQ port',
     scrollMode: 'synthetic'
   };
 
+  harness.runtime.selectPlatform('memoq');
   assert.equal(harness.runtime.isMemoqActive(), true);
   await harness.runtime.prepareMemoqTrustedInput();
   assert.equal((await harness.runtime.fillSegment(segment, 'translation', context)).filled, true);
   assert.deepEqual(harness.memoqContexts, [context]);
   assert.deepEqual(harness.calls, [
-    'memoq.isActive',
     'memoq.prepareTrustedInput',
     'memoq.fillSegment'
   ]);

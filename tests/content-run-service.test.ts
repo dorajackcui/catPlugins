@@ -47,6 +47,7 @@ function createHarness(options: { stopDuringDelay?: boolean } = {}) {
   };
   const port: ContentRunServicePort = {
     runtime: {
+      selectPlatform() {},
       isMemoqActive: () => false,
       async prepareMemoqTrustedInput() {},
       findScrollContext: () => scrollContext,

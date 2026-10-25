@@ -7,6 +7,7 @@ import { STORAGE_KEYS as compatibilityStorageKeys } from '../shared/types.ts';
 test('shared storage keys preserve persisted state names and compatibility exports', () => {
   assert.equal(compatibilityStorageKeys, directStorageKeys);
   assert.deepEqual(directStorageKeys, {
+    editorPlatform: 'editor_platform',
     translationEntries: 'translation_entries',
     previewResult: 'preview_result',
     uploadMeta: 'upload_meta',

@@ -49,7 +49,9 @@ function createHarness() {
   let scanCall: Parameters<ContentRequestService['scanSegments']> | undefined;
   let fillCall: Parameters<ContentRequestService['fillAll']> | undefined;
   let stopCalls = 0;
+  const platforms: string[] = [];
   const service: ContentRequestService = {
+    selectPlatform(platform) { platforms.push(platform); },
     async scanSegments(...args) {
       scanCall = args;
       return segments;
@@ -67,6 +69,7 @@ function createHarness() {
     handler: new ContentRequestHandler(service),
     segments,
     fillResult,
+    platforms,
     getScanCall: () => scanCall,
     getFillCall: () => fillCall,
     getStopCalls: () => stopCalls
@@ -79,6 +82,7 @@ test('ContentRequestHandler forwards scan limits and direction', async () => {
   const response = await harness.handler.handle({
     type: 'CONTENT_SCAN',
     payload: {
+      editorPlatform: 'memoq',
       runId: 'scan-1',
       maxPasses: 12,
       maxSegments: 34,
@@ -86,6 +90,7 @@ test('ContentRequestHandler forwards scan limits and direction', async () => {
     }
   });
 
+  assert.deepEqual(harness.platforms, ['memoq']);
   assert.deepEqual(harness.getScanCall(), [
     'scan-1',
     { maxPasses: 12, maxSegments: 34, scanFromTop: true }
@@ -106,6 +111,7 @@ test('ContentRequestHandler normalizes fill options and starts at the marker', a
   const response = await harness.handler.handle({
     type: 'CONTENT_FILL',
     payload: {
+      editorPlatform: 'phrase',
       runId: 'fill-1',
       entries: [entry],
       fillOptions: {
@@ -119,6 +125,7 @@ test('ContentRequestHandler normalizes fill options and starts at the marker', a
     }
   });
 
+  assert.deepEqual(harness.platforms, ['phrase']);
   assert.deepEqual(harness.getFillCall(), [
     'fill-1',
     [entry],
@@ -143,6 +150,7 @@ test('ContentRequestHandler routes stop without starting another run', async () 
 
   const response = await harness.handler.handle({ type: 'CONTENT_STOP' });
 
+  assert.deepEqual(harness.platforms, []);
   assert.equal(harness.getStopCalls(), 1);
   assert.equal(harness.getScanCall(), undefined);
   assert.equal(harness.getFillCall(), undefined);

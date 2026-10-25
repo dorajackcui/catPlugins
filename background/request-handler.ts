@@ -1,4 +1,5 @@
 import { normalizeFillOptions } from '../domain/fill-options.ts';
+import { normalizeEditorPlatform } from '../shared/editor-platform.ts';
 import {
   isRunActive,
   mergeRunProgress
@@ -97,6 +98,13 @@ export class BackgroundRequestHandler {
         return { ok: true, data: fillOptions };
       }
 
+      case 'SET_EDITOR_PLATFORM': {
+        await this.assertNoActiveRun('changing the editor platform');
+        const editorPlatform = normalizeEditorPlatform(request.payload.editorPlatform);
+        await this.port.writeRuntimeState({ editorPlatform, previewResult: null });
+        return { ok: true, data: editorPlatform };
+      }
+
       case 'REPORT_RUN_PROGRESS': {
         this.port.debuggerInput.keepAlive(sender?.tab?.id);
         const state = await this.port.readRuntimeState();
@@ -183,6 +191,7 @@ export class BackgroundRequestHandler {
     const state = await this.port.readRuntimeState();
 
     return {
+      editorPlatform: state.editorPlatform,
       uploadMeta: state.uploadMeta,
       previewResult: state.previewResult,
       fillOptions: state.fillOptions,

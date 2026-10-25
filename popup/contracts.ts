@@ -1,4 +1,5 @@
 import type { BackgroundRequest } from '../shared/message-types.ts';
+import type { EditorPlatform } from '../shared/editor-platform.ts';
 import type { ExportSourcesResult, FillOptions } from '../shared/translation-types.ts';
 import type { PopupState, StatusKind } from '../shared/state-types.ts';
 
@@ -8,6 +9,7 @@ export interface PopupFile {
 }
 
 export interface PopupViewHandlers {
+  onEditorPlatformChange(): void;
   onUpload(file: PopupFile): void;
   onExport(): void;
   onFill(): void;
@@ -17,6 +19,8 @@ export interface PopupViewHandlers {
 }
 
 export interface PopupViewPort {
+  renderEditorPlatform(platform: EditorPlatform | null): void;
+  readEditorPlatform(): EditorPlatform | null;
   bind(handlers: PopupViewHandlers): void;
   setBusy(busy: boolean): void;
   setStopping(stopping: boolean): void;

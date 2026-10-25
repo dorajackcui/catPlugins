@@ -1,4 +1,5 @@
 import { normalizeFillOptions } from '../domain/fill-options.ts';
+import { normalizeEditorPlatform } from '../shared/editor-platform.ts';
 import { storageGet, storageSet } from '../shared/chrome-api.ts';
 import { DEFAULT_RUN_STATE, normalizeRunState } from '../domain/run-state.ts';
 import { STORAGE_KEYS } from '../shared/storage-keys.ts';
@@ -17,6 +18,7 @@ export async function readRuntimeState(): Promise<RuntimeState> {
   const stored = await storageGet<RawState>(Object.values(STORAGE_KEYS));
 
   return {
+    editorPlatform: normalizeEditorPlatform(stored[STORAGE_KEYS.editorPlatform]),
     translationEntries:
       (stored[STORAGE_KEYS.translationEntries] as TranslationEntry[] | undefined) ?? [],
     previewResult:
@@ -33,6 +35,10 @@ export async function writeRuntimeState(
   partial: RuntimeStateUpdate
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
+
+  if ('editorPlatform' in partial) {
+    payload[STORAGE_KEYS.editorPlatform] = normalizeEditorPlatform(partial.editorPlatform);
+  }
 
   if ('translationEntries' in partial) {
     payload[STORAGE_KEYS.translationEntries] = partial.translationEntries ?? [];

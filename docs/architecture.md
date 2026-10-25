@@ -8,7 +8,7 @@ The extension has three runtime entry points at the repository root:
 
 Supporting code is grouped by responsibility:
 
-- `background/` contains Chrome-side services: debugger input, supported editor URLs, Excel conversion, and persisted state.
+- `background/` contains Chrome-side services: debugger input, editor-frame routing, Excel conversion, and persisted state. The user selects the editor platform in the popup; Preview, Fill, and Export carry that platform to the content runtime without a URL whitelist. The runtime scans only the selected platform. The stored selection is initially empty and cannot change during a run.
 - `content/` contains page-side infrastructure: DOM helpers, segment traversal, start markers, fill orchestration, and trusted text writes.
 - `domain/` contains business rules for matching, inline-markup canonicalization, fill options, failure policy, throttling, and run state. These modules should not perform Chrome API calls, mutate editor DOM, or import platform implementations.
 - `platforms/` owns editor-specific selectors, DOM serialization, row discovery, and writes for memoQ, GientTrans, and Phrase.

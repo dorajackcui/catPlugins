@@ -1,4 +1,5 @@
 import { FillRunner } from './fill-runner.ts';
+import type { EditorPlatform } from '../shared/editor-platform.ts';
 import type {
   FillRunOptions,
   FillRunProgress,
@@ -31,6 +32,7 @@ export interface ContentScanOptions {
 export type ContentFillOptions = FillRunOptions;
 
 export interface ContentRunRuntime extends FillRunnerRuntime {
+  selectPlatform(platform: EditorPlatform): void;
   findScrollContext(): ScrollContext;
   collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[];
 }
@@ -57,6 +59,10 @@ export interface ContentRunServicePort {
 export class ContentRunService {
   private readonly segmentScanner: SegmentScanner;
   private readonly fillRunner: FillRunner;
+
+  selectPlatform(platform: EditorPlatform): void {
+    this.port.runtime.selectPlatform(platform);
+  }
 
   constructor(private readonly port: ContentRunServicePort) {
     this.segmentScanner = new SegmentScanner({

@@ -2,6 +2,10 @@
 
 Chrome Manifest V3 extension for importing Excel translations and filling Phrase, memoQ, and GientTrans editors.
 
+## Usage
+
+Choose **memoQ**, **Phrase / Memsource**, or **GientTrans** in the popup before filling or exporting. The extension remembers the last selection. Platform routing uses this selection, so custom domains and IP addresses do not need URL rules. Open the editor tab, choose its platform, then import Excel and fill, or export sources. The platform cannot be changed during a run.
+
 ## Development
 
 Requirements: a current Node.js LTS release and npm.
@@ -45,7 +49,7 @@ For a new editor integration:
 
 1. Add a platform folder with a DOM reader and editor writer behind a small adapter.
 2. Register the adapter in `platforms/runtime.ts` without importing another platform implementation.
-3. Add supported URL rules in `background/editor-url.ts` and matching manifest permissions.
+3. Add the platform to `shared/editor-platform.ts` and the popup selector. The active tab grant supports user-initiated injection; add manifest permissions only if the integration needs other origins.
 4. Add direct reader/writer tests and cross-platform runtime routing coverage.
 5. Update `docs/architecture.md` with any new lifecycle or safety invariant.
 

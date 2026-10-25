@@ -54,6 +54,7 @@ function makePreview(overrides: Partial<PreviewResult> = {}): PreviewResult {
 
 function makeRuntimeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
   return {
+    editorPlatform: 'phrase',
     translationEntries: [],
     previewResult: null,
     uploadMeta: null,
@@ -214,11 +215,37 @@ test('BackgroundRequestHandler returns popup state without exposing translations
 
   assert.equal(response.ok, true);
   assert.deepEqual(response.ok ? response.data : null, {
+    editorPlatform: state.editorPlatform,
     uploadMeta: state.uploadMeta,
     previewResult: state.previewResult,
     fillOptions: state.fillOptions,
     runState: state.runState
   });
+});
+
+test('BackgroundRequestHandler persists platform changes and clears the previous preview', async () => {
+  const harness = createHarness({ state: makeRuntimeState({ previewResult: makePreview() }) });
+  const response = await harness.handler.handle({
+    type: 'SET_EDITOR_PLATFORM', payload: { editorPlatform: 'memoq' }
+  });
+  assert.deepEqual(response, { ok: true, data: 'memoq' });
+  assert.equal(harness.getState().editorPlatform, 'memoq');
+  assert.equal(harness.getState().previewResult, null);
+  const popup = await harness.handler.handle({ type: 'GET_STATE' });
+  assert.equal(popup.ok ? (popup.data as RuntimeState).editorPlatform : null, 'memoq');
+});
+
+test('BackgroundRequestHandler rejects platform changes during a run', async () => {
+  const harness = createHarness({ state: makeRuntimeState({
+    runState: { ...DEFAULT_RUN_STATE, phase: 'running', kind: 'fill', runId: 'run-1' }
+  }) });
+  const error = await captureError(() => harness.handler.handle({
+    type: 'SET_EDITOR_PLATFORM', payload: { editorPlatform: 'memoq' }
+  }));
+  assert.equal(error instanceof Error ? error.message : null,
+    'Fill is already running. Stop it before changing the editor platform.');
+  assert.equal(harness.getState().editorPlatform, 'phrase');
+  assert.deepEqual(harness.writes, []);
 });
 
 test('BackgroundRequestHandler runs Preview in the detected Phrase editor frame', async () => {
@@ -264,7 +291,7 @@ test('BackgroundRequestHandler runs Preview in the detected Phrase editor frame'
       tabId: 42,
       message: {
         type: 'CONTENT_SCAN',
-        payload: { runId: runningState?.runId ?? '' }
+        payload: { runId: runningState?.runId ?? '', editorPlatform: 'phrase' }
       },
       options: { frameId: 7 }
     }
@@ -289,11 +316,12 @@ test('BackgroundRequestHandler keeps memoQ full-scan Fill options and final prog
   const harness = createHarness({
     state: makeRuntimeState({
       translationEntries: [ENTRY],
+      editorPlatform: 'memoq',
       previewResult: makePreview({ readyToFill: 4 })
     }),
     tab: {
       id: 88,
-      url: 'https://memoq.example.net/memoqweb/editor/projects/p1/docs/d1'
+      url: 'http://115.159.195.184/custom-editor'
     },
     responses: [{ ok: true, data: fillResult } satisfies ApiResponse<FillRunResult>]
   });
@@ -314,6 +342,7 @@ test('BackgroundRequestHandler keeps memoQ full-scan Fill options and final prog
     { type: 'CONTENT_FILL' }
   >;
   assert.equal(message.type, 'CONTENT_FILL');
+  assert.equal(message.payload.editorPlatform, 'memoq');
   assert.equal(message.payload.plannedFillCount, 4);
   assert.equal(message.payload.maxPasses, 1200);
   assert.equal(message.payload.maxSegments, 10000);
@@ -382,7 +411,7 @@ test('BackgroundRequestHandler exports all scanned sources with a stable date', 
         segmentCount: number;
       })
     : null;
-  assert.equal(result?.fileName, 'memoq-sources-2026-07-15.xlsx');
+  assert.equal(result?.fileName, 'phrase-sources-2026-07-15.xlsx');
   assert.equal(result?.segmentCount, 1);
   assert.equal(Boolean(result?.bytes.length), true);
   const request = harness.tabMessages[0]?.message as Extract<
@@ -396,6 +425,7 @@ test('BackgroundRequestHandler exports all scanned sources with a stable date', 
 
 test('BackgroundRequestHandler names GientTrans exports with the current task ID', async () => {
   const harness = createHarness({
+    state: makeRuntimeState({ editorPlatform: 'gientrans' }),
     tab: {
       id: 77,
       url: 'https://gentrans.genplus.cn/#/olEditor?parentTaskId=2079851761669750786&taskId=2079851761669750786&taskSubWorkflowId=&fileIds=2079850833514655746'
@@ -565,8 +595,9 @@ test('BackgroundRequestHandler forwards trusted input only for sender tabs', asy
   );
 });
 
-test('BackgroundRequestHandler rejects unsupported tabs before script injection', async () => {
+test('BackgroundRequestHandler requires a platform before script injection', async () => {
   const harness = createHarness({
+    state: makeRuntimeState({ editorPlatform: null }),
     tab: { id: 9, url: 'https://example.com/' }
   });
 
@@ -576,8 +607,8 @@ test('BackgroundRequestHandler rejects unsupported tabs before script injection'
 
   assert.equal(
     error instanceof Error ? error.message : null,
-    'Open a Phrase, memoQ, or GientTrans editor tab before running Preview, Fill, or Export.'
+    'Choose an editor platform before running Preview, Fill, or Export.'
   );
   assert.deepEqual(harness.scriptCalls, []);
-  assert.equal(harness.infoLogs[0]?.message, 'Rejected active tab for CAT run.');
+  assert.equal(harness.events.includes('query-tab'), false);
 });

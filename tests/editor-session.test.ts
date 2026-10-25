@@ -97,10 +97,10 @@ test('BackgroundEditorSession prepares and targets the Phrase editor frame', asy
     responses: [{ ok: true, data: ['segment-1'] }]
   });
 
-  const tab = await harness.session.prepare();
+  const tab = await harness.session.prepare('phrase');
   const data = await harness.session.request<string[]>(tab, {
     type: 'CONTENT_SCAN',
-    payload: { runId: 'run-1' }
+    payload: { runId: 'run-1', editorPlatform: 'phrase' }
   });
 
   assert.deepEqual(tab, {
@@ -118,7 +118,7 @@ test('BackgroundEditorSession prepares and targets the Phrase editor frame', asy
   assert.deepEqual(harness.messages, [
     {
       tabId: 42,
-      message: { type: 'CONTENT_SCAN', payload: { runId: 'run-1' } },
+      message: { type: 'CONTENT_SCAN', payload: { runId: 'run-1', editorPlatform: 'phrase' } },
       options: { frameId: 7 }
     }
   ]);
@@ -126,19 +126,32 @@ test('BackgroundEditorSession prepares and targets the Phrase editor frame', asy
   assert.equal(harness.logs[0]?.payload.platform, 'phrase');
 });
 
-test('BackgroundEditorSession rejects unsupported tabs before injection', async () => {
+test('BackgroundEditorSession requires a platform before injection', async () => {
   const harness = createHarness({
     tab: { id: 9, url: 'https://example.com/' }
   });
 
-  const error = await captureError(() => harness.session.prepare());
+  const error = await captureError(() => harness.session.prepare(null));
 
   assert.equal(
     error instanceof Error ? error.message : null,
-    'Open a Phrase, memoQ, or GientTrans editor tab before running Preview, Fill, or Export.'
+    'Choose an editor platform before running Preview, Fill, or Export.'
   );
-  assert.deepEqual(harness.events, ['query-tab']);
-  assert.equal(harness.logs[0]?.message, 'Rejected active tab for CAT run.');
+  assert.deepEqual(harness.events, []);
+});
+
+test('BackgroundEditorSession accepts custom URLs and uses only the selected platform', async () => {
+  const harness = createHarness({
+    tab: { id: 9, url: 'http://115.159.195.184/custom-editor' },
+    frames: [{ frameId: 7, parentFrameId: 0, url: 'https://editor.memsource.com/twe/translation/job/abc' }]
+  });
+
+  const tab = await harness.session.prepare('memoq');
+
+  assert.equal(tab.id, 9);
+  assert.equal(tab.frameId, undefined);
+  assert.equal(harness.scriptCalls.length, 1);
+  assert.equal(harness.logs[0]?.payload.platform, 'memoq');
 });
 
 test('BackgroundEditorSession surfaces content-script response errors', async () => {
@@ -149,7 +162,7 @@ test('BackgroundEditorSession surfaces content-script response errors', async ()
   const error = await captureError(() =>
     harness.session.request(
       { id: 42, url: 'https://app.phrase.com/editor/project-1' },
-      { type: 'CONTENT_SCAN', payload: { runId: 'run-error' } }
+      { type: 'CONTENT_SCAN', payload: { runId: 'run-error', editorPlatform: 'phrase' } }
     )
   );
 
@@ -165,7 +178,7 @@ test('BackgroundEditorSession stops the stored frame without reinjection', async
   await harness.session.stop({
     tabId: 91,
     frameId: 0
-  });
+  }, null);
 
   assert.deepEqual(harness.events, ['send:CONTENT_STOP']);
   assert.deepEqual(harness.messages, [
@@ -188,7 +201,7 @@ test('BackgroundEditorSession prepares a fallback target when run state lacks a 
     ]
   });
 
-  await harness.session.stop({});
+  await harness.session.stop({}, 'phrase');
 
   assert.deepEqual(harness.events, [
     'query-tab',

@@ -6,6 +6,7 @@ import type {
 } from '../content/types.ts';
 import type { FillOutcome } from '../shared/fill-outcome-types.ts';
 import { normalizeText } from '../shared/utils.ts';
+import { requireEditorPlatform, type EditorPlatform } from '../shared/editor-platform.ts';
 import { GientTransAdapter } from './gientrans/adapter.ts';
 import {
   MemoqAdapter,
@@ -49,6 +50,12 @@ export interface PhraseRuntimePort {
 }
 
 export class PlatformRuntime {
+  private platform: EditorPlatform | null = null;
+
+  selectPlatform(platform: EditorPlatform): void {
+    this.platform = requireEditorPlatform(platform);
+  }
+
   constructor(
     private readonly memoq: MemoqRuntimePort,
     private readonly gientrans: GientTransRuntimePort,
@@ -57,7 +64,7 @@ export class PlatformRuntime {
   ) {}
 
   isMemoqActive(): boolean {
-    return this.memoq.isActive();
+    return this.platform === 'memoq';
   }
 
   prepareMemoqTrustedInput(): Promise<void> {
@@ -65,26 +72,13 @@ export class PlatformRuntime {
   }
 
   findScrollContext(): ScrollContext {
-    return (
-      this.memoq.findScrollContext() ??
-      this.gientrans.findScrollContext() ??
-      this.phrase.findScrollContext() ??
-      this.createFallbackScrollContext()
-    );
+    const platform = requireEditorPlatform(this.platform);
+    return this[platform].findScrollContext() ?? this.createFallbackScrollContext();
   }
 
   collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[] {
-    const memoqSegments = this.memoq.collectVisibleSegments(scrollContext);
-    if (memoqSegments.length > 0) {
-      return memoqSegments;
-    }
-
-    const gientransSegments = this.gientrans.collectVisibleSegments(scrollContext);
-    if (gientransSegments.length > 0) {
-      return gientransSegments;
-    }
-
-    return this.phrase.collectVisibleSegments(scrollContext);
+    const platform = requireEditorPlatform(this.platform);
+    return this[platform].collectVisibleSegments(scrollContext);
   }
 
   getEditableValue(segment: RuntimeSegment): string {

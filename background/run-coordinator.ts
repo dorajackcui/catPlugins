@@ -15,7 +15,7 @@ import {
   BackgroundEditorSession,
   type BackgroundEditorSessionPort
 } from './editor-session.ts';
-import { isGientTransUrl, isMemoqUrl } from './editor-url.ts';
+import { requireEditorPlatform, type EditorPlatform } from '../shared/editor-platform.ts';
 import { buildSourceExportWorkbook } from './excel.ts';
 import {
   BackgroundRunLifecycle,
@@ -53,7 +53,8 @@ export class BackgroundRunCoordinator {
       request.payload?.fillOptions ?? state.fillOptions
     );
 
-    const tab = await this.editorSession.prepare();
+    const editorPlatform = requireEditorPlatform(state.editorPlatform);
+    const tab = await this.editorSession.prepare(editorPlatform);
     const runState = await this.lifecycle.start('preview', tab, {
       fillOptions
     });
@@ -64,13 +65,14 @@ export class BackgroundRunCoordinator {
         {
           type: 'CONTENT_SCAN',
           payload: {
-            runId: runState.runId ?? ''
+            runId: runState.runId ?? '',
+            editorPlatform
           }
         }
       );
 
       const preview = this.buildPreviewForTab(
-        tab.url,
+        editorPlatform,
         buildPreview(state.translationEntries, segments, fillOptions)
       );
       await this.port.writeRuntimeState({
@@ -98,7 +100,8 @@ export class BackgroundRunCoordinator {
       throw new Error('Another task is already running. Stop it before starting Export.');
     }
 
-    const tab = await this.editorSession.prepare();
+    const editorPlatform = requireEditorPlatform(state.editorPlatform);
+    const tab = await this.editorSession.prepare(editorPlatform);
     const runState = await this.lifecycle.start('export', tab);
 
     try {
@@ -108,6 +111,7 @@ export class BackgroundRunCoordinator {
           type: 'CONTENT_SCAN',
           payload: {
             runId: runState.runId ?? '',
+            editorPlatform,
             maxPasses: EXPORT_SCAN_MAX_PASSES,
             maxSegments: EXPORT_SCAN_MAX_SEGMENTS,
             scanFromTop: true
@@ -117,7 +121,7 @@ export class BackgroundRunCoordinator {
 
       const workbookBytes = buildSourceExportWorkbook(segments);
       const result: ExportSourcesResult = {
-        fileName: this.createSourceExportFileName(tab.url),
+        fileName: this.createSourceExportFileName(editorPlatform, tab.url),
         bytes: Array.from(workbookBytes),
         segmentCount: segments.length
       };
@@ -155,7 +159,8 @@ export class BackgroundRunCoordinator {
         state.translationEntries.length
     );
 
-    const tab = await this.editorSession.prepare();
+    const editorPlatform = requireEditorPlatform(state.editorPlatform);
+    const tab = await this.editorSession.prepare(editorPlatform);
     const runState = await this.lifecycle.start('fill', tab, {
       fillOptions,
       plannedFillCount
@@ -168,10 +173,11 @@ export class BackgroundRunCoordinator {
           type: 'CONTENT_FILL',
           payload: {
             runId: runState.runId ?? '',
+            editorPlatform,
             entries: state.translationEntries,
             fillOptions,
             plannedFillCount,
-            ...(isMemoqUrl(tab.url)
+            ...(editorPlatform === 'memoq'
               ? {
                   maxPasses: EXPORT_SCAN_MAX_PASSES,
                   maxSegments: EXPORT_SCAN_MAX_SEGMENTS,
@@ -182,7 +188,7 @@ export class BackgroundRunCoordinator {
         }
       );
 
-      const result = this.finalizePreviewForTab(tab.url, fillResult);
+      const result = this.finalizePreviewForTab(editorPlatform, fillResult);
 
       await this.port.writeRuntimeState({
         previewResult: result.preview,
@@ -218,14 +224,14 @@ export class BackgroundRunCoordinator {
     }
 
     await this.lifecycle.markStopping(state.runState);
-    await this.editorSession.stop(state.runState);
+    await this.editorSession.stop(state.runState, state.editorPlatform);
     return { ok: true, data: null };
   }
 
   private finalizePreviewForTab<
     T extends { preview: ReturnType<typeof applyMemoqPreviewCorrection> }
-  >(url: string | undefined, result: T): T {
-    if (!isMemoqUrl(url)) {
+  >(platform: EditorPlatform, result: T): T {
+    if (platform !== 'memoq') {
       return result;
     }
 
@@ -236,22 +242,22 @@ export class BackgroundRunCoordinator {
   }
 
   private buildPreviewForTab(
-    url: string | undefined,
+    platform: EditorPlatform,
     preview: ReturnType<typeof buildPreview>
   ): ReturnType<typeof buildPreview> {
-    return isMemoqUrl(url) ? applyMemoqPreviewCorrection(preview) : preview;
+    return platform === 'memoq' ? applyMemoqPreviewCorrection(preview) : preview;
   }
 
-  private createSourceExportFileName(url?: string): string {
+  private createSourceExportFileName(platform: EditorPlatform, url?: string): string {
     const date = this.port.now().toISOString().slice(0, 10);
-    if (isGientTransUrl(url)) {
+    if (platform === 'gientrans') {
       const taskId = url ? extractGientTransTaskId(url) : null;
       return taskId
         ? `gientrans-sources-${taskId}-${date}.xlsx`
         : `gientrans-sources-${date}.xlsx`;
     }
 
-    return `memoq-sources-${date}.xlsx`;
+    return `${platform}-sources-${date}.xlsx`;
   }
 }
 
