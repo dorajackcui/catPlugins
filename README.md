@@ -2,9 +2,17 @@
 
 Chrome Manifest V3 extension for importing Excel translations and filling Phrase, memoQ, and GientTrans editors.
 
-## Usage
+## 极简用法
 
-Choose **memoQ**, **Phrase / Memsource**, or **GientTrans** in the popup before filling or exporting. The extension remembers the last selection. Platform routing uses this selection, so custom domains and IP addresses do not need URL rules. Open the editor tab, choose its platform, then import Excel and fill, or export sources. The platform cannot be changed during a run.
+1. 从 [最新 Release](https://github.com/dorajackcui/catPlugins/releases/latest) 下载 `catPlugins-v*.zip`，解压到固定目录。
+2. Chrome 打开 `chrome://extensions/` → 开启「开发者模式」→「加载已解压的扩展程序」→ 选择包含 `manifest.json` 的文件夹。
+3. 打开待填写的编辑器页面，点击插件，选择 **memoQ**、**Phrase / Memsource** 或 **GientTrans**。
+4. 点击 **Choose Excel file** 导入 Excel，再点击 **Fill**。插件读取第一个工作表；建议使用 `source`（原文）和 `target`（译文）列名。
+5. **Export** 可先导出原文，填好 `target` 列后重新导入；**Stop current run** 可停止当前任务。
+
+**更新：** 下载新版 ZIP，将解压后的文件覆盖到原插件目录，在 Chrome 扩展页点击「重新加载」，再刷新编辑器页面。
+
+插件会记住上次选择的平台，支持自定义域名和 IP 地址；运行中不能切换平台。
 
 ## Development
 
