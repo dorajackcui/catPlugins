@@ -571,6 +571,30 @@ test('buildPreview matches XML-like GientTrans source against tokenized editor s
   );
 });
 
+test('GientTrans matches Excel game tags without row numbers and validates their attributes and closers', () => {
+  for (const [source, pageSource, target] of [
+    ['<Orange> S1赛季（上半）</>期间限定，随机获得以下外观之一。',
+     '❮Orange❯ S1赛季（上半）❮/❯期间限定，随机获得以下外观之一。',
+     '<Orange>S1シーズン（前半）</>限定。以下の重ね着からランダムで1つ獲得できる。'],
+    ['点击<input key="HardLock"></>开启/关闭锁定',
+     '点击❮input key="HardLock"❯❮/❯开启/关闭锁定',
+     '<input key="HardLock"></>を押してロックを設定・解除する。']
+  ]) {
+    const entry = { rowIndex: 2, sourceRaw: source, sourceNormalized: source, targetRaw: target, occurrenceIndex: 1 };
+    const segment: PageSegment = {
+      domId: 'game', platform: 'gientrans', sourceRaw: pageSource, sourceNormalized: pageSource,
+      occurrenceIndex: 1, targetRaw: '', isEmptyTarget: true, placeholderTokens: []
+    };
+    const status = (translation: string) => buildPreview(
+      [{ ...entry, targetRaw: translation }], [segment],
+      { validatePlaceholders: true, autoStopAfterFilledCount: null }
+    ).items[0]?.status;
+    assert.equal(status(target), 'ready');
+    assert.equal(status(target.replace('</>', '')), 'placeholderError');
+    assert.equal(status(target.replace(/HardLock|Orange/, 'Other')), 'placeholderError');
+  }
+});
+
 test('buildPreview still skips non-empty targets for other platforms', () => {
   const preview = buildPreview(
     [

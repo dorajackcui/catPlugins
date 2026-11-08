@@ -43,3 +43,19 @@ test('placeholdersMatch rejects mismatched placeholders', () => {
   assert.equal(placeholdersMatch('Hello {name}', 'Bonjour %s'), false);
   assert.equal(placeholdersMatch('Hello {name}', 'Bonjour {name}'), true);
 });
+
+test('GientTrans validates native bracket chips and allows ordinary bracketed text to be translated', () => {
+  const known = ['[InputKey:MeleeAttack]'];
+  const source = '[说明]长按普攻[InputKey:MeleeAttack]蓄力';
+  const target = '[説明]通常攻撃[InputKey:MeleeAttack]を長押しして溜める。';
+  assert.deepEqual(extractPlaceholderTokens(source, 'gientrans', known), known);
+  assert.equal(placeholdersMatch(source, target, 'gientrans', known), true);
+  assert.equal(placeholdersMatch(source, target.replace(known[0], ''), 'gientrans', known), false);
+  assert.equal(placeholdersMatch(source, target.replace('MeleeAttack', 'Jump'), 'gientrans', known), false);
+});
+
+test('GientTrans QA counts an opaque native chip containing another placeholder as one match', () => {
+  const known = ['DO', 'DO%s{0}'];
+  assert.deepEqual(extractPlaceholderTokens('DO%s{0}DO%s', 'gientrans', known), ['DO%s{0}', 'DO', '%s']);
+  assert.equal(placeholdersMatch('使用DO%s{0}', '使用DO%s', 'gientrans', known), false);
+});

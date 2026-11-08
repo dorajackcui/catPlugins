@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { ScrollContext } from '../content/dom.ts';
 import { GientTransAdapter } from '../platforms/gientrans/adapter.ts';
 import {
+  collectGientTransTagHtmlByToken,
   gientransTextToEditorHtml,
   normalizeGientTransEditorText,
   prepareGientTransTargetText
@@ -275,12 +276,13 @@ function makeTextNode(text: string): ChildNode {
 function makeTagNode(token: string, html = `<span class="tag_alone tagspan" contenteditable="false"><input readonly="" type="tag" class="_alone tag" tfull="${token}" title="${token}" value="${token}"></span>`): ChildNode {
   const input = {
     value: token,
+    closest: () => node,
     getAttribute(name: string): string | null {
       return ['tfull', 'title', 'value'].includes(name) ? token : null;
     }
   };
 
-  return {
+  const node = {
     nodeType: 1,
     textContent: '',
     outerHTML: html,
@@ -289,6 +291,13 @@ function makeTagNode(token: string, html = `<span class="tag_alone tagspan" cont
       return selector.includes('input') ? input : null;
     }
   } as unknown as ChildNode;
+  return node;
+}
+
+function sourceWithTagNodes(nodes: ChildNode[]): HTMLElement {
+  return {
+    querySelectorAll: () => nodes.map(node => (node as HTMLElement).querySelector('input'))
+  } as unknown as HTMLElement;
 }
 
 function setChildNodes(editor: FakeEditor, childNodes: ChildNode[]): void {
@@ -298,6 +307,28 @@ function setChildNodes(editor: FakeEditor, childNodes: ChildNode[]): void {
   });
 }
 
+test('GientTrans restores native tag pairs by action when the translation reorders them', () => {
+  const tags = [
+    ['❰Orange❱', '0'], ['❰/❱', '1'],
+    ['❰input key=&quot;HardLock&quot;❱', '2'], ['❰/❱', '3'],
+    ['❰input key=&quot;Jump&quot;❱', '4'], ['❰/❱', '5']
+  ].map(([equiv, id]) => makeTagNode(
+    `❮ph equiv-text="${equiv}" id="${id}"/❯`,
+    `<span data-id="${id}"><input type="tag"></span>`
+  ));
+  const source = sourceWithTagNodes(tags);
+  const { tagHtmlByToken, pairedClosers } = collectGientTransTagHtmlByToken(source);
+  const html = gientransTextToEditorHtml(
+    '<input key="Jump"></><Orange>S1シーズン（前半）</><input key="HardLock"></>を押す。<br>',
+    tagHtmlByToken, pairedClosers
+  );
+  const chip = (index: number) => (tags[index] as HTMLElement).outerHTML;
+  assert.equal(html,
+    chip(4) + chip(5) + chip(0) + 'S1シーズン（前半）' + chip(1) +
+    chip(2) + chip(3) + 'を押す。&lt;br&gt;'
+  );
+});
+
 test('normalizeGientTransEditorText removes editor-only invisible markers', () => {
   assert.equal(
     normalizeGientTransEditorText('Le\u00a0\u200BCocoricou\uFEFF'),
@@ -305,14 +336,75 @@ test('normalizeGientTransEditorText removes editor-only invisible markers', () =
   );
 });
 
+test('nested identical opening chips keep their own closing IDs when translated as siblings', () => {
+  const tags = ['❰Orange❱', '❰Orange❱', '❰/❱', '❰/❱'].map((equiv, id) =>
+    makeTagNode(`❮ph equiv-text="${equiv}" id="${id}"/❯`, `<span data-chip="${id}"></span>`)
+  );
+  const { tagHtmlByToken, pairedClosers } = collectGientTransTagHtmlByToken(sourceWithTagNodes(tags));
+  const chip = (index: number) => (tags[index] as HTMLElement).outerHTML;
+  assert.equal(gientransTextToEditorHtml('<Orange>A</><Orange>B</>', tagHtmlByToken, pairedClosers),
+    chip(0) + 'A' + chip(3) + chip(1) + 'B' + chip(2));
+});
+
+test('GientTrans copies bracket markers from the current source row by exact equiv-text', () => {
+  const melee = '[InputKey:MeleeAttack]';
+  const other = '[NewAction]';
+  const ids = [melee, other, melee].map((token, id) =>
+    makeTagNode(`❮ph equiv-text="${token}" id="${id}"/❯`,
+      `<span class="tagspan"><input type="tag" data-id="${id}"></span>`)
+  );
+  const { tagHtmlByToken: tags } = collectGientTransTagHtmlByToken(sourceWithTagNodes(ids));
+  const html = (id: number) => (ids[id] as HTMLElement).outerHTML;
+  const target = '通常攻撃[InputKey:MeleeAttack]を長押しして溜める。';
+  assert.equal(gientransTextToEditorHtml(target, tags), `通常攻撃${html(0)}を長押しして溜める。`);
+  assert.equal(gientransTextToEditorHtml(target, new Map()), target);
+  assert.equal(
+    gientransTextToEditorHtml(other + melee + '[InputKey:Jump]' + melee, tags),
+    html(1) + html(0) + '[InputKey:Jump]' + html(2)
+  );
+});
+
+test('GientTrans fills arbitrary literal equiv-text using longest matches and source-order IDs', () => {
+  const rows = ['@act', '@act++', '⟦X.*$&amp;{0}⟧', '@act', '❰@future!❱', ''];
+  const tags = rows.map((equiv, id) => makeTagNode(
+    `❮ph id="${id}" equiv-text="${equiv}"/❯`, `<span data-chip="${id}"></span>`
+  ));
+  const { tagHtmlByToken, pairedClosers } = collectGientTransTagHtmlByToken(sourceWithTagNodes(tags));
+  const html = gientransTextToEditorHtml(
+    '@act++@act⟦X.*$&{0}⟧@act<@future!>@ACT', tagHtmlByToken, pairedClosers
+  );
+  const chip = (index: number) => (tags[index] as HTMLElement).outerHTML;
+  assert.equal(html, chip(1) + chip(0) + chip(2) + chip(3) + chip(4) + '@ACT');
+});
+
+test('direct equiv-text is matchable but a marker display number is not', () => {
+  const inputs = ['+仮+', ''].map((equiv, index) => ({
+    closest: () => null,
+    outerHTML: '<input type="tag" value="1">',
+    getAttribute: (name: string) => ({ 'equiv-text': equiv, value: String(index + 1) })[name]
+  }));
+  const source = { querySelectorAll: () => inputs } as unknown as HTMLElement;
+  const { tagHtmlByToken } = collectGientTransTagHtmlByToken(source);
+  assert.equal(gientransTextToEditorHtml('12+仮+', tagHtmlByToken), '12' + inputs[0].outerHTML);
+});
+
 test('prepareGientTransTargetText removes only whitespace before real line breaks', () => {
   assert.equal(
     prepareGientTransTargetText('Lance \r\n  Dracopousse\t\nFin\\nTag'),
     'Lance\n  Dracopousse\nFin\\nTag'
   );
+  assert.equal(prepareGientTransTargetText('A \n@@ \n@@', ['@@ \n@@']), 'A\n@@ \n@@');
 });
 
 test('normalizeGientTransDomTagToken unwraps new ph equiv-text tags', () => {
+  assert.equal(
+    normalizeGientTransDomTagToken(`❮ph note='use equiv-text="example"' data-equiv-text="preview" equiv-text="actual"/❯`),
+    'actual'
+  );
+  assert.equal(
+    normalizeGientTransDomTagToken('❮ph equiv-text="❰input key="HardLock"❱" id="2"/❯'),
+    '❮input key="HardLock"❯'
+  );
   assert.equal(
     normalizeGientTransDomTagToken('❮ph equiv-text="{0}" id="86"/❯'),
     '{0}'
@@ -342,6 +434,15 @@ test('gientransTextToEditorHtml escapes text and preserves visible spaces', () =
     gientransTextToEditorHtml('A <tag> & B'),
     'A<span class="whitechar sp" contenteditable="false"> </span>\u200B&lt;tag&gt;<span class="whitechar sp" contenteditable="false"> </span>\u200B&amp;<span class="whitechar sp" contenteditable="false"> </span>\u200BB'
   );
+});
+
+test('GientTrans handles named and self-closing game tags and quoted angle brackets', () => {
+  const value = `2<3:<ui:hint label='A > B' id="7"><icon name="lock"/></ui:hint>`;
+  assert.equal(gientransTextToEditorHtml(value, new Map([
+    [`❮ui:hint label='A > B' id="7"❯`, ['[open]']],
+    ['❮icon name="lock"/❯', ['[icon]']],
+    ['❮/ui:hint❯', ['[close]']]
+  ])), '2&lt;3:[open][icon][close]');
 });
 
 test('gientransTextToEditorHtml preserves non-breaking spaces distinctly', () => {

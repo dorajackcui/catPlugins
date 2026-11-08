@@ -8,6 +8,7 @@ import type {
   TranslationEntry
 } from '../shared/translation-types.ts';
 import {
+  normalizeGientTransEditorMarkup,
   normalizeGientTransInlineMarkup,
   stripGientTransInlineMarkup
 } from './gientrans-markup.ts';
@@ -32,6 +33,10 @@ function buildRowNumberMatchKey(rowNumber: string): string {
   return `row:${rowNumber}`;
 }
 
+function gientransSourceKey(source: string, occurrence: number): string {
+  return `gientrans:${buildMatchKey(normalizeText(normalizeGientTransEditorMarkup(source)), occurrence)}`;
+}
+
 export function createEntryLookup(
   entries: TranslationEntry[]
 ): Map<string, TranslationEntry> {
@@ -50,6 +55,8 @@ export function createEntryLookup(
       normalizeGientTransInlineMarkup(entry.sourceRaw)
     );
     addSourceLookupEntry(lookup, entry, canonicalGientTransSource);
+    const editorKey = gientransSourceKey(entry.sourceRaw, entry.occurrenceIndex);
+    if (!lookup.has(editorKey)) lookup.set(editorKey, entry);
 
     addSourceLookupEntry(lookup, entry, stripGientTransInlineMarkup(entry.sourceRaw));
   }
@@ -143,7 +150,7 @@ export function classifySegment(
   if (
     normalizedFillOptions.validatePlaceholders &&
     !usesMemoqProtectedSourceBridge(entry, segment) &&
-    !placeholdersMatch(segment.sourceRaw, entry.targetRaw)
+    !placeholdersMatch(segment.sourceRaw, entry.targetRaw, segment.platform, segment.placeholderTokens)
   ) {
     return {
       ...segment,
@@ -208,11 +215,8 @@ function findEntryBySource(
     return undefined;
   }
 
-  const canonicalGientTransSource = normalizeText(
-    normalizeGientTransInlineMarkup(segment.sourceRaw)
-  );
   const canonicalEntry = entryLookup.get(
-    buildMatchKey(canonicalGientTransSource, segment.occurrenceIndex)
+    gientransSourceKey(segment.sourceRaw, segment.occurrenceIndex)
   );
   if (canonicalEntry) {
     return canonicalEntry;

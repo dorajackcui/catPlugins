@@ -1,10 +1,10 @@
 import {
-  normalizeGientTransEditorText,
   readGientTransEditorText,
   readGientTransEditorTextPreservingNbsp,
+  readGientTransTagIdentities,
   stripEditorMarkers
 } from './editor-text.ts';
-import { normalizeGientTransInlineMarkup } from '../../domain/gientrans-markup.ts';
+import { normalizeGientTransEditorMarkup } from '../../domain/gientrans-markup.ts';
 import { describeGientTransText } from './diagnostics.ts';
 
 export { describeGientTransText } from './diagnostics.ts';
@@ -90,7 +90,8 @@ export class GientTransEditorWriter {
   writeHtml(
     target: HTMLElement,
     value: string,
-    editorHtml: string
+    editorHtml: string,
+    expectedTags?: readonly string[]
   ): NativeWriteDiagnostic {
     const before = describeGientTransText(readGientTransEditorText(target));
     if (typeof document.execCommand !== 'function') {
@@ -123,7 +124,7 @@ export class GientTransEditorWriter {
     return {
       method: 'insertHTML',
       attempted: true,
-      ok: this.isTextMatch(target, value),
+      ok: this.isTextMatch(target, value, expectedTags),
       execResult,
       selected,
       before,
@@ -134,7 +135,8 @@ export class GientTransEditorWriter {
   writeBeforeInputPaste(
     target: HTMLElement,
     value: string,
-    editorHtml: string
+    editorHtml: string,
+    expectedTags?: readonly string[]
   ): NativeWriteDiagnostic {
     const before = describeGientTransText(readGientTransEditorText(target));
     if (typeof InputEvent !== 'function' || typeof DataTransfer !== 'function') {
@@ -194,7 +196,7 @@ export class GientTransEditorWriter {
     return {
       method: 'beforeinput-paste',
       attempted: true,
-      ok: this.isTextMatch(target, value),
+      ok: this.isTextMatch(target, value, expectedTags),
       dispatchResult,
       defaultPrevented: event.defaultPrevented,
       selected,
@@ -208,9 +210,13 @@ export class GientTransEditorWriter {
     this.collapseSelectionToEnd(target);
   }
 
-  async waitForTextMatch(target: HTMLElement, expected: string): Promise<boolean> {
+  async waitForTextMatch(
+    target: HTMLElement,
+    expected: string,
+    expectedTags?: readonly string[]
+  ): Promise<boolean> {
     for (let attempt = 0; attempt < 6; attempt += 1) {
-      if (this.isTextMatch(target, expected)) {
+      if (this.isTextMatch(target, expected, expectedTags)) {
         return true;
       }
 
@@ -257,28 +263,20 @@ export class GientTransEditorWriter {
     return true;
   }
 
-  private isTextMatch(target: HTMLElement, expected: string): boolean {
-    const expectedWithoutMarkers = normalizeLineEndings(
-      stripEditorMarkers(expected)
-    );
-    if (expected.includes('\u00A0')) {
-      return (
-        normalizeGientTransInlineMarkup(
-          normalizeLineEndings(
-            readGientTransEditorTextPreservingNbsp(target)
-          )
-        ) === normalizeGientTransInlineMarkup(expectedWithoutMarkers)
-      );
+  private isTextMatch(target: HTMLElement, expected: string, expectedTags?: readonly string[]): boolean {
+    if (expectedTags) {
+      const actualTags = readGientTransTagIdentities(target);
+      if (actualTags.length !== expectedTags.length ||
+          actualTags.some((tag, index) => tag !== expectedTags[index])) {
+        return false;
+      }
     }
 
-    return (
-      normalizeGientTransInlineMarkup(
-        normalizeLineEndings(readGientTransEditorText(target))
-      ) ===
-      normalizeGientTransInlineMarkup(
-        normalizeGientTransEditorText(expectedWithoutMarkers)
-      )
-    );
+    const actual = expected.includes('\u00A0')
+      ? readGientTransEditorTextPreservingNbsp(target)
+      : readGientTransEditorText(target);
+    return normalizeGientTransEditorMarkup(normalizeLineEndings(actual)) ===
+      normalizeGientTransEditorMarkup(normalizeLineEndings(stripEditorMarkers(expected)));
   }
 }
 

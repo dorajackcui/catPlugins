@@ -4,9 +4,9 @@ import type { FillOutcome } from '../../shared/fill-outcome-types.ts';
 import { delay } from '../../shared/utils.ts';
 import { describeGientTransText } from './diagnostics.ts';
 import {
-  containsMappedGientTransTag,
   gientransTextToEditorHtml,
-  prepareGientTransTargetText
+  prepareGientTransTargetText,
+  tagIdentitiesFromEditorHtml
 } from './editor-text.ts';
 import {
   GientTransEditorWriter,
@@ -47,7 +47,6 @@ export class GientTransAdapter {
     value: string
   ): Promise<FillOutcome> {
     const fillId = ++this.fillDebugSequence;
-    const preparedValue = prepareGientTransTargetText(value);
     const currentTarget = this.rowReader.findCurrentTargetBySegmentId(
       segment.domId
     );
@@ -58,8 +57,7 @@ export class GientTransAdapter {
       rowNumber: segment.rowNumber ?? null,
       foundCurrentTarget: Boolean(currentTarget),
       source: describeGientTransText(segment.sourceRaw),
-      translation: describeGientTransText(preparedValue),
-      removedTrailingLineWhitespace: preparedValue !== value,
+      translation: describeGientTransText(value),
       targetBefore: describeGientTransText(this.getEditableValue(target)),
       targetHtmlLength: target.innerHTML?.length ?? 0,
       targetAttrs: describeTarget(target)
@@ -79,22 +77,23 @@ export class GientTransAdapter {
     }
 
     this.editorWriter.activate(target);
-    const tagHtmlByToken =
+    const { tagHtmlByToken, pairedClosers } =
       this.rowReader.collectSourceTagHtmlByToken(target);
+    const preparedValue = prepareGientTransTargetText(value, tagHtmlByToken.keys());
     const editorHtml = gientransTextToEditorHtml(
       preparedValue,
-      tagHtmlByToken
+      tagHtmlByToken,
+      pairedClosers
     );
-    const containsMappedTags = containsMappedGientTransTag(
-      preparedValue,
-      tagHtmlByToken
-    );
+    const expectedTags = tagHtmlByToken.size ? tagIdentitiesFromEditorHtml(editorHtml) : undefined;
+    const containsMappedTags = Boolean(expectedTags?.length);
     const shouldPreserveEditorHtml =
       preparedValue.includes('\u00A0') || containsMappedTags;
     const nativeWrite = this.editorWriter.writeBeforeInputPaste(
       target,
       preparedValue,
-      editorHtml
+      editorHtml,
+      expectedTags
     );
     let fallbackNativeWrite: NativeWriteDiagnostic;
     let nativeHtmlWrite: NativeWriteDiagnostic | null = null;
@@ -121,7 +120,8 @@ export class GientTransAdapter {
       nativeHtmlWrite = this.editorWriter.writeHtml(
         target,
         preparedValue,
-        editorHtml
+        editorHtml,
+        expectedTags
       );
       if (nativeHtmlWrite.ok) {
         fallbackNativeWrite = nativeHtmlWrite;
@@ -134,6 +134,7 @@ export class GientTransAdapter {
 
     this.debug('fill:write', {
       fillId,
+      removedTrailingLineWhitespace: preparedValue !== value,
       nativeWrite,
       fallbackNativeWrite,
       nativeHtmlWrite,
@@ -150,7 +151,8 @@ export class GientTransAdapter {
 
     const confirmed = await this.editorWriter.waitForTextMatch(
       target,
-      preparedValue
+      preparedValue,
+      expectedTags
     );
 
     this.debug('fill:complete', {

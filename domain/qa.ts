@@ -1,8 +1,32 @@
-import { normalizeGientTransInlineMarkup } from './gientrans-markup.ts';
+import {
+  matchGientTransSourceTags,
+  normalizeGientTransEditorMarkup,
+  normalizeGientTransInlineMarkup
+} from './gientrans-markup.ts';
+import type { PageSegment } from '../shared/translation-types.ts';
 
-export function extractPlaceholderTokens(input: string): string[] {
+export function extractPlaceholderTokens(
+  input: string,
+  platform?: PageSegment['platform'],
+  sourceTokens: readonly string[] = []
+): string[] {
+  if (platform !== 'gientrans' || !sourceTokens.length) {
+    return extractTextPlaceholders(input, platform);
+  }
+  const result: string[] = [];
+  let cursor = 0;
+  for (const { start, end, token } of matchGientTransSourceTags(input, sourceTokens)) {
+    result.push(...extractTextPlaceholders(input.slice(cursor, start), platform), token);
+    cursor = end;
+  }
+  return result.concat(extractTextPlaceholders(input.slice(cursor), platform));
+}
+
+function extractTextPlaceholders(input: string, platform?: PageSegment['platform']): string[] {
   const tokens: Array<{ index: number; token: string }> = [];
-  const normalizedInput = normalizeGientTransInlineMarkup(input);
+  const normalizedInput = platform === 'gientrans'
+    ? normalizeGientTransEditorMarkup(input)
+    : normalizeGientTransInlineMarkup(input);
   const patterns = [
     /\{\d+>/g,
     /<\d+\}/g,
@@ -27,9 +51,14 @@ export function extractPlaceholderTokens(input: string): string[] {
     .map((entry) => entry.token);
 }
 
-export function placeholdersMatch(source: string, target: string): boolean {
-  const sourceTokens = extractPlaceholderTokens(source);
-  const targetTokens = extractPlaceholderTokens(target);
+export function placeholdersMatch(
+  source: string,
+  target: string,
+  platform?: PageSegment['platform'],
+  knownSourceTokens?: readonly string[]
+): boolean {
+  const sourceTokens = extractPlaceholderTokens(source, platform, knownSourceTokens);
+  const targetTokens = extractPlaceholderTokens(target, platform, knownSourceTokens);
 
   if (sourceTokens.length !== targetTokens.length) {
     return false;

@@ -239,6 +239,22 @@ test('GientTransEditorWriter confirms NBSP text after retrying', async () => {
   }
 });
 
+test('GientTrans verifies the native IDs even when pasted text looks like the expected markup', async () => {
+  const expected = '<input key="HardLock"></>を押す。';
+  const canonical = '❮input key="HardLock"❯❮/❯を押す。';
+  const ids = ['❮ph equiv-text="❰input key=&quot;HardLock&quot;❱" id="2"/❯', '❮ph equiv-text="❰/❱" id="3"/❯'];
+  const writer = createWriter();
+  const check = (textContent: string, tokens: string[]) => writer.waitForTextMatch({
+    textContent,
+    querySelectorAll: () => tokens.map(token => ({
+      getAttribute: (name: string) => name === 'tfull' ? token : null
+    }))
+  } as unknown as HTMLElement, expected, ids);
+  assert.equal(await check(expected, []), false);
+  assert.equal(await check(canonical, [ids[0], ids[1].replace('id="3"', 'id="9"')]), false);
+  assert.equal(await check(canonical, ids), true);
+});
+
 test('GientTransEditorWriter makes five waits before confirmation times out', async () => {
   const target = new TestEditor({ contenteditable: 'true' }, 'Old target');
   const waits: number[] = [];

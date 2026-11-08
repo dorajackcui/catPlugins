@@ -8,13 +8,22 @@ const GIENTRANS_BRACE_TAG_TOKEN_PATTERN = /\{\d+\}/g;
 const GIENTRANS_BRACE_TAG_TOKEN_AT_PATTERN = /\{\d+\}/y;
 const GIENTRANS_NEWLINE_TAG_TOKEN_PATTERN = /\\n/g;
 const GIENTRANS_XML_OPEN_TAG_PATTERN = /^<([A-Za-z][\w-]*)(=[^<>]+)>$/;
-const GIENTRANS_XML_BARE_OPEN_TAG_PATTERN = /^<([A-Za-z][\w-]*)>$/;
 const GIENTRANS_XML_CLOSE_TAG_PATTERN = /^<\/([A-Za-z][\w-]*)>$/;
 const GIENTRANS_KNOWN_XML_TAG_NAMES = new Set(['color', 'size']);
 const GIENTRANS_PH_WRAPPER_PATTERN = /^(?:❮|<)ph\b[\s\S]*\/(?:❯|>)$/;
-const GIENTRANS_PH_EQUIV_TEXT_PATTERN =
-  /\bequiv-text\s*=\s*(?:"([^"]*)"|'([^']*)')/;
+const GIENTRANS_WRAPPER_ATTRIBUTE_PATTERN =
+  /\s+([^\s="'<>❮❯/]+)\s*=\s*(?:"(❰[^❰❱]*❱|[^"]*)"|'(❰[^❰❱]*❱|[^']*)')/g;
 const GIENTRANS_NESTED_TAG_PATTERN = /❰([^❰❱]+)❱/g;
+
+// Read one whole game tag, including quoted attribute values containing '>'.
+// Keep names and values case-sensitive so different actions cannot share a chip.
+const xmlName = String.raw`[A-Za-z_][\w.:-]*`;
+const xmlValue = String.raw`(?:"[^"]*"|'[^']*'|[^\s<>"'=]+)`;
+const xmlAttribute = String.raw`\s+${xmlName}(?:\s*=\s*${xmlValue})?`;
+const xmlTagAt = new RegExp(
+  String.raw`<(?:/(?:${xmlName})?\s*|${xmlName}(?:=[^<>]+|(?:${xmlAttribute})*)\s*/?)>`,
+  'y'
+);
 
 export interface GientTransMarkupToken {
   raw: string;
@@ -22,7 +31,14 @@ export interface GientTransMarkupToken {
   endIndex: number;
 }
 
-export function normalizeGientTransInlineMarkup(value: string): string {
+export function normalizeGientTransEditorMarkup(value: string): string {
+  return normalizeGientTransInlineMarkup(value, { allowGenericXmlTags: true });
+}
+
+export function normalizeGientTransInlineMarkup(
+  value: string,
+  options?: { allowGenericXmlTags?: boolean }
+): string {
   let normalized = '';
   const openXmlTagNames: string[] = [];
 
@@ -41,7 +57,9 @@ export function normalizeGientTransInlineMarkup(value: string): string {
       continue;
     }
 
-    const xmlToken = findGientTransXmlTagTokenAt(value, index, openXmlTagNames);
+    const xmlToken = options?.allowGenericXmlTags
+      ? findEditorXmlTagAt(value, index)
+      : findGientTransXmlTagTokenAt(value, index, openXmlTagNames);
     if (xmlToken) {
       normalized += xmlToken.canonical;
       index = xmlToken.endIndex - 1;
@@ -69,55 +87,77 @@ export function stripGientTransInlineMarkup(value: string): string {
   );
 }
 
-export function findGientTransMarkupTokenAt(
-  value: string,
-  index: number
-): GientTransMarkupToken | null {
-  return (
-    findGientTransDefaultTagTokenAt(value, index) ??
-    findGientTransBraceTagTokenAt(value, index) ??
-    findGientTransXmlTagTokenAt(value, index, undefined, { allowGenericXmlTags: true }) ??
-    findGientTransNewlineTagTokenAt(value, index)
-  );
+// Match literal row-local spellings left to right. Longer spellings win when
+// they start at the same position, and a matched span is never scanned again.
+export function* matchGientTransSourceTags(value: string, sourceTokens: Iterable<string>) {
+  const spellings = new Map<string, string>();
+  for (const token of sourceTokens) {
+    if (!token) continue;
+    spellings.set(token, token);
+    if (token.startsWith('❮') && token.endsWith('❯')) {
+      const excel = `<${token.slice(1, -1)}>`;
+      if (gientransXmlTagToDefaultToken(excel) === token && !spellings.has(excel)) {
+        spellings.set(excel, token);
+      }
+    }
+  }
+  if (!spellings.size) return;
+
+  const byFirstChar = new Map<string, string[]>();
+  for (const spelling of [...spellings.keys()].sort((a, b) => b.length - a.length)) {
+    const candidates = byFirstChar.get(spelling[0]) ?? [];
+    candidates.push(spelling);
+    byFirstChar.set(spelling[0], candidates);
+  }
+  for (let index = 0; index < value.length;) {
+    const raw = byFirstChar.get(value[index])?.find(s => value.startsWith(s, index));
+    if (raw) {
+      const end = index + raw.length;
+      yield { start: index, end, token: spellings.get(raw)! };
+      index = end;
+    } else {
+      index += 1;
+    }
+  }
 }
 
 export function gientransXmlTagToDefaultToken(raw: string): string | null {
-  const openTag = raw.match(GIENTRANS_XML_OPEN_TAG_PATTERN);
-  if (openTag) {
-    return `❮${openTag[1]}${openTag[2]}❯`;
-  }
+  const token = findEditorXmlTagAt(raw, 0);
+  return token?.endIndex === raw.length ? token.canonical : null;
+}
 
-  const bareOpenTag = raw.match(GIENTRANS_XML_BARE_OPEN_TAG_PATTERN);
-  if (bareOpenTag) {
-    return `❮${bareOpenTag[1]}❯`;
+function findEditorXmlTagAt(value: string, index: number): GientTransMarkupToken | null {
+  xmlTagAt.lastIndex = index;
+  const match = xmlTagAt.exec(value);
+  if (!match) {
+    return null;
   }
+  const raw = match[0];
+  return { raw, canonical: `❮${raw.slice(1, -1)}❯`, endIndex: index + raw.length };
+}
 
-  const closeTag = raw.match(GIENTRANS_XML_CLOSE_TAG_PATTERN);
-  if (closeTag) {
-    return `❮/${closeTag[1]}❯`;
+export function readGientTransWrappedEquivText(token: string): string | null {
+  for (const [, name, doubleQuoted, singleQuoted] of token.matchAll(GIENTRANS_WRAPPER_ATTRIBUTE_PATTERN)) {
+    if (name === 'equiv-text') {
+      return decodeGientTransAttributeValue(doubleQuoted ?? singleQuoted);
+    }
   }
-
   return null;
 }
 
+export function normalizeGientTransEquivText(value: string): string {
+  const excel = value.replace(GIENTRANS_NESTED_TAG_PATTERN, '<$1>');
+  return gientransXmlTagToDefaultToken(excel) ?? excel;
+}
+
 export function normalizeGientTransDomTagToken(token: string): string {
-  if (!GIENTRANS_PH_WRAPPER_PATTERN.test(token)) {
-    return token;
-  }
+  const equiv = GIENTRANS_PH_WRAPPER_PATTERN.test(token) ? readGientTransWrappedEquivText(token) : null;
+  return equiv === null ? gientransXmlTagToDefaultToken(token) ?? token : normalizeGientTransEquivText(equiv);
+}
 
-  const equivTextMatch = token.match(GIENTRANS_PH_EQUIV_TEXT_PATTERN);
-  const encodedEquivText = equivTextMatch?.[1] ?? equivTextMatch?.[2];
-  if (encodedEquivText === undefined) {
-    return token;
-  }
-
-  const equivText = decodeGientTransAttributeValue(encodedEquivText).replace(
-    GIENTRANS_NESTED_TAG_PATTERN,
-    '❮$1❯'
-  );
-  const xmlToken = gientransXmlTagToDefaultToken(equivText);
-
-  return xmlToken ?? equivText;
+export function isLegacyGientTransTag(token: string): boolean {
+  return /^(?:❮[^❮❯]+❯|\{\d+\}|\[[^\[\]\r\n]+\]|\\n)$/.test(token) ||
+    gientransXmlTagToDefaultToken(token) !== null;
 }
 
 function decodeGientTransAttributeValue(value: string): string {
@@ -187,8 +227,7 @@ function findGientTransBraceTagTokenAt(
 function findGientTransXmlTagTokenAt(
   value: string,
   index: number,
-  openXmlTagNames?: string[],
-  options?: { allowGenericXmlTags?: boolean }
+  openXmlTagNames: string[]
 ): GientTransMarkupToken | null {
   if (value[index] !== '<') {
     return null;
@@ -202,19 +241,10 @@ function findGientTransXmlTagTokenAt(
   const raw = value.slice(index, closingIndex + 1);
   const openTag = raw.match(GIENTRANS_XML_OPEN_TAG_PATTERN);
   if (openTag) {
-    openXmlTagNames?.push(openTag[1]);
+    openXmlTagNames.push(openTag[1]);
     return {
       raw,
       canonical: `❮${openTag[1]}${openTag[2]}❯`,
-      endIndex: closingIndex + 1
-    };
-  }
-
-  const bareOpenTag = raw.match(GIENTRANS_XML_BARE_OPEN_TAG_PATTERN);
-  if (bareOpenTag && options?.allowGenericXmlTags) {
-    return {
-      raw,
-      canonical: `❮${bareOpenTag[1]}❯`,
       endIndex: closingIndex + 1
     };
   }
@@ -225,37 +255,21 @@ function findGientTransXmlTagTokenAt(
   }
 
   const closeTagName = closeTag[1];
-  const matchingOpenIndex = openXmlTagNames?.lastIndexOf(closeTagName) ?? -1;
+  const matchingOpenIndex = openXmlTagNames.lastIndexOf(closeTagName);
   if (
     matchingOpenIndex === -1 &&
-    !GIENTRANS_KNOWN_XML_TAG_NAMES.has(closeTagName) &&
-    !options?.allowGenericXmlTags
+    !GIENTRANS_KNOWN_XML_TAG_NAMES.has(closeTagName)
   ) {
     return null;
   }
 
   if (matchingOpenIndex !== -1) {
-    openXmlTagNames?.splice(matchingOpenIndex, 1);
+    openXmlTagNames.splice(matchingOpenIndex, 1);
   }
 
   return {
     raw,
     canonical: `❮/${closeTagName}❯`,
     endIndex: closingIndex + 1
-  };
-}
-
-function findGientTransNewlineTagTokenAt(
-  value: string,
-  index: number
-): GientTransMarkupToken | null {
-  if (value[index] !== '\\' || value[index + 1] !== 'n') {
-    return null;
-  }
-
-  return {
-    raw: GIENTRANS_NEWLINE_TAG_TOKEN,
-    canonical: GIENTRANS_NEWLINE_TAG_TOKEN,
-    endIndex: index + GIENTRANS_NEWLINE_TAG_TOKEN.length
   };
 }

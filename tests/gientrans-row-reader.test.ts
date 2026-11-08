@@ -62,12 +62,11 @@ test('GientTransRowReader re-resolves a target and reads source tag HTML from it
     '<span class="tagspan" data-id="150"><input type="tag"></span>';
   const makeTagContainer = (token: string, outerHTML: string) => ({
     outerHTML,
-    querySelector: () => ({
-      value: 'ph',
-      getAttribute(name: string) {
-        return name === 'tfull' ? token : null;
-      }
-    })
+    closest: () => ({ outerHTML }),
+    value: 'ph',
+    getAttribute(name: string) {
+      return name === 'tfull' ? token : null;
+    }
   });
   const source = {
     querySelectorAll: () => [
@@ -100,7 +99,7 @@ test('GientTransRowReader re-resolves a target and reads source tag HTML from it
       currentTarget as never
     );
     assert.deepEqual(
-      reader.collectSourceTagHtmlByToken(currentTarget as never),
+      reader.collectSourceTagHtmlByToken(currentTarget as never).tagHtmlByToken,
       new Map([
         ['❮color=#FFA500❯', [firstTagHtml, secondTagHtml]]
       ])

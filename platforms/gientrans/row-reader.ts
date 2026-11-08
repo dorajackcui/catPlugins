@@ -92,7 +92,7 @@ export class GientTransRowReader {
     );
   }
 
-  collectSourceTagHtmlByToken(target: HTMLElement): Map<string, string[]> {
+  collectSourceTagHtmlByToken(target: HTMLElement) {
     const row = target.closest<HTMLElement>(GIENTRANS_ROW_SELECTOR);
     const source =
       row?.querySelector<HTMLElement>(GIENTRANS_SOURCE_SELECTOR) ?? null;
@@ -114,7 +114,8 @@ export class GientTransRowReader {
       return null;
     }
 
-    const sourceRaw = readGientTransEditorText(sourceElement);
+    const sourceTagTokens = new Set<string>();
+    const sourceRaw = readGientTransEditorText(sourceElement, sourceTagTokens);
     const sourceNormalized = normalizeText(sourceRaw);
     if (!sourceNormalized) {
       return null;
@@ -143,7 +144,7 @@ export class GientTransRowReader {
       occurrenceIndex: 0,
       targetRaw,
       isEmptyTarget: normalizeText(targetRaw) === '',
-      placeholderTokens: extractPlaceholderTokens(sourceRaw),
+      placeholderTokens: extractPlaceholderTokens(sourceRaw, 'gientrans', [...sourceTagTokens]),
       targetElement,
       platform: 'gientrans',
       scanElement: row,
