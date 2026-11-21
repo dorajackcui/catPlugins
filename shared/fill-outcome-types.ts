@@ -15,12 +15,15 @@ export interface MemoqVisibleRowSnapshot {
   target: string;
 }
 
-export interface MemoqFillDiagnosticBase {
+export interface MemoqFillTrace {
   runId: string;
   sequence: number;
   scanPass: number;
   scrollTop: number;
   scrollMode: 'native' | 'synthetic';
+}
+
+export interface MemoqFillDiagnosticBase extends MemoqFillTrace {
   profileId?: 'legacy-webtrans' | 'modern-editor';
   domId: string;
   rowNumber?: string;

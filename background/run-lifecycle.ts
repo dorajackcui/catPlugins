@@ -1,7 +1,6 @@
 import {
   createFinishedRunState,
   createRunningRunState,
-  DEFAULT_RUN_STATE,
   normalizeRunState,
   type CreateFinishedRunStateOptions
 } from '../domain/run-state.ts';
@@ -55,10 +54,8 @@ export class BackgroundRunLifecycle {
     options: CreateFinishedRunStateOptions
   ): Promise<void> {
     const latestState = await this.port.readRuntimeState();
-    const currentRunState =
-      latestState.runState.runId === runId
-        ? latestState.runState
-        : DEFAULT_RUN_STATE;
+    const currentRunState = latestState.runState;
+    if (currentRunState.runId !== runId) return;
 
     await this.port.writeRuntimeState({
       runState: createFinishedRunState(currentRunState, options)

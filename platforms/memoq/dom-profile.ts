@@ -15,6 +15,10 @@ export const MEMOQ_DOM_PROFILES: readonly MemoqDomProfile[] = [
   legacyWebtransMemoqProfile
 ];
 
+export function supportsWebTransInput(profile: MemoqDomProfile, root: Document = document): boolean {
+  return profile.id === 'legacy-webtrans' && !!(root.getElementById('editorHiddenInput') || root.getElementById('gridBtnLongInlineTag'));
+}
+
 export function selectMemoqDomProfile(root: ParentNode = document): MemoqDomProfile | null {
   const matches = MEMOQ_DOM_PROFILES.filter((profile) => profile.matches(root));
 

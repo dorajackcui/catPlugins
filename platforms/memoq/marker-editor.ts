@@ -4,7 +4,8 @@ import {
   writeTrustedTextToElement
 } from '../../content/trusted-text-writer.ts';
 import type { MemoqDomProfile } from './dom-profile-types.ts';
-import type { MemoqMarkerEditorPort } from './marker-fill-executor.ts';
+import { findMemoqCaretPoint } from './marker-caret.ts';
+import { buildAbsoluteCursorOperations, type MemoqMarkerEditorPort } from './marker-fill-executor.ts';
 import { escapeMemoqPlainTargetText, serializeMemoqContentExact } from './text.ts';
 
 interface MemoqMarkerEditorOptions {
@@ -48,14 +49,21 @@ export function createMemoqMarkerEditor({
         ...resolveOptions(resolveWriteTarget)
       }
     ),
-    runInput: async (_target, operations) => {
+    runInput: async (_target, action, position) => {
       const content = resolveInputTarget();
       if (!content) {
         throw new Error('The memoQ marker input target could not be re-resolved.');
       }
+      const operations = position
+        ? buildAbsoluteCursorOperations(position.cursorOffset, action)
+        : [action];
       await writeTrustedInputSequenceToElement(content, operations, {
         settleMs: 20,
         focusPosition: 'text-start',
+        directInput: position && {
+          locate: (current) => findMemoqCaretPoint(current, position.expectedValue, position.textOffset),
+          operations: [action]
+        },
         ...resolveOptions(resolveInputTarget)
       });
     }

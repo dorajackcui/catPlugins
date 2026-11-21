@@ -82,6 +82,11 @@ export interface DebuggerWriteTextRequest {
   };
 }
 
+export interface MemoqDebuggerInsertFocusedTextRequest {
+  type: 'MEMOQ_DEBUGGER_INSERT_FOCUSED_TEXT';
+  payload: { text: string };
+}
+
 export type DebuggerInputOperation =
   | {
       type: 'text';
@@ -136,6 +141,7 @@ export type BackgroundRequest =
   | ReportRunProgressRequest
   | MemoqDebuggerPrepareRequest
   | MemoqDebuggerWriteTextRequest
+  | MemoqDebuggerInsertFocusedTextRequest
   | DebuggerWriteTextRequest
   | DebuggerInputSequenceRequest;
 
@@ -145,6 +151,7 @@ export interface ContentScanRequest {
     editorPlatform: EditorPlatform;
     runId: string;
     scanFromTop?: boolean;
+    readOriginalTags?: boolean;
     maxPasses?: number;
     maxSegments?: number;
   };
@@ -171,6 +178,7 @@ export interface ContentStopRequest {
 export type ContentRequest =
   | ContentScanRequest
   | ContentFillRequest
+  | { type: 'CONTENT_PING' }
   | ContentStopRequest;
 
 export type ApiResponse<T> =

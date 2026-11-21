@@ -21,12 +21,14 @@ function resolveColumnMapping(rows: IndexedRow[]): {
   targetIndex: number;
   rowNumberIndex: number;
   occurrenceIndexIndex: number;
+  originalSourceIndex: number;
   dataRows: IndexedRow[];
 } {
   const [headerRow] = rows;
   const headers = headerRow?.values ?? [];
   const sourceIndex = headers.findIndex((cell) => normalizeHeader(cell) === 'source');
   const targetIndex = headers.findIndex((cell) => normalizeHeader(cell) === 'target');
+  const originalSourceIndex = headers.findIndex((cell) => normalizeHeader(cell) === 'originalsource');
   const rowNumberIndex = headers.findIndex((cell) =>
     ['rownumber', 'row', 'segmentnumber', 'segment'].includes(normalizeHeader(cell))
   );
@@ -40,6 +42,7 @@ function resolveColumnMapping(rows: IndexedRow[]): {
       targetIndex,
       rowNumberIndex,
       occurrenceIndexIndex,
+      originalSourceIndex,
       dataRows: rows.slice(1)
     };
   }
@@ -49,6 +52,7 @@ function resolveColumnMapping(rows: IndexedRow[]): {
     targetIndex: 1,
     rowNumberIndex: -1,
     occurrenceIndexIndex: -1,
+    originalSourceIndex: -1,
     dataRows: rows
   };
 }
@@ -102,14 +106,18 @@ export function parseExcelBuffer(
     targetIndex,
     rowNumberIndex,
     occurrenceIndexIndex,
+    originalSourceIndex,
     dataRows
   } = resolveColumnMapping(visibleRows);
   const occurrences = new Map<string, number>();
   const entries: TranslationEntry[] = [];
+  const numberedExport = rowNumberIndex >= 0 && occurrenceIndexIndex >= 0;
+  const readCellText = numberedExport ? toText : toRawCellText;
 
   dataRows.forEach(({ rowNumber: excelRowIndex, values }) => {
-    const sourceRaw = toRawCellText(values[sourceIndex]);
-    const targetRaw = toRawCellText(values[targetIndex]);
+    const sourceRaw = readCellText(values[sourceIndex]);
+    const targetRaw = readCellText(values[targetIndex]);
+    const originalSource = originalSourceIndex >= 0 ? toText(values[originalSourceIndex]) : '';
     const exportedRowNumber =
       rowNumberIndex >= 0
         ? normalizeRowNumber(values[rowNumberIndex])
@@ -130,6 +138,8 @@ export function parseExcelBuffer(
     entries.push({
       rowIndex: excelRowIndex,
       rowNumber: exportedRowNumber,
+      ...(exportedRowNumber && numberedExport ? { matchMemoqRowOnly: true } : {}),
+      ...(originalSource ? { originalSource } : {}),
       sourceRaw,
       sourceNormalized,
       targetRaw,
@@ -150,13 +160,15 @@ export function parseExcelBuffer(
 
 export function buildSourceExportWorkbook(segments: PageSegment[]): Uint8Array {
   const workbook = xlsxUtils.book_new();
+  const includeOriginal = segments.some(segment => segment.platform === 'memoq' && segment.originalSource !== undefined);
   const rows: Array<Array<string | number>> = [
-    ['rowNumber', 'source', 'target', 'occurrenceIndex'],
+    ['rowNumber', 'source', 'target', 'occurrenceIndex', ...(includeOriginal ? ['originalSource'] : [])],
     ...segments.map((segment) => [
       segment.rowNumber ?? '',
       segment.sourceRaw,
       segment.targetRaw,
-      segment.occurrenceIndex
+      segment.occurrenceIndex,
+      ...(includeOriginal ? [segment.originalSource ?? ''] : [])
     ])
   ];
   const worksheet = xlsxUtils.aoa_to_sheet(rows);
@@ -168,7 +180,8 @@ export function buildSourceExportWorkbook(segments: PageSegment[]): Uint8Array {
     { wch: 12 },
     { wch: 60 },
     { wch: 60 },
-    { wch: 16 }
+    { wch: 16 },
+    ...(includeOriginal ? [{ wch: 72 }] : [])
   ];
   xlsxUtils.book_append_sheet(workbook, worksheet, 'Sources');
 

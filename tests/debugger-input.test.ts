@@ -86,6 +86,13 @@ async function flushPromises(): Promise<void> {
   await Promise.resolve();
 }
 
+test('DebuggerInputController submits a whole translation to the focused input without a second click', async () => {
+  const harness = createHarness();
+  const text = 'Dans le <1>Berceau<2> <3><4><2>.';
+  await harness.controller.insertFocusedText(11, text);
+  assert.deepEqual(harness.commands, [{ tabId: 11, method: 'Input.insertText', params: { text } }]);
+});
+
 test('DebuggerInputController serializes concurrent preparation and attaches once', async () => {
   const harness = createHarness();
 

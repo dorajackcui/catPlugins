@@ -4,6 +4,7 @@ import test from 'node:test';
 import { read, utils as xlsxUtils, write } from 'xlsx';
 
 import { buildSourceExportWorkbook, parseExcelBuffer } from '../background/excel.ts';
+import { buildPreview } from '../domain/matcher.ts';
 
 test('parseExcelBuffer falls back to the first two columns when no source/target header is found', () => {
   const workbook = xlsxUtils.book_new();
@@ -162,4 +163,24 @@ test('buildSourceExportWorkbook preserves normalized GientTrans placeholders', (
     ['rowNumber', 'source', 'target', 'occurrenceIndex'],
     ['19', '{0}看呆了，急忙上前想要抢下一颗苹果。', '', 1]
   ]);
+});
+
+test('a translated filtered memoQ export stays on its segment number and native source', () => {
+  const segment = {
+    domId: '822', rowNumber: '822', sourceRaw: 'In <1>Cradle<2>.', sourceNormalized: 'In <1>Cradle<2>.',
+    originalSource: 'In <b>Cradle</b>.', occurrenceIndex: 1, targetRaw: '', isEmptyTarget: true,
+    placeholderTokens: ['<1>', '<2>'], platform: 'memoq' as const
+  };
+  const file = read(buildSourceExportWorkbook([segment]), { type: 'array' });
+  const rows = xlsxUtils.sheet_to_json<unknown[]>(file.Sheets.Sources, { header: 1, defval: '' });
+  assert.equal(rows[1]?.[4], segment.originalSource);
+  rows[1][2] = 'Dans <b>Berceau</b>.';
+  file.Sheets.Sources = xlsxUtils.aoa_to_sheet(rows);
+  const {entries} = parseExcelBuffer(write(file, { type: 'array', bookType: 'xlsx' }), 'translated.xlsx');
+  const options = { autoStopAfterFilledCount: null, validatePlaceholders: true };
+  const preview = buildPreview(entries, [
+    { ...segment, rowNumber: '777' }, { ...segment, originalSource: undefined, occurrenceIndex: 4 },
+    { ...segment, sourceRaw: 'In <9>Cradle<2>.', sourceNormalized: 'In <9>Cradle<2>.' }
+  ], options);
+  assert.deepEqual(preview.items.map(item => item.status), ['unmatched', 'ready', 'unmatched']);
 });

@@ -19,6 +19,10 @@ export type TrustedInputSequenceOptions = Omit<
   'requestType'
 > & {
   focusPosition?: 'center' | 'text-start';
+  directInput?: {
+    locate(element: HTMLElement): { x: number; y: number } | null;
+    operations: DebuggerInputOperation[];
+  };
 };
 
 type TrustedTextWriteRequest = Extract<BackgroundRequest, { type: TrustedTextWriteRequestType }>;
@@ -141,12 +145,13 @@ export async function writeTrustedInputSequenceToElement(
   const measureTarget = await resolveTarget(scrollTarget);
   const rect = measureTarget.getBoundingClientRect();
   const focusPosition = options.focusPosition ?? 'center';
-  const x = focusPosition === 'text-start'
+  const directPoint = options.directInput?.locate(measureTarget);
+  const x = directPoint?.x ?? (focusPosition === 'text-start'
     ? rect.left + Math.min(1, rect.width / 2)
-    : rect.left + rect.width / 2;
-  const y = focusPosition === 'text-start'
+    : rect.left + rect.width / 2);
+  const y = directPoint?.y ?? (focusPosition === 'text-start'
     ? rect.top + Math.min(7, rect.height / 2)
-    : rect.top + rect.height / 2;
+    : rect.top + rect.height / 2);
 
   if (!Number.isFinite(x) || !Number.isFinite(y) || rect.width <= 0 || rect.height <= 0) {
     throw new Error('Trusted input sequence target element is not visible enough to write.');
@@ -160,7 +165,7 @@ export async function writeTrustedInputSequenceToElement(
     payload: {
       x,
       y,
-      operations
+      operations: directPoint && options.directInput ? options.directInput.operations : operations
     }
   });
 

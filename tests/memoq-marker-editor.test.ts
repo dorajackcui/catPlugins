@@ -5,7 +5,7 @@ import type { RuntimeSegment } from '../content/types.ts';
 import type { BackgroundRequest } from '../shared/message-types.ts';
 import type { MemoqDomProfile } from '../platforms/memoq/dom-profile-types.ts';
 import { createMemoqMarkerEditor } from '../platforms/memoq/marker-editor.ts';
-import { fakeElement } from './memoq-test-dom.ts';
+import { appendChild, fakeElement, fakeText, type FakeElement } from './memoq-test-dom.ts';
 
 function makeCell(left: number) {
   const content = fakeElement({
@@ -85,7 +85,7 @@ test('memoQ marker editor re-resolves targets and escapes literal placeholders o
     assert.equal(harness.editor.readCurrentValue(), '${1}  \u00A0<7>');
     harness.replace();
     await harness.editor.writeText(harness.stale.writeTarget, '${1}  \u00A0\uE000');
-    await harness.editor.runInput(harness.stale.writeTarget, [{ type: 'key', key: 'F9' }]);
+    await harness.editor.runInput(harness.stale.writeTarget, { type: 'key', key: 'F9' });
 
     assert.deepEqual(harness.messages, [
       { type: 'MEMOQ_DEBUGGER_WRITE_TEXT', payload: { x: 360, y: 40, text: '${{1}  \u00A0\uE000' } },
@@ -105,7 +105,7 @@ test('memoQ marker editor never writes to a stale numbered row after it disappea
     let failures = 0;
     for (const action of [
       () => harness.editor.writeText(harness.stale.writeTarget, 'Text'),
-      () => harness.editor.runInput(harness.stale.writeTarget, [{ type: 'key' as const, key: 'F9' as const }])
+      () => harness.editor.runInput(harness.stale.writeTarget, { type: 'key', key: 'F9' })
     ]) {
       try { await action(); } catch { failures += 1; }
     }
@@ -125,6 +125,76 @@ test('memoQ marker editor retains the segment target when a row number is unavai
     assert.deepEqual(harness.messages, [
       { type: 'MEMOQ_DEBUGGER_WRITE_TEXT', payload: { x: 160, y: 40, text: 'Text' } }
     ]);
+  } finally {
+    harness.restore();
+  }
+});
+
+test('memoQ marker editor uses a verified caret on the re-resolved row or navigates from its start', async () => {
+  const harness = createHarness();
+  try {
+    const { content } = harness.current;
+    const suffix = '👩‍🚀A\uE000Z';
+    const node = fakeText(suffix);
+    appendChild(content as unknown as FakeElement, node);
+    Object.defineProperty(node, 'length', { value: suffix.length });
+    const offset = suffix.indexOf('\uE000');
+    const rect = { left: 345, top: 14, height: 12 };
+    const range = {
+      setStart(candidate: Text, index: number) {
+        assert.equal(candidate, node);
+        assert.equal(index, offset);
+      },
+      collapse() {},
+      getBoundingClientRect: () => rect
+    };
+    let hitOffset = offset;
+    Object.defineProperty(content, 'contains', { value: (hit: Element) => hit === content });
+    Object.defineProperty(content, 'ownerDocument', { value: {
+      createRange: () => range,
+      elementFromPoint: () => content,
+      caretPositionFromPoint: () => ({ offsetNode: node, offset: hitOffset })
+    } });
+
+    // Virtualization replaces the cell during the scroll/settle before dispatch.
+    globalThis.window.setTimeout = ((callback: () => void) => {
+      harness.replace();
+      callback();
+      return 0;
+    }) as typeof window.setTimeout;
+    const prefix = '${1}  \u00A0<7>';
+    const position = { expectedValue: prefix + suffix, textOffset: prefix.length + offset, cursorOffset: 10 };
+    const action = { type: 'deleteForward' } as const;
+    await harness.editor.runInput(harness.stale.writeTarget, action, position);
+    assert.deepEqual(harness.messages[0], {
+      type: 'DEBUGGER_INPUT_SEQUENCE',
+      payload: { x: 346, y: 20, operations: [action] }
+    });
+
+    hitOffset = offset + 1;
+    await harness.editor.runInput(harness.current.writeTarget, action, position);
+    assert.deepEqual(harness.messages[1], {
+      type: 'DEBUGGER_INPUT_SEQUENCE',
+      payload: { x: 301, y: 17, operations: [{ type: 'moveLeft', count: 1 }, { type: 'moveRight', count: 10 }, action] }
+    });
+  } finally {
+    harness.restore();
+  }
+});
+
+test('memoQ marker editor declines to send keys if the re-resolved content changed', async () => {
+  const harness = createHarness();
+  try {
+    let error: unknown;
+    try {
+      await harness.editor.runInput(harness.stale.writeTarget, { type: 'key', key: 'F9' }, {
+        expectedValue: 'A different target', textOffset: 0, cursorOffset: 0
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    assert.equal(error instanceof Error && error.message.includes('target changed'), true);
+    assert.deepEqual(harness.messages, []);
   } finally {
     harness.restore();
   }

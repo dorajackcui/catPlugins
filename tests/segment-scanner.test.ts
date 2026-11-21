@@ -302,6 +302,57 @@ test('SegmentScanner stops synthetic traversal after repeated snapshots', async 
   assert.deepEqual(harness.delays, [160, 80, 160, 80, 160]);
 });
 
+test('a recycled memoQ row with identical text is exported once for each distinct segment number', async () => {
+  const recycled = {} as Element;
+  const snapshots = ['814', '822', '835', '835'].map(rowNumber => [{
+    ...makeSegment(rowNumber),
+    platform: 'memoq' as const, rowNumber, scanElement: recycled, scanFingerprint: 'same source::'
+  }]);
+  const harness = createHarness({ snapshots, mode: 'synthetic', isMemoqActive: true,
+    isAtBottom: pass => pass === snapshots.length });
+  const all = await harness.scanner.collect(undefined, { scanFromTop: true });
+  assert.deepEqual(all.map(s => [s.rowNumber, s.occurrenceIndex]), [['814', 1], ['822', 2], ['835', 3]]);
+});
+
+test('a real scrollbar can advance through several screens of a single tall webTrans row', async () => {
+  const tall = makeSegment('814');
+  const last = makeSegment('910', 'last source');
+  const snapshots = [[tall], [tall], [tall], [tall], [tall], [tall, last]];
+  const harness = createHarness({ snapshots, mode: 'synthetic', isMemoqActive: true,
+    isAtBottom: pass => pass === snapshots.length });
+  Object.assign(harness.scrollContext, { hasVerifiedScrollBounds: true });
+  const segments = await harness.scanner.collect(undefined, { requireComplete: true, maxSegments: 2 });
+  assert.deepEqual(segments.map(segment => segment.domId), ['814', '910']);
+  assert.equal(harness.scrollContext.restoreCalls, 1);
+});
+
+test('a verified export refuses an incomplete final screen or an unread final page', async () => {
+  const rows = [makeSegment('814'), makeSegment('822')];
+  const harness = createHarness({ snapshots: [rows], mode: 'synthetic' });
+  Object.assign(harness.scrollContext, { hasVerifiedScrollBounds: true });
+  assert.equal(await harness.scanner.collect(undefined, { requireComplete: true, maxSegments: 1 })
+    .catch(error => error.message), 'The memoQ export exceeds the segment limit (1). Narrow the filter and export again.');
+  const stillScrolling = createHarness({ snapshots: [rows], mode: 'synthetic', isAtBottom: () => false });
+  Object.assign(stillScrolling.scrollContext, { hasVerifiedScrollBounds: true });
+  assert.equal(await stillScrolling.scanner.collect(undefined, { requireComplete: true, maxPasses: 1 })
+    .catch(error => error.message), 'The memoQ export reached the scan pass limit (1) before the end. Narrow the filter and export again.');
+  assert.equal(harness.scrollContext.restoreCalls, 1);
+  assert.equal(stillScrolling.scrollContext.restoreCalls, 1);
+});
+
+test('a verified export cannot skip a visible numbered row dropped by the cell reader', async () => {
+  const segment = { ...makeSegment('172'), rowNumber: '172' };
+  const harness = createHarness({ snapshots: [[segment]], mode: 'synthetic' });
+  Object.assign(harness.scrollContext, {
+    hasVerifiedScrollBounds: true,
+    readExportRowNumbers: async () => ['172', '173']
+  });
+  assert.equal(await harness.scanner.collect(undefined, { requireComplete: true }).catch(error => error.message),
+    'The memoQ export could not read row 173. No workbook was created.');
+  assert.equal(harness.scrollContext.restoreCalls, 1);
+  assert.deepEqual((await harness.scanner.collect()).map(r => r.rowNumber), ['172']);
+});
+
 test('normalizeSegmentScanLimit preserves the existing positive-integer rules', () => {
   assert.equal(normalizeSegmentScanLimit(undefined, 160), 160);
   assert.equal(normalizeSegmentScanLimit(0.5, 160), 160);

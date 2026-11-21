@@ -107,6 +107,7 @@ function createHarness(options: {
     y: number;
     operations: unknown[];
   }> = [];
+  const focusedWrites: Array<{ tabId: number; text: string }> = [];
   const prepareCalls: number[] = [];
   const infoLogs: Array<{
     message: string;
@@ -121,6 +122,7 @@ function createHarness(options: {
       async writeText(tabId, x, y, text) {
         writeTextCalls.push({ tabId, x, y, text });
       },
+      async insertFocusedText(tabId, text) { focusedWrites.push({ tabId, text }); },
       async runSequence(tabId, x, y, operations) {
         sequenceCalls.push({ tabId, x, y, operations });
       },
@@ -151,7 +153,9 @@ function createHarness(options: {
       if (!responses.length) {
         throw new Error('No scripted tab response.');
       }
-      return responses.shift() as TResponse;
+      const response = responses.shift();
+      if (response instanceof Error) throw response;
+      return response as TResponse;
     },
     async readRuntimeState() {
       events.push('read-state');
@@ -183,6 +187,7 @@ function createHarness(options: {
     keepAliveCalls,
     writeTextCalls,
     sequenceCalls,
+    focusedWrites,
     prepareCalls,
     infoLogs,
     getState: () => state
@@ -221,6 +226,33 @@ test('BackgroundRequestHandler returns popup state without exposing translations
     fillOptions: state.fillOptions,
     runState: state.runState
   });
+});
+
+test('a reloaded editor releases a stopping Fill without losing its count', async () => {
+  const state = makeRuntimeState();
+  state.runState = { ...DEFAULT_RUN_STATE, phase: 'stopping', kind: 'fill', runId: 'old',
+    tabId: 42, frameId: 3, filledCount: 68, scannedCount: 69 };
+  const harness = createHarness({ state, responses: [
+    new Error('Could not establish connection. Receiving end does not exist.')
+  ] });
+  await harness.handler.handle({ type: 'GET_STATE' });
+  assert.deepEqual(harness.tabMessages, [{ tabId: 42, message: { type: 'CONTENT_PING' }, options: { frameId: 3 } }]);
+  const run = harness.getState().runState;
+  assert.equal(run.phase, 'idle');
+  assert.equal(run.filledCount, 68);
+  assert.equal(run.scannedCount, 69);
+});
+
+test('a responding frame or an inconclusive messaging error leaves a stopping Fill pending', async () => {
+  const state = makeRuntimeState();
+  state.runState = { ...DEFAULT_RUN_STATE, phase: 'stopping', kind: 'fill', runId: 'pending', tabId: 42 };
+  const harness = createHarness({ state, responses: [
+    { ok: true, data: null }, new Error('Message channel closed before a response was received.')
+  ] });
+  await harness.handler.handle({ type: 'GET_STATE' });
+  await harness.handler.handle({ type: 'GET_STATE' });
+  assert.equal(harness.getState().runState.phase, 'stopping');
+  assert.equal(harness.writes.length, 0);
 });
 
 test('BackgroundRequestHandler persists platform changes and clears the previous preview', async () => {
@@ -305,6 +337,36 @@ test('BackgroundRequestHandler runs Preview in the detected Phrase editor frame'
   );
 });
 
+test('only memoQ Export requests long labels from the editor', async () => {
+  const entry = { ...ENTRY, sourceRaw: 'Source <1>', sourceNormalized: 'Source <1>', targetRaw: 'Texte {token}' };
+  for (const request of [{ type: 'RUN_PREVIEW' }, { type: 'EXPORT_SOURCES' }] as const) {
+    const harness = createHarness({
+      state: makeRuntimeState({ editorPlatform: 'memoq', translationEntries: [entry] }),
+      responses: [{ ok: true, data: [{ ...SEGMENT, platform: 'memoq' }] }]
+    });
+    const result = await harness.handler.handle(request);
+    assert.equal(result.ok, true);
+    const scan = harness.tabMessages[0].message as Extract<ContentRequest, { type: 'CONTENT_SCAN' }>;
+    assert.equal(scan.type, 'CONTENT_SCAN');
+    assert.equal(scan.payload.readOriginalTags, request.type === 'EXPORT_SOURCES' ? true : undefined);
+  }
+});
+
+test('webTrans sends its scan only to the editor, including frame zero', async () => {
+  const url = 'https://example.test/memoqweb/webpm/webtrans/Translation.aspx?doc=12';
+  for (const frameId of [0, 8]) {
+    const harness = createHarness({
+      state: makeRuntimeState({ editorPlatform: 'memoq', translationEntries: [ENTRY] }),
+      tab: { id: 9, url },
+      frames: [{ frameId: 2, parentFrameId: 0, url: 'about:blank' }, { frameId, parentFrameId: -1, url }],
+      responses: [{ ok: true, data: [] }]
+    });
+    await harness.handler.handle({ type: 'RUN_PREVIEW' });
+    assert.equal(harness.writes[0]?.runState?.frameId, frameId);
+    assert.deepEqual(harness.tabMessages.map(m => m.options), [{ frameId }]);
+  }
+});
+
 test('BackgroundRequestHandler keeps memoQ full-scan Fill options and final progress', async () => {
   const fillResult: FillRunResult = {
     preview: makePreview({ totalSegments: 4, readyToFill: 2 }),
@@ -317,7 +379,7 @@ test('BackgroundRequestHandler keeps memoQ full-scan Fill options and final prog
     state: makeRuntimeState({
       translationEntries: [ENTRY],
       editorPlatform: 'memoq',
-      previewResult: makePreview({ readyToFill: 4 })
+      previewResult: makePreview({ readyToFill: 1 })
     }),
     tab: {
       id: 88,
@@ -343,7 +405,7 @@ test('BackgroundRequestHandler keeps memoQ full-scan Fill options and final prog
   >;
   assert.equal(message.type, 'CONTENT_FILL');
   assert.equal(message.payload.editorPlatform, 'memoq');
-  assert.equal(message.payload.plannedFillCount, 4);
+  assert.equal(message.payload.plannedFillCount, null);
   assert.equal(message.payload.maxPasses, 1200);
   assert.equal(message.payload.maxSegments, 10000);
   assert.equal(message.payload.scanFromTop, true);
@@ -611,4 +673,13 @@ test('BackgroundRequestHandler requires a platform before script injection', asy
   );
   assert.deepEqual(harness.scriptCalls, []);
   assert.equal(harness.events.includes('query-tab'), false);
+});
+
+
+test('memoQ focused input goes only to the tab that initiated it', async () => {
+  const harness = createHarness();
+  const request = { type: 'MEMOQ_DEBUGGER_INSERT_FOCUSED_TEXT', payload: { text: 'Texte <1>ici<2>' } } as const;
+  await harness.handler.handle(request, { tab: { id: 42 } });
+  assert.deepEqual(harness.focusedWrites, [{ tabId: 42, text: request.payload.text }]);
+  assert.equal((await captureError(() => harness.handler.handle(request))) instanceof Error, true);
 });

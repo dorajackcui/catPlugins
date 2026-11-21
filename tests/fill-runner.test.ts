@@ -228,7 +228,7 @@ test('FillRunner preserves memoQ preparation, platform routing, and fill timing'
   assert.equal(harness.getAssertNotStoppedCalls(), 6);
 });
 
-test('FillRunner carries an enabled memoQ marker plan separately from plain fills', async () => {
+test('FillRunner creates a verified memoQ marker plan for a file-tag workbook automatically', async () => {
   const segment = makeSegment(
     'memoq',
     'memoq-marker-1',
@@ -250,18 +250,62 @@ test('FillRunner carries an enabled memoQ marker plan separately from plain fill
     ],
     {
       autoStopAfterFilledCount: null,
-      validatePlaceholders: true,
-      enableMemoqMarkerFill: true
+      validatePlaceholders: true
     },
     1
   );
 
   assert.equal(result.filledCount, 1);
   assert.deepEqual(harness.fillCalls[0]?.context?.markerFillPlan, {
+    method: 'f9',
     expectedTarget: 'レベル<1>到達で解放',
     skeletonTarget: 'レベル\uE000到達で解放',
     anchors: [{ sentinel: '\uE000', markers: ['<1>'] }]
   });
+});
+
+test('FillRunner maps tags with the current view and the workbook alone, including older uploads', async () => {
+  for (const [sourceRaw, targetRaw, originalSource, filledCount] of [
+    ['Pattern <1>', 'Motif <1>', undefined, 1],
+    ['Pattern {token}', 'Motif {token}', undefined, 1],
+    ['Pattern <1>', 'Motif {token}', 'Pattern {token}', 1],
+    ['Pattern <1>', 'Motif {token}', undefined, 0],
+    ['Pattern <1>', 'Motif <9>', undefined, 0]
+  ] as const) {
+    const segment = makeSegment('memoq', '814', 'Pattern <1>');
+    segment.rowNumber = '814';
+    const harness = createHarness({ segments: [segment], memoqActive: true });
+    const oldSettings = { enableMemoqMarkerFill: false, validatePlaceholders: false, autoStopAfterFilledCount: null };
+    const result = await harness.runner.run('tags', [{
+      rowNumber: '814', rowIndex: 2, sourceRaw, sourceNormalized: sourceRaw,
+      originalSource, targetRaw, occurrenceIndex: 1
+    }], oldSettings, 1);
+    assert.equal(result.filledCount, filledCount);
+    if (result.filledCount) assert.equal(harness.fillCalls[0]?.context?.markerFillPlan?.expectedTarget, 'Motif <1>');
+  }
+});
+
+test('FillRunner uses the matched entry for a native plan and keeps DOM and writer data out of Preview', async () => {
+  const segment = makeSegment('memoq', '906', 'A<1>B<2>C<3>');
+  segment.rowNumber = '906';
+  segment.memoqSourceMarkers = ['<1>', '<2>', '<3>'];
+  segment.scanElement = {} as HTMLElement;
+  segment.scanFingerprint = 'live row';
+  const harness = createHarness({ segments: [segment], memoqActive: true });
+  const expectedTarget = 'Cible <1><2><2><1>';
+  const result = await harness.runner.run('native', [
+    { rowIndex: 2, sourceRaw: 'Another row', sourceNormalized: 'Another row', targetRaw: 'Autre', occurrenceIndex: 1 },
+    { rowIndex: 2, rowNumber: '906', sourceRaw: segment.sourceRaw, sourceNormalized: segment.sourceRaw,
+      targetRaw: expectedTarget, occurrenceIndex: 1 }
+  ], { validatePlaceholders: true, autoStopAfterFilledCount: null }, 1);
+
+  assert.equal(result.filledCount, 1);
+  assert.deepEqual(harness.fillCalls[0]?.context?.markerFillPlan, { method: 'webtrans', expectedTarget });
+  const [item] = result.preview.items;
+  assert.equal(item.translation, expectedTarget);
+  for (const field of ['targetElement', 'scanElement', 'scanFingerprint', 'markerFillPlan']) {
+    assert.equal(field in item, false);
+  }
 });
 
 test('FillRunner stops Phrase when a target becomes non-empty before writing', async () => {
@@ -377,6 +421,18 @@ test('FillRunner keeps the 200-fill stop-aware cooldown for large non-Phrase run
   );
   assert.equal(harness.delays.length, 200);
   assert.equal(harness.delays.every((delayMs) => delayMs === 180), true);
+});
+
+test('a filtered memoQ run reports actual counts and still pauses on a large workbook', async () => {
+  const rows = Array.from({ length: 301 }, (_, index) =>
+    makeSegment('memoq', String(index + 1), `Source ${index + 1}`)
+  );
+  const harness = createHarness({ segments: rows.slice(0, 200), memoqActive: true });
+  const result = await harness.runner.run('filtered', makeEntries(rows),
+    { autoStopAfterFilledCount: 500, validatePlaceholders: false }, null);
+  assert.equal(result.filledCount, 200);
+  assert.deepEqual(harness.stopAwareWaits, [20_000]);
+  assert.equal(harness.progressReports.every(({ progress }) => progress.plannedFillCount == null), true);
 });
 
 test('FillRunner reports memoQ prepare failures before scanning', async () => {

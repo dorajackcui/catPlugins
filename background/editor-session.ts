@@ -2,7 +2,7 @@ import type {
   ApiResponse,
   ContentRequest
 } from '../shared/message-types.ts';
-import { isMemsourceEditorFrameUrl } from './editor-url.ts';
+import { isMemoqWebTransFrameUrl, isMemsourceEditorFrameUrl } from './editor-url.ts';
 import { requireEditorPlatform, type EditorPlatform } from '../shared/editor-platform.ts';
 
 export interface PreparedEditorTab {
@@ -49,7 +49,7 @@ export class BackgroundEditorSession {
     const frames = await this.port.getAllFrames(tab.id);
     const editorFrame = platform === 'phrase' ? frames.find((frame) =>
       isMemsourceEditorFrameUrl(frame.url)
-    ) : undefined;
+    ) : platform === 'memoq' ? frames.find(frame => isMemoqWebTransFrameUrl(frame.url)) : undefined;
     this.port.logInfo('Prepared editor tab for CAT run.', {
       tabId: tab.id,
       url: tab.url,
@@ -73,7 +73,7 @@ export class BackgroundEditorSession {
     >(
       tab.id,
       message,
-      tab.frameId ? { frameId: tab.frameId } : undefined
+      tab.frameId !== undefined ? { frameId: tab.frameId } : undefined
     );
 
     if (!response.ok) {
@@ -83,13 +83,25 @@ export class BackgroundEditorSession {
     return response.data;
   }
 
+  async receiverIsGone(target: EditorRunTarget): Promise<boolean> {
+    if (typeof target.tabId !== 'number') return false;
+    try {
+      await this.port.sendTabMessage(target.tabId, { type: 'CONTENT_PING' },
+        typeof target.frameId === 'number' ? { frameId: target.frameId } : undefined);
+      return false;
+    } catch (error) {
+      return error instanceof Error &&
+        /Receiving end does not exist|No tab with id|No frame with id|Frame with ID \d+ was removed/i.test(error.message);
+    }
+  }
+
   async stop(target: EditorRunTarget, editorPlatform: EditorPlatform | null): Promise<void> {
     const tabId = target.tabId;
     if (typeof tabId !== 'number') {
       const tab = await this.prepare(editorPlatform);
       await this.sendStop(
         tab.id,
-        tab.frameId ? { frameId: tab.frameId } : undefined
+        tab.frameId !== undefined ? { frameId: tab.frameId } : undefined
       );
       return;
     }

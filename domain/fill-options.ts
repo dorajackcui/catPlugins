@@ -2,14 +2,12 @@ import type { FillOptions } from '../shared/translation-types.ts';
 
 export const DEFAULT_FILL_OPTIONS: FillOptions = {
   autoStopAfterFilledCount: null,
-  validatePlaceholders: false,
-  enableMemoqMarkerFill: false
+  validatePlaceholders: false
 };
 
 export function normalizeFillOptions(fillOptions?: FillOptions | null): FillOptions {
   const autoStopAfterFilledCount = fillOptions?.autoStopAfterFilledCount;
   const validatePlaceholders = fillOptions?.validatePlaceholders === true;
-  const enableMemoqMarkerFill = fillOptions?.enableMemoqMarkerFill === true;
 
   if (
     typeof autoStopAfterFilledCount !== 'number' ||
@@ -18,14 +16,12 @@ export function normalizeFillOptions(fillOptions?: FillOptions | null): FillOpti
   ) {
     return {
       ...DEFAULT_FILL_OPTIONS,
-      validatePlaceholders,
-      enableMemoqMarkerFill
+      validatePlaceholders
     };
   }
 
   return {
     autoStopAfterFilledCount: Math.floor(autoStopAfterFilledCount),
-    validatePlaceholders,
-    enableMemoqMarkerFill
+    validatePlaceholders
   };
 }

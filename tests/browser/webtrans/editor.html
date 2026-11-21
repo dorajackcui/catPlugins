@@ -1,0 +1,16 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>webTrans extension integration fixture</title>
+<style>
+body { font: 16px system-ui; }
+table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+td { border: 1px solid gray; vertical-align: top; }
+.order { width: 48px; }
+.editor-cell { min-height: 48px; }
+.tag { background: #d2e8ff; }
+#editorHiddenInput { position: fixed; left: -600px; width: 602px; }
+</style>
+<button id="gridBtnLongInlineTag">Tag display</button>
+<input id="editorHiddenInput" type="text">
+<table aria-label="Translation grid"><tbody id="gridTableBody"></tbody></table>
+<script type="module" src="/editor.js"></script>

@@ -1,6 +1,9 @@
 export interface TranslationEntry {
   rowIndex: number;
   rowNumber?: string;
+  /** A numbered row from the editor export must stay on that row in memoQ. */
+  matchMemoqRowOnly?: true;
+  originalSource?: string;
   sourceRaw: string;
   sourceNormalized: string;
   targetRaw: string;
@@ -11,6 +14,9 @@ export interface PageSegment {
   domId: string;
   rowNumber?: string;
   sourceRaw: string;
+  originalSource?: string;
+  /** Native chips observed in a webTrans row that accepts explicit marker IDs. */
+  memoqSourceMarkers?: string[];
   sourceNormalized: string;
   occurrenceIndex: number;
   targetRaw: string;
@@ -53,11 +59,6 @@ export interface UploadMeta {
 export interface FillOptions {
   autoStopAfterFilledCount: number | null;
   validatePlaceholders: boolean;
-  /**
-   * Experimental memoQ path. When disabled, rows whose rendered memoQ source
-   * contains inline markers are excluded from preview and fill.
-   */
-  enableMemoqMarkerFill?: boolean;
 }
 
 export interface ParseExcelResult {

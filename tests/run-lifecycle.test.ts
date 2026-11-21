@@ -82,13 +82,11 @@ test('BackgroundRunLifecycle isolates completion from a stale run id', async () 
     })
   );
 
+  const current = { ...harness.getState().runState };
   await harness.lifecycle.finish('run-stale', { message: 'Done.' });
 
-  const runState = harness.getState().runState;
-  assert.equal(runState.phase, 'idle');
-  assert.equal(runState.message, 'Done.');
-  assert.equal(runState.startedAt, null);
-  assert.equal(runState.scannedCount, 0);
+  assert.deepEqual(harness.getState().runState, current);
+  assert.equal(harness.writes.length, 0);
 });
 
 test('BackgroundRunLifecycle maps a user stop while preserving fill planning', async () => {

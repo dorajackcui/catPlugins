@@ -37,11 +37,12 @@ export interface SegmentScanOptions {
   restoreScrollPosition?: boolean;
   scanFromTop?: boolean;
   startFromMarker?: boolean;
+  requireComplete?: boolean;
 }
 
 export interface SegmentScannerPort {
   findScrollContext(): ScrollContext;
-  collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[];
+  collectVisibleSegments(scrollContext: ScrollContext, includeEmptySources?: boolean): RuntimeSegment[];
   isMemoqActive(): boolean;
   assertNotStopped(): void;
   delay(delayMs: number): Promise<void>;
@@ -67,6 +68,7 @@ export class SegmentScanner {
     const scrollContext = this.port.findScrollContext();
     const maxPasses = options.maxPasses ?? DEFAULT_SEGMENT_SCAN_MAX_PASSES;
     const maxSegments = options.maxSegments ?? DEFAULT_SEGMENT_SCAN_MAX_SEGMENTS;
+    const verifyExportEnd = options.requireComplete === true && scrollContext.hasVerifiedScrollBounds === true;
     const shouldRestoreScrollPosition = options.restoreScrollPosition ?? true;
     const scanDelayMs = this.getScanDelayMs(scrollContext);
     const scrollSettleDelayMs = this.getScrollSettleDelayMs(scrollContext);
@@ -94,20 +96,32 @@ export class SegmentScanner {
 
     try {
       if (options.scanFromTop) {
-        scrollContext.scrollToTop();
+        await scrollContext.scrollToTop(() => this.port.assertNotStopped());
         await this.port.delay(scrollSettleDelayMs);
       }
 
       let noNewSegmentsPasses = 0;
       let noMovementPasses = 0;
+      let reachedEnd = false;
 
-      for (let pass = 0; pass < maxPasses && segments.length < maxSegments; pass += 1) {
+      for (let pass = 0; pass < maxPasses; pass += 1) {
         this.port.assertNotStopped();
         await this.port.delay(scanDelayMs);
         this.port.assertNotStopped();
 
         const countBefore = segments.length;
-        let visibleSegments = this.port.collectVisibleSegments(scrollContext);
+        const expectedRows = options.requireComplete
+          ? await scrollContext.readExportRowNumbers?.(() => this.port.assertNotStopped())
+          : undefined;
+        let visibleSegments = this.port.collectVisibleSegments(scrollContext, expectedRows !== undefined);
+        if (expectedRows) {
+          const byNumber = new Map(visibleSegments.map(segment => [segment.rowNumber, segment]));
+          visibleSegments = expectedRows.map(row => {
+            const segment = byNumber.get(row);
+            if (!segment) throw new Error(`The memoQ export could not read row ${row}. No workbook was created.`);
+            return segment;
+          });
+        }
         if (shouldApplyStartMarker && startMarker) {
           const markerFilter = filterSegmentsFromPendingStartMarker(
             visibleSegments,
@@ -127,7 +141,7 @@ export class SegmentScanner {
         let shouldSkipSyntheticPass = false;
         if (scrollContext.mode === 'synthetic') {
           const syntheticSignature = visibleSegments
-            .map((segment) => `${segment.sourceNormalized}=>${segment.targetRaw}`)
+            .map((segment) => JSON.stringify([segment.rowNumber, segment.sourceNormalized, segment.targetRaw]))
             .join('|');
           shouldSkipSyntheticPass = hasRepeatedSyntheticSignature(
             previousSyntheticSignature,
@@ -147,6 +161,7 @@ export class SegmentScanner {
 
           if (
             scrollContext.mode === 'synthetic' &&
+            !(segment.platform === 'memoq' && segment.rowNumber) &&
             segment.scanElement &&
             segment.scanFingerprint
           ) {
@@ -171,6 +186,12 @@ export class SegmentScanner {
 
           if (seenIds.has(segment.domId)) {
             continue;
+          }
+          if (segments.length >= maxSegments) {
+            if (verifyExportEnd) {
+              throw new Error(`The memoQ export exceeds the segment limit (${maxSegments}). Narrow the filter and export again.`);
+            }
+            break;
           }
 
           seenIds.add(segment.domId);
@@ -197,7 +218,7 @@ export class SegmentScanner {
           }
         }
 
-        if (stopRequestedByCallback || segments.length >= maxSegments) {
+        if (stopRequestedByCallback || (!verifyExportEnd && segments.length >= maxSegments)) {
           break;
         }
 
@@ -216,18 +237,20 @@ export class SegmentScanner {
         const isAtBottom = scrollContext.isAtBottom();
         const scrollStep = Math.max(scrollContext.getHeight() * SCROLL_RATIO, 240);
 
-        if (
-          shouldStopScanBeforeNextScroll({
+        const shouldStop = scrollContext.hasVerifiedScrollBounds
+          ? isAtBottom
+          : shouldStopScanBeforeNextScroll({
             scrollMode: scrollContext.mode,
             isAtBottom,
             noNewSegmentsPasses,
             repeatedSyntheticSignaturePasses
-          })
-        ) {
+          });
+        if (shouldStop) {
+          reachedEnd = isAtBottom;
           break;
         }
 
-        scrollContext.scrollBy(scrollStep);
+        await scrollContext.scrollBy(scrollStep);
 
         await this.port.delay(scrollSettleDelayMs);
         this.port.assertNotStopped();
@@ -238,11 +261,14 @@ export class SegmentScanner {
             ? noMovementPasses + 1
             : 0;
 
-        if (noMovementPasses >= 5 && noNewSegmentsPasses >= 3) {
+        if (!scrollContext.hasVerifiedScrollBounds && noMovementPasses >= 5 && noNewSegmentsPasses >= 3) {
           break;
         }
       }
 
+      if (verifyExportEnd && !reachedEnd) {
+        throw new Error(`The memoQ export reached the scan pass limit (${maxPasses}) before the end. Narrow the filter and export again.`);
+      }
       if (hasUnresolvedStartMarker(startMarker, shouldApplyStartMarker)) {
         const message = startMarker?.domId
           ? `Could not find the selected start row ${startMarker.domId}. Click the desired editor row and run Fill again.`
@@ -263,7 +289,7 @@ export class SegmentScanner {
       return segments;
     } finally {
       if (shouldRestoreScrollPosition) {
-        scrollContext.restore();
+        await scrollContext.restore();
       }
     }
   }

@@ -73,6 +73,9 @@ does not reinject the content script or drift to a newly focused tab.
 
 `domain/run-stop.ts` defines the cross-context user-stop error and its display mapping. Content,
 background, and popup code must use this contract so an intentional stop never appears as a failure.
+If a stopped editor is reloaded before it acknowledges the request, the popup checks
+the original tab and frame. Chrome reporting that the receiver is gone releases the
+stopping state and preserves the counts. Other messaging errors leave the run pending.
 
 ## Popup application
 
@@ -100,37 +103,96 @@ but incomplete modern surface must not hide a usable legacy editor.
 
 ### memoQ fill pipeline
 
+Preview and Fill classify the same serializable segment data. Classification
+returns the preview item and the validated plan for the matched workbook entry.
+Only the active Fill receives the plan. Stored previews contain the item alone.
+
+- `platforms/memoq/editor-writer.ts` selects plain input, whole-target webTrans input,
+  or sequential F9 input for the current editor. If a webTrans plan loses its
+  required editor capability, the writer stops before editing.
 - `platforms/memoq/fill-transaction.ts` orchestrates target lookup, trusted input, and the stop-safe sequence.
 - `platforms/memoq/fill-validation.ts` validates the current source and empty target before each write.
 - `platforms/memoq/fill-confirmation.ts` owns commit polling and row re-resolution.
 - `platforms/memoq/fill-diagnostic-builder.ts` creates stable success and failure diagnostics.
 
-Experimental marker fills separate translation mapping from editor mechanics:
+Marker fills use the following components.
 
-- `domain/memoq-marker-mapping.ts` resolves source mappings and validates target
-  token order, kinds, balance, and native groups. Its output is ordered literal
-  text and native marker groups, without cursor or sentinel details. Source
-  matching shares these rules without depending on the write-plan compiler.
-- `domain/memoq-marker-fill.ts` compiles those parts into the existing sentinel
-  plan and owns sentinel allocation and grapheme cursor counts.
-- `platforms/memoq/marker-editor.ts` binds a segment and DOM profile to trusted
+- `domain/memoq-file-tags.ts` recognizes file tags from the current source and
+  defines the short-tag notation used for both planning and DOM verification.
+- `domain/memoq-marker-mapping.ts` aligns the source text and tag positions.
+  A webTrans row supplies the native chips observed in its source cell. The
+  mapper resolves every target occurrence against those IDs and kinds. Targets
+  may repeat, reorder, regroup or omit them. A foreign tag or ambiguous raw
+  label rejects the row before input. The sequential F9 writer requires the
+  original order and adjacent groups.
+- `domain/memoq-marker-fill.ts` validates the translation and builds the complete
+  target for webTrans. Only the F9 plan allocates sentinels for cursor movement.
+- `platforms/memoq/webtrans-input.ts` focuses and re-resolves the empty webTrans
+  target for plain and tagged rows, then sends the complete translation to the
+  focused input in one trusted text operation. If webTrans absorbs a focus
+  click while saving the previous row, the writer can re-resolve the target and
+  retry that click once before input. A beforeinput guard checks the row at
+  dispatch. Success requires consecutive reads of the expected text. Tagged
+  translations also require native chips at the expected positions.
+- `platforms/memoq/marker-editor.ts` binds the modern editor profile to trusted
   input, exact reads, numeric-placeholder escaping, and row re-resolution.
+- `platforms/memoq/marker-caret.ts` maps a serialized text offset to a DOM
+  caret on the freshly resolved row. A trusted click goes directly to the
+  boundary when a browser hit test resolves to that text node and offset.
+  Otherwise the writer uses absolute grapheme navigation from the text origin.
 - `platforms/memoq/marker-fill-executor.ts` owns the write/delete/F9 sequence and
   the Undo history for its own writes. `marker-state-monitor.ts` owns exact
   stability polling and the final hold, shared by forward writes and rollback.
 
-Supported mappings remain line-break-only and fully protected Excel markup.
-LF, CRLF, and CR each count as one break. Compare source skeletons before
-whitespace normalization. If only breaks became tags, other markup stays
-literal; only mapped tokens participate in native order and adjacency checks.
-New mapping rules belong in the mapper and must preserve literal content and
-reject uncertain mappings. Changing an editor input method should not require
-changing how translations are mapped.
+Fill automatically matches workbooks using short marker IDs or original file
+tags. For original tags it aligns the Excel source with the native IDs in the
+current row. Preview and Fill leave the tag display untouched. Older workbooks
+with a short source and a file-tag target can supply the mapping in
+`originalSource`. Export collects that optional column from webTrans’s long
+`mq:rxt` labels and restores the previous display. The chip’s `data-tagid`
+identifies the native marker in either view.
+The classic webTrans grid recycles rows behind its own vertical scrollbar.
+Export starts at the top of the filtered grid, reads through the bottom arrow's
+disabled state, and restores the scroll position. A numbered `not-loaded-row`
+can already show its document ID while the source is still empty. Export waits
+for these cells and refreshes their tag display when webTrans has retained the
+placeholder. On grids exposing zero-based filtered positions, every position
+must resolve to its document row in order. A layout change can require backing
+up to collect a missed position. A loaded row with an empty source keeps its
+place in the workbook. Unread rows and scan limits stop the export before a
+workbook is created.
+Numbered rows imported with the export's occurrence column match only their
+own row number in memoQ, including after a change of filter or order.
+The XLSX stores source and target text with the whitespace exposed by the
+editor, including repeated and nonbreaking spaces. Fill reports the number of
+rows written. The current filter can change between runs, so the previous
+scan cannot supply a reliable total.
 
-The refactor preserves marker-fill opt-in, source/empty-target checks, absolute
-cursor navigation, one F9 per native sequence, stability thresholds, the final
-hold, and owned-history rollback. Sequential typing is not enabled: it requires
-separate live validation of caret and Undo behavior before replacing this writer.
+Supported file-tag mappings include line-break-only and fully protected Excel markup.
+LF, CRLF, and CR each count as one break. The mapper compares source skeletons
+before whitespace normalization. Markup left as plain text by the import filter
+stays literal. For other delimited file tags, the mapper can derive their
+delimiters from protected gaps in the row. The complete source must still align
+in text, count and positions. When the same raw spelling denotes several IDs,
+the existing source order preserves their identity. A changed sequence that
+needs an ambiguous ID requires the short-tag export.
+
+webTrans checks the current source and empty target,
+then uses a single text insertion. A mismatch stops the run. webTrans messages are scoped
+to its editor frame, including when that frame is the top document.
+The modern editor writer deletes each anchor and issues one F9 per native sequence. Each edit requires
+six exact reads, 20 ms apart once the edit appears. While the previous value
+is still visible, the writer polls for up to 60 ms at this short interval.
+A missing, slow or unstable result uses the full 120 ms polling cadence. The initial text
+write and Undo use the full cadence, and the finished target must hold for
+1.5 seconds. If the target changes between confirmation and positioning, the
+run stops before sending the next key or undoing an unrelated edit.
+
+Set `CHROME_BIN` to the path of a Chromium or Chrome for Testing executable
+and run `npm run test:memoq-browser` to exercise the built extension with a
+temporary Chrome profile and a loopback webTrans fixture. The test imports an
+Excel workbook, verifies one trusted text event per target and checks that a
+literal tag stops the run before it touches the next row.
 
 ## Phrase adapter
 

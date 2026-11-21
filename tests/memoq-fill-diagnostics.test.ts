@@ -51,6 +51,9 @@ test('describeMemoqFillDiagnostic formats a stable stop reason', () => {
     describeMemoqFillDiagnostic(diagnostic),
     'Stopped at memoQ row 15: Source changed before writing. Source="League Sponsor Copy"'
   );
+  assert.equal(describeMemoqFillDiagnostic({ ...diagnostic, failureCode: 'INPUT_FAILED',
+    activation: { attempted: true, ok: false, error: 'Paste did not reach the selected target.' }
+  }).includes('Paste did not reach the selected target.'), true);
 });
 
 test('truncateMemoqDiagnosticValue keeps messages readable', () => {

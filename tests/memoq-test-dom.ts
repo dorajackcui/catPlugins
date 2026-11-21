@@ -121,6 +121,7 @@ export function appendChild(parent: FakeElement, child: FakeElement | FakeTextNo
 export function fakeDocument(root: FakeElement): Document {
   return {
     body: root,
+    getElementById: (id: string) => root.querySelectorAll('*').find(el => el.id === id) ?? null,
     querySelector: (selector: string) => root.querySelector(selector),
     querySelectorAll: (selector: string) => root.querySelectorAll(selector)
   } as unknown as Document;

@@ -1,6 +1,7 @@
 import type { RuntimeSegment } from '../../content/types.ts';
 import type {
   FillOutcome,
+  MemoqFillTrace,
   MemoqFillFailureCode,
   MemoqVisibleRowSnapshot
 } from '../../shared/fill-outcome-types.ts';
@@ -15,7 +16,7 @@ import {
   type MemoqInvalidFillSnapshot
 } from './fill-validation.ts';
 
-export interface MemoqFillTransactionOptions {
+export interface MemoqFillTransactionOptions extends Partial<MemoqFillTrace> {
   profile: MemoqDomProfile;
   readTargetText(target: HTMLElement): string;
   readSourceText(segment: RuntimeSegment): string | null;
@@ -23,11 +24,7 @@ export interface MemoqFillTransactionOptions {
   collectNearbyRows(rowNumber?: string): MemoqVisibleRowSnapshot[];
   writeTrustedText(target: HTMLElement, value: string): Promise<void>;
   expectedCommittedValue?: string;
-  runId?: string;
-  sequence?: number;
-  scanPass?: number;
-  scrollTop?: number;
-  scrollMode?: 'native' | 'synthetic';
+  matchesCommittedTarget?(target: HTMLElement, expected: string): boolean;
 }
 
 export class MemoqFillTransaction {
@@ -123,6 +120,7 @@ export class MemoqFillTransaction {
       rowNumber,
       value: this.options.expectedCommittedValue ?? value,
       readTargetText: (currentTarget) => this.options.readTargetText(currentTarget),
+      matchesCommittedTarget: this.options.matchesCommittedTarget,
       resolveCurrentTargetByRowNumber: (currentRowNumber) =>
         this.resolveCurrentTargetByRowNumber(currentRowNumber)
     });

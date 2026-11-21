@@ -16,7 +16,7 @@ import {
   hasMemoqInlineTagMarkup,
   memoqProtectedSourceMatchesExcelSource
 } from './memoq-markup.ts';
-import { createMemoqMarkerFillPlan } from './memoq-marker-fill.ts';
+import { prepareMemoqTranslation, type MemoqMarkerFillPlan } from './memoq-marker-fill.ts';
 import { normalizePhraseTagClipText } from './phrase-markup.ts';
 import { normalizeText } from '../shared/utils.ts';
 
@@ -41,7 +41,9 @@ export function createEntryLookup(
   entries: TranslationEntry[]
 ): Map<string, TranslationEntry> {
   const lookup = new Map<string, TranslationEntry>();
-  entriesByLookup.set(lookup, entries);
+  // Numbered exports have their own row keys. A filtered row must not be
+  // offered as a text-only match elsewhere when the editor filter changes.
+  entriesByLookup.set(lookup, entries.filter(entry => !entry.matchMemoqRowOnly));
 
   for (const entry of entries) {
     if (entry.rowNumber) {
@@ -68,8 +70,8 @@ export function classifySegment(
   entryLookup: Map<string, TranslationEntry>,
   segment: PageSegment,
   fillOptions?: FillOptions | null
-): PreviewItem {
-  const normalizedFillOptions = normalizeFillOptions(fillOptions);
+): { item: PreviewItem; markerFillPlan?: MemoqMarkerFillPlan } {
+  const { validatePlaceholders } = normalizeFillOptions(fillOptions);
   const rowNumberEntry = segment.rowNumber
     ? entryLookup.get(buildRowNumberMatchKey(segment.rowNumber))
     : undefined;
@@ -78,95 +80,28 @@ export function classifySegment(
     (segment.platform !== 'memoq' || memoqSourcesMatch(rowNumberEntry, segment))
       ? rowNumberEntry
       : undefined;
-  const sourceEntry = findEntryBySource(entryLookup, segment);
-
-  if (
-    segment.platform === 'memoq' &&
-    segment.rowNumber &&
-    rowNumberEntry &&
-    !matchingRowNumberEntry &&
-    !sourceEntry
-  ) {
-    return {
-      ...segment,
-      status: 'unmatched',
-      reason: `Excel row ${segment.rowNumber} source does not match the current memoQ source.`
-    };
-  }
-
-  const entry = matchingRowNumberEntry ?? sourceEntry;
-
+  const entry = matchingRowNumberEntry ?? findEntryBySource(entryLookup, segment);
   if (!entry) {
-    return {
-      ...segment,
-      status: 'unmatched',
-      reason: 'No matching source row found in Excel.'
-    };
+    const reason = segment.platform === 'memoq' && rowNumberEntry
+      ? `Excel row ${segment.rowNumber} source does not match the current memoQ source.`
+      : 'No matching source row found in Excel.';
+    return { item: { ...segment, status: 'unmatched', reason } };
   }
 
+  const matched = { ...segment, translation: entry.targetRaw, excelRowIndex: entry.rowIndex };
   if (!segment.isEmptyTarget && segment.platform !== 'gientrans') {
-    return {
-      ...segment,
-      status: 'alreadyTranslated',
-      translation: entry.targetRaw,
-      excelRowIndex: entry.rowIndex,
-      reason: 'Segment already has a translation.'
-    };
+    return { item: { ...matched, status: 'alreadyTranslated', reason: 'Segment already has a translation.' } };
   }
 
-  if (
-    segment.platform === 'memoq' &&
-    hasMemoqInlineTagMarkup(segment.sourceRaw)
-  ) {
-    if (normalizedFillOptions.enableMemoqMarkerFill !== true) {
-      return {
-        ...segment,
-        status: 'placeholderError',
-        translation: entry.targetRaw,
-        excelRowIndex: entry.rowIndex,
-        reason: 'memoQ source contains markers and experimental marker fill is disabled.'
-      };
-    }
-
-    const markerPlan = createMemoqMarkerFillPlan(
-      entry.sourceRaw,
-      segment.sourceRaw,
-      entry.targetRaw
-    );
-    if (!markerPlan.ok) {
-      return {
-        ...segment,
-        status: 'placeholderError',
-        translation: entry.targetRaw,
-        excelRowIndex: entry.rowIndex,
-        reason: `memoQ marker fill is not safe for this row: ${markerPlan.reason}`
-      };
-    }
+  if (segment.platform === 'memoq') {
+    const prepared = prepareMemoqTranslation(entry, segment, validatePlaceholders);
+    if (!prepared.ok) return { item: { ...matched, status: 'placeholderError', reason: prepared.reason } };
+    return { item: { ...matched, status: 'ready' }, markerFillPlan: prepared.plan };
   }
-
-  // Excel source/target markup is trusted. When memoQ replaces source spans
-  // with accessibility markers, validating against the rendered source would
-  // report placeholder errors for a presentation-only difference.
-  if (
-    normalizedFillOptions.validatePlaceholders &&
-    !usesMemoqProtectedSourceBridge(entry, segment) &&
-    !placeholdersMatch(segment.sourceRaw, entry.targetRaw, segment.platform, segment.placeholderTokens)
-  ) {
-    return {
-      ...segment,
-      status: 'placeholderError',
-      translation: entry.targetRaw,
-      excelRowIndex: entry.rowIndex,
-      reason: 'Placeholder mismatch between source and translation.'
-    };
+  if (validatePlaceholders && !placeholdersMatch(segment.sourceRaw, entry.targetRaw, segment.platform, segment.placeholderTokens)) {
+    return { item: { ...matched, status: 'placeholderError', reason: 'Placeholder mismatch between source and translation.' } };
   }
-
-  return {
-    ...segment,
-    status: 'ready',
-    translation: entry.targetRaw,
-    excelRowIndex: entry.rowIndex
-  };
+  return { item: { ...matched, status: 'ready' } };
 }
 
 function findEntryBySource(
@@ -176,7 +111,7 @@ function findEntryBySource(
   const exactEntry = entryLookup.get(
     buildMatchKey(segment.sourceNormalized, segment.occurrenceIndex)
   );
-  if (exactEntry) {
+  if (exactEntry && (segment.platform !== 'memoq' || !exactEntry.matchMemoqRowOnly)) {
     return exactEntry;
   }
 
@@ -236,20 +171,11 @@ function memoqSourcesMatch(
   entry: TranslationEntry,
   segment: PageSegment
 ): boolean {
+  if (entry.matchMemoqRowOnly && hasMemoqInlineTagMarkup(entry.sourceRaw)) {
+    return entry.sourceNormalized === segment.sourceNormalized;
+  }
   return (
     normalizeText(entry.sourceNormalized) === normalizeText(segment.sourceNormalized) ||
-    memoqProtectedSourceMatchesExcelSource(segment.sourceRaw, entry.sourceRaw)
-  );
-}
-
-function usesMemoqProtectedSourceBridge(
-  entry: TranslationEntry,
-  segment: PageSegment
-): boolean {
-  return (
-    segment.platform === 'memoq' &&
-    hasMemoqInlineTagMarkup(segment.sourceRaw) &&
-    normalizeText(entry.sourceNormalized) !== normalizeText(segment.sourceNormalized) &&
     memoqProtectedSourceMatchesExcelSource(segment.sourceRaw, entry.sourceRaw)
   );
 }
@@ -298,7 +224,7 @@ export function buildPreview(
   fillOptions?: FillOptions | null
 ): PreviewResult {
   const lookup = createEntryLookup(entries);
-  const items = segments.map((segment) => classifySegment(lookup, segment, fillOptions));
+  const items = segments.map((segment) => classifySegment(lookup, segment, fillOptions).item);
   return summarizePreview(items);
 }
 
@@ -320,11 +246,4 @@ export function applyFilledToPreview(
   });
 
   return summarizePreview(updatedItems);
-}
-
-export function applyMemoqPreviewCorrection(preview: PreviewResult): PreviewResult {
-  // Kept as an identity function for existing background call sites. Older
-  // memoQ builds exposed a phantom unmatched row, but deleting an arbitrary
-  // unmatched item also hid legitimate source rows.
-  return preview;
 }

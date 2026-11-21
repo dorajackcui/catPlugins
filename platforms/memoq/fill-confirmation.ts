@@ -9,6 +9,7 @@ export interface MemoqFillConfirmationOptions {
   rowNumber: string;
   value: string;
   readTargetText(target: HTMLElement): string;
+  matchesCommittedTarget?(target: HTMLElement, expected: string): boolean;
   resolveCurrentTargetByRowNumber(rowNumber: string): HTMLElement | null;
 }
 
@@ -41,7 +42,9 @@ export async function confirmMemoqTargetText(
 
     resolvedAtLeastOnce = true;
     targetAfter = options.readTargetText(currentTarget);
-    if (isMemoqCommittedTargetText(targetAfter, options.value)) {
+    if (options.matchesCommittedTarget
+      ? options.matchesCommittedTarget(currentTarget, options.value)
+      : isMemoqCommittedTargetText(targetAfter, options.value)) {
       return {
         ok: true,
         attempts: attempt,

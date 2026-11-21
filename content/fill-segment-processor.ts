@@ -1,11 +1,6 @@
-import type { RuntimeSegment } from './types.ts';
+import { toPageSegment, type RuntimeSegment } from './types.ts';
 import { normalizeFillOptions } from '../domain/fill-options.ts';
 import { describeFillStopReason, shouldStopAfterFillFailure } from '../domain/fill-failure.ts';
-import {
-  hasMemoqInlineTagMarkup,
-  memoqProtectedSourceMatchesExcelSource
-} from '../domain/memoq-markup.ts';
-import { createMemoqMarkerFillPlan } from '../domain/memoq-marker-fill.ts';
 import { BULK_FILL_PAUSE_MS, shouldPauseBulkFillForPlatform } from '../domain/fill-throttle.ts';
 import {
   applyFilledToPreview,
@@ -25,15 +20,13 @@ import type {
   PreviewItem,
   TranslationEntry
 } from '../shared/translation-types.ts';
-import { normalizeText } from '../shared/utils.ts';
 import type { FillSegmentProcessorPort } from './fill-runner-contracts.ts';
 import { shouldRescanAfterSegmentFill } from './scan-dedupe.ts';
-import type { SegmentScanCallback, SegmentScanContext } from './segment-scanner.ts';
+import type { SegmentScanCallback } from './segment-scanner.ts';
 
 const DEFAULT_INTER_FILL_DELAY_MS = 180;
 const MEMOQ_INTER_FILL_DELAY_MS = 320;
 const MAX_MEMOQ_SKIP_LOGS = 5;
-const MEMOQ_INLINE_TAG_PATTERN = /\{\d+>|<\d+\}|<\d+>/g;
 
 export interface FillSegmentProcessorOptions {
   runId: string;
@@ -65,18 +58,16 @@ export class FillSegmentProcessor {
   ) {
     this.entryLookup = createEntryLookup(options.entries);
     this.normalizedFillOptions = normalizeFillOptions(options.fillOptions);
-    this.autoStopAfterFilledCount = normalizeAutoStopAfterFilledCount(
-      this.normalizedFillOptions.autoStopAfterFilledCount
-    );
+    this.autoStopAfterFilledCount = this.normalizedFillOptions.autoStopAfterFilledCount;
   }
 
   readonly process: SegmentScanCallback = async (
     segment,
     scanContext
   ) => {
-    const item = classifySegment(
+    const { item, markerFillPlan } = classifySegment(
       this.entryLookup,
-      segment,
+      toPageSegment(segment),
       this.normalizedFillOptions
     );
     this.previewItems.push(item);
@@ -95,15 +86,12 @@ export class FillSegmentProcessor {
       return;
     }
 
-    const matchedEntry = item.excelRowIndex === undefined
-      ? undefined
-      : this.options.entries.find((entry) => entry.rowIndex === item.excelRowIndex);
-    const memoqContext = this.createMemoqContext(
-      segment,
-      scanContext,
-      matchedEntry,
-      item.translation
-    );
+    const memoqContext = segment.platform === 'memoq' ? {
+      ...scanContext,
+      runId: this.options.runId,
+      sequence: ++this.memoqFillSequence,
+      ...(markerFillPlan && { markerFillPlan })
+    } : undefined;
     if (memoqContext) {
       this.port.logInfo('memoQ fill:attempt', {
         ...memoqContext,
@@ -132,10 +120,13 @@ export class FillSegmentProcessor {
         return 'stop';
       }
 
+      const cooldownPlan = segment.platform === 'memoq' && this.options.plannedFillCount === null
+        ? Math.min(this.options.entries.length, this.autoStopAfterFilledCount ?? this.options.entries.length)
+        : this.options.plannedFillCount;
       if (
         shouldPauseBulkFillForPlatform(
           segment.platform,
-          this.options.plannedFillCount,
+          cooldownPlan,
           this.filledDomIds.length
         )
       ) {
@@ -159,10 +150,9 @@ export class FillSegmentProcessor {
         outcome
       );
     } else if (shouldStopAfterFillFailure(segment.platform)) {
-      this.stopReason =
-        segment.platform === 'memoq'
-          ? this.describeMemoqStopReason(segment, outcome)
-          : describeFillStopReason(segment, outcome);
+      this.stopReason = outcome.diagnostic
+        ? describeMemoqFillDiagnostic(outcome.diagnostic)
+        : describeFillStopReason(segment, outcome);
       await this.port.reportProgress(this.options.runId, {
         scannedCount,
         filledCount: this.filledDomIds.length,
@@ -207,89 +197,8 @@ export class FillSegmentProcessor {
       source: segment.sourceRaw,
       target: segment.targetRaw,
       reason: item.reason ?? 'No translation value was available.',
-      sourceDiagnostics: this.buildMemoqSourceDiagnostics(segment)
+      excelRowIndex: item.excelRowIndex
     });
-  }
-
-  private buildMemoqSourceDiagnostics(segment: RuntimeSegment): {
-    protectedSourceMatchCount: number;
-    sameOccurrenceMatchCount: number;
-    closestExcelSources: Array<Record<string, unknown>>;
-  } {
-    const protectedSourceMatches = this.options.entries.filter((entry) =>
-      memoqProtectedSourceMatchesExcelSource(segment.sourceRaw, entry.sourceRaw)
-    );
-    const normalizedSource = normalizeText(segment.sourceRaw);
-    const tagMatches = [...normalizedSource.matchAll(MEMOQ_INLINE_TAG_PATTERN)];
-    const firstTagIndex = tagMatches[0]?.index ?? normalizedSource.length;
-    const lastTag = tagMatches[tagMatches.length - 1];
-    const lastTagEnd = lastTag
-      ? (lastTag.index ?? 0) + lastTag[0].length
-      : 0;
-    const prefix = normalizedSource.slice(0, firstTagIndex);
-    const suffix = normalizedSource.slice(lastTagEnd);
-    const closestExcelSources = this.options.entries
-      .map((entry) => {
-        const excelSource = normalizeText(entry.sourceRaw);
-        return {
-          excelRowIndex: entry.rowIndex,
-          rowNumber: entry.rowNumber,
-          occurrenceIndex: entry.occurrenceIndex,
-          commonPrefixLength: countCommonPrefix(prefix, excelSource),
-          commonSuffixLength: countCommonSuffix(suffix, excelSource),
-          sourceLength: excelSource.length,
-          sourcePreview:
-            excelSource.length > 160
-              ? `${excelSource.slice(0, 157)}...`
-              : excelSource
-        };
-      })
-      .sort((left, right) =>
-        (right.commonPrefixLength + right.commonSuffixLength) -
-        (left.commonPrefixLength + left.commonSuffixLength)
-      )
-      .slice(0, 3);
-
-    return {
-      protectedSourceMatchCount: protectedSourceMatches.length,
-      sameOccurrenceMatchCount: protectedSourceMatches.filter(
-        (entry) => entry.occurrenceIndex === segment.occurrenceIndex
-      ).length,
-      closestExcelSources
-    };
-  }
-
-  private createMemoqContext(
-    segment: RuntimeSegment,
-    scanContext: SegmentScanContext,
-    matchedEntry: TranslationEntry | undefined,
-    translation: string
-  ): MemoqFillExecutionContext | undefined {
-    if (segment.platform !== 'memoq') {
-      return undefined;
-    }
-
-    const markerPlanResult =
-      this.normalizedFillOptions.enableMemoqMarkerFill === true &&
-      hasMemoqInlineTagMarkup(segment.sourceRaw) &&
-      matchedEntry
-        ? createMemoqMarkerFillPlan(
-            matchedEntry.sourceRaw,
-            segment.sourceRaw,
-            translation
-          )
-        : null;
-
-    return {
-      runId: this.options.runId,
-      sequence: ++this.memoqFillSequence,
-      scanPass: scanContext.scanPass,
-      scrollTop: scanContext.scrollTop,
-      scrollMode: scanContext.scrollMode,
-      ...(markerPlanResult?.ok
-        ? { markerFillPlan: markerPlanResult.plan }
-        : {})
-    };
   }
 
   private async fillSegment(
@@ -314,64 +223,9 @@ export class FillSegmentProcessor {
     return this.port.runtime.fillSegment(segment, value);
   }
 
-  private describeMemoqStopReason(
-    segment: RuntimeSegment,
-    outcome: FillOutcome
-  ): string {
-    if (outcome.diagnostic?.outcome === 'failure') {
-      return describeMemoqFillDiagnostic(outcome.diagnostic);
-    }
-
-    const rowLabel = segment.rowNumber
-      ? `row ${segment.rowNumber}`
-      : `segment ${segment.domId}`;
-    const sourcePreview =
-      segment.sourceRaw.length > 80
-        ? `${segment.sourceRaw.slice(0, 77)}...`
-        : segment.sourceRaw;
-    const reason = outcome.reason ?? 'memoQ fill could not be confirmed.';
-
-    return `Stopped at memoQ ${rowLabel}: ${reason} Source="${sourcePreview}"`;
-  }
-
   private getInterFillDelayMs(segment: RuntimeSegment): number {
     return segment.platform === 'memoq'
       ? MEMOQ_INTER_FILL_DELAY_MS
       : DEFAULT_INTER_FILL_DELAY_MS;
   }
-}
-
-function countCommonPrefix(left: string, right: string): number {
-  const length = Math.min(left.length, right.length);
-  let index = 0;
-
-  while (index < length && left[index] === right[index]) {
-    index += 1;
-  }
-
-  return index;
-}
-
-function countCommonSuffix(left: string, right: string): number {
-  const length = Math.min(left.length, right.length);
-  let count = 0;
-
-  while (
-    count < length &&
-    left[left.length - count - 1] === right[right.length - count - 1]
-  ) {
-    count += 1;
-  }
-
-  return count;
-}
-
-export function normalizeAutoStopAfterFilledCount(
-  value: number | null | undefined
-): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) {
-    return null;
-  }
-
-  return Math.floor(value);
 }

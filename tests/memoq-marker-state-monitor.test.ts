@@ -30,3 +30,30 @@ test('memoQ exact hold catches drift on its final read', async () => {
   }
   assert.equal(failure, 'holding changed at the end of the hold window.');
 });
+
+test('a transient fast edit restarts all six exact reads at the normal settling interval', async () => {
+  const expected = 'A<1>B';
+  const observations = [expected, expected, null, 'A B', ...Array(6).fill(expected)];
+  const waits: number[] = [];
+  let reads = 0;
+  const monitor = new MemoqMarkerStateMonitor({
+    readCurrentValue: () => observations[reads++] ?? null,
+    wait: async ms => { waits.push(ms); }
+  });
+  await monitor.waitForEdit('AB', expected, 'inserting F9');
+  assert.equal(reads, observations.length);
+  assert.deepEqual(waits, [20, 20, ...Array(6).fill(120)]);
+});
+
+test('an edit rendered two frames late still receives six quick exact reads', async () => {
+  const observations = ['AB', 'AB', ...Array(6).fill('A<1>B')];
+  const waits: number[] = [];
+  let reads = 0;
+  const monitor = new MemoqMarkerStateMonitor({
+    readCurrentValue: () => observations[reads++] ?? null,
+    wait: async ms => { waits.push(ms); }
+  });
+  await monitor.waitForEdit('AB', 'A<1>B', 'inserting F9');
+  assert.equal(reads, observations.length);
+  assert.deepEqual(waits, Array(7).fill(20));
+});

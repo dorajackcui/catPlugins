@@ -131,8 +131,7 @@ test('ContentRequestHandler normalizes fill options and starts at the marker', a
     [entry],
     {
       autoStopAfterFilledCount: 2,
-      validatePlaceholders: false,
-      enableMemoqMarkerFill: false
+      validatePlaceholders: false
     },
     7,
     {
@@ -143,6 +142,14 @@ test('ContentRequestHandler normalizes fill options and starts at the marker', a
     }
   ]);
   assert.deepEqual(response, { ok: true, data: harness.fillResult });
+});
+
+test('a frame responds to liveness checks without starting or stopping a run', async () => {
+  const harness = createHarness();
+  assert.deepEqual(await harness.handler.handle({ type: 'CONTENT_PING' }), { ok: true, data: null });
+  assert.equal(harness.getStopCalls(), 0);
+  assert.equal(harness.getScanCall(), undefined);
+  assert.equal(harness.getFillCall(), undefined);
 });
 
 test('ContentRequestHandler routes stop without starting another run', async () => {

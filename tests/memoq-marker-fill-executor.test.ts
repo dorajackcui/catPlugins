@@ -3,54 +3,47 @@ import test from 'node:test';
 
 import {
   createMemoqMarkerFillPlan,
-  type MemoqMarkerFillPlan
+  type MemoqSequentialMarkerPlan
 } from '../domain/memoq-marker-fill.ts';
 import {
   MemoqMarkerFillExecutor,
   MemoqMarkerMaterializationError,
   buildAbsoluteCursorOperations
 } from '../platforms/memoq/marker-fill-executor.ts';
+import { MemoqMarkerTargetChangedError } from '../platforms/memoq/marker-state-monitor.ts';
 import type { DebuggerInputOperation } from '../shared/message-types.ts';
 
 const MEMOQ_MARKER_PATTERN = /\{\d+>|<\d+\}|<\d+>/g;
 
+function sequentialPlan(source: string, native: string, target: string): MemoqSequentialMarkerPlan {
+  const result = createMemoqMarkerFillPlan(source, native, target);
+  if (!result.ok) throw new Error(result.reason);
+  if (result.plan.method !== 'f9') throw new Error('Expected a sequential marker plan.');
+  return result.plan;
+}
+
 function makePairedPlan() {
-  const result = createMemoqMarkerFillPlan(
+  return sequentialPlan(
     '吾王只能<BlueBold>仰视</>着您。',
     '吾王只能{1>仰视<2}着您。',
     'Mon Roi doit <BlueBold>lever les yeux vers vous</>°!'
   );
-  assert.equal(result.ok, true);
-  if (!result.ok) {
-    throw new Error(result.reason);
-  }
-  return result.plan;
 }
 
 function makeAdjacentPlan() {
-  const result = createMemoqMarkerFillPlan(
+  return sequentialPlan(
     '{First}{Second}X{Third}',
     '<1><2>X<3>',
     '{First}{Second}Y{Third}'
   );
-  assert.equal(result.ok, true);
-  if (!result.ok) {
-    throw new Error(result.reason);
-  }
-  return result.plan;
 }
 
-function makeFlattenedWebtransPlan() {
-  const result = createMemoqMarkerFillPlan(
+function makeFlattenedFileTagPlan() {
+  return sequentialPlan(
     '技能冷却时间降低<span color=\\"#FF8E33\\">5</>秒。',
     '技能冷却时间降低<1>5<2>秒。',
     'スキルのクールタイムが<span color=\\"#FF8E33\\">5</>秒短縮される。'
   );
-  assert.equal(result.ok, true);
-  if (!result.ok) {
-    throw new Error(result.reason);
-  }
-  return result.plan;
 }
 
 function tokenizeEditorAtoms(value: string): string[] {
@@ -76,11 +69,14 @@ function tokenizeEditorAtoms(value: string): string[] {
 }
 
 interface EditorHarnessOptions {
-  plan?: MemoqMarkerFillPlan;
+  plan?: MemoqSequentialMarkerPlan;
+  directCaret?: boolean;
+  sourceGroups?: string[];
   wrongMarker?: boolean;
   noOpMarker?: boolean;
   firstUndo?: 'normal' | 'ignored' | 'delayed';
   driftAfterWaitMs?: number;
+  changeBeforeInput?: string;
 }
 
 function createEditorHarness(options: EditorHarnessOptions = {}) {
@@ -107,7 +103,14 @@ function createEditorHarness(options: EditorHarnessOptions = {}) {
         history.push(value);
         value = text;
       },
-      async runInput(_target, operations) {
+      async runInput(_target, action, position) {
+        if (position && options.changeBeforeInput) {
+          value = options.changeBeforeInput;
+          throw new MemoqMarkerTargetChangedError('The re-resolved target changed.');
+        }
+        const operations = position && !options.directCaret
+          ? buildAbsoluteCursorOperations(position.cursorOffset, action)
+          : [action];
         inputCalls.push(operations);
         if (operations.some(({ type }) => type === 'undo')) {
           undoCount += 1;
@@ -129,14 +132,13 @@ function createEditorHarness(options: EditorHarnessOptions = {}) {
           return;
         }
 
-        const offset =
-          operations.find(
-            (operation): operation is Extract<
-              DebuggerInputOperation,
-              { type: 'moveRight' }
-            > => operation.type === 'moveRight'
-          )?.count ?? 0;
+        if (!position) throw new Error('Missing marker position.');
+        assert.equal(position.expectedValue, value);
         const atoms = tokenizeEditorAtoms(value);
+        const offset = options.directCaret
+          ? tokenizeEditorAtoms(value.slice(0, position.textOffset)).length
+          : operations.find(op => op.type === 'moveRight')?.count ?? 0;
+        assert.equal(atoms.slice(0, offset).join('').length, position.textOffset);
 
         if (operations.some(({ type }) => type === 'deleteForward')) {
           history.push(value);
@@ -153,7 +155,7 @@ function createEditorHarness(options: EditorHarnessOptions = {}) {
           history.push(value);
           const marker = options.wrongMarker
             ? '<99>'
-            : plan.anchors[markerIndex]?.markers.join('');
+            : options.sourceGroups?.[markerIndex] ?? plan.anchors[markerIndex]?.markers.join('');
           if (!marker) {
             throw new Error('Expected the next planned marker.');
           }
@@ -223,7 +225,7 @@ test('MemoqMarkerFillExecutor materializes anchors through absolute navigation',
   assert.deepEqual(harness.inputCalls[3]?.at(-1), { type: 'key', key: 'F9' });
   assert.equal(
     harness.waitDelays.reduce((total, delayMs) => total + delayMs, 0),
-    4500
+    2500
   );
 });
 
@@ -242,16 +244,37 @@ test('MemoqMarkerFillExecutor materializes each adjacent marker sequence with on
   );
 });
 
+test('memoQ fills nine repeated tag pairs using only Delete and F9 when each caret is located', async () => {
+  const labels = Array.from({ length: 9 }, (_, index) => `label ${index + 1}`);
+  const marked = (label: string) => `<span color="red">${label}</>`;
+  const native = (label: string) => `<1>${label}<2>`;
+  const french = labels.map(label => `Libellé 👩‍🚀 ${label}`);
+  const sourceGroups = labels.flatMap(() => ['<1>', '<2>']);
+  const plan = sequentialPlan(
+    labels.map(marked).join(', '), labels.map(native).join(', '), french.map(marked).join(' et ')
+  );
+  const harness = createEditorHarness({ plan, directCaret: true, sourceGroups });
+  await harness.executor.execute();
+  assert.equal(harness.value(), french.map(native).join(' et '));
+  assert.deepEqual(harness.inputCalls, sourceGroups.flatMap(() => [
+    [{ type: 'deleteForward' }], [{ type: 'key', key: 'F9' }]
+  ]));
+  assert.equal(harness.waitDelays.reduce((sum, ms) => sum + ms, 0), 5700);
+
+  sourceGroups[16] = '<9>';
+  const wrong = createEditorHarness({ plan, directCaret: true, sourceGroups });
+  const error = await captureExecutionError(wrong.executor);
+  assert.equal(error instanceof MemoqMarkerMaterializationError && error.rollbackSucceeded, true);
+  assert.equal(wrong.value(), '');
+});
+
 test('MemoqMarkerFillExecutor inserts native tags at translated line breaks', async () => {
-  const result = createMemoqMarkerFillPlan(
+  const plan = sequentialPlan(
     'First\r\n\r\nSecond\r\nThird',
     'First<7><7>Second<7>Third',
     'Premier\n\nDeuxième\nTroisième'
   );
-  if (!result.ok) {
-    throw new Error(result.reason);
-  }
-  const harness = createEditorHarness({ plan: result.plan });
+  const harness = createEditorHarness({ plan });
 
   await harness.executor.execute();
 
@@ -265,7 +288,7 @@ test('MemoqMarkerFillExecutor inserts native tags at translated line breaks', as
 });
 
 test('MemoqMarkerFillExecutor materializes flattened webTrans tag pairs', async () => {
-  const harness = createEditorHarness({ plan: makeFlattenedWebtransPlan() });
+  const harness = createEditorHarness({ plan: makeFlattenedFileTagPlan() });
 
   await harness.executor.execute();
 
@@ -327,6 +350,15 @@ test('MemoqMarkerFillExecutor skips a no-op action and rolls back only owned his
   assert.equal(harness.undoCount(), 2);
 });
 
+test('memoQ stops before undoing a target changed between reads and dispatch', async () => {
+  const harness = createEditorHarness({ changeBeforeInput: 'Manual translation' });
+  const error = await captureExecutionError(harness.executor);
+  assert.equal(error instanceof MemoqMarkerMaterializationError && !error.rollbackSucceeded, true);
+  assert.equal(harness.value(), 'Manual translation');
+  assert.equal(harness.undoCount(), 0);
+  assert.deepEqual(harness.inputCalls, []);
+});
+
 test('MemoqMarkerFillExecutor waits for an exact delayed Undo predecessor', async () => {
   const harness = createEditorHarness({ wrongMarker: true, firstUndo: 'delayed' });
   const error = await captureExecutionError(harness.executor);
@@ -358,7 +390,7 @@ test('MemoqMarkerFillExecutor stops rollback after an ignored Undo', async () =>
 });
 
 test('MemoqMarkerFillExecutor catches drift during the final exact hold', async () => {
-  const harness = createEditorHarness({ driftAfterWaitMs: 3600 });
+  const harness = createEditorHarness({ driftAfterWaitMs: 2300 });
   const error = await captureExecutionError(harness.executor);
 
   assert.equal(

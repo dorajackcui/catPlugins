@@ -35,7 +35,9 @@ export function describeMemoqFillDiagnostic(diagnostic: MemoqFillFailureDiagnost
   const rowLabel = diagnostic.rowNumber
     ? `row ${diagnostic.rowNumber}`
     : `segment ${diagnostic.domId}`;
-  const message = FAILURE_MESSAGES[diagnostic.failureCode];
+  const message = diagnostic.failureCode === 'INPUT_FAILED' && diagnostic.activation.error
+    ? truncateMemoqDiagnosticValue(diagnostic.activation.error, 220)
+    : FAILURE_MESSAGES[diagnostic.failureCode];
   const source = diagnostic.sourceBefore || diagnostic.segmentSource;
 
   return `Stopped at memoQ ${rowLabel}: ${message} Source="${truncateMemoqDiagnosticValue(source)}"`;

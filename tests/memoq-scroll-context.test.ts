@@ -8,6 +8,68 @@ import {
   type MemoqScrollEnvironment
 } from '../platforms/memoq/scroll-context.ts';
 import { fakeDocument, fakeElement } from './memoq-test-dom.ts';
+import { createWebTransScrollbar } from '../platforms/memoq/webtrans-scrollbar.ts';
+
+test('webTrans drives the real segment scrollbar to both bounds and restores the original step', async () => {
+  let position = 3;
+  const lastStep = 5;
+  function arrow(direction: 'up' | 'down', delta: number) {
+    const button = fakeElement({ className: `vertical-scrollbar-${direction}-button` });
+    button.classList.contains = name => name === 'scrollbar-button-enabled' &&
+      (delta < 0 ? position > 0 : position < lastStep);
+    return Object.assign(button, {
+      dispatchEvent(event: Event) {
+        if (event.type === 'mousedown') position += delta;
+        return true;
+      }
+    });
+  }
+  const thumb = Object.assign(fakeElement({ className: 'vertical-scrollbar-thumb' }), {
+    style: { get top() { return `${position * 7}px`; } }
+  });
+  const scrollbar = fakeElement({ className: 'vertical-scrollbar', rect: { height: 150 },
+    children: [arrow('up', -1), arrow('down', 1), thumb] });
+  const body = fakeElement({ id: 'gridTableBody', children: [
+    fakeElement({ tagName: 'TR', children: [fakeElement({ className: 'order', textContent: '814.' })] })
+  ] });
+  const grid = fakeElement({ id: 'gridContainer', children: [scrollbar, body] });
+  const doc = Object.assign(fakeDocument(grid), {
+    getElementById: (id: string) => [grid, body].find(element => element.id === id) ?? null,
+    defaultView: { MouseEvent: Event }
+  });
+  const context = createWebTransScrollbar(doc);
+  if (!context) throw new Error('webTrans scrollbar was not detected');
+  assert.equal(context.hasVerifiedScrollBounds, true);
+  assert.equal(context.initialTop, 21);
+  let stopChecks = 0;
+  await context.scrollToTop(() => { stopChecks++; });
+  assert.equal(stopChecks, 3);
+  assert.equal(context.getTop(), 0);
+  for (let i = 0; i < lastStep; i++) {
+    assert.equal(context.isAtBottom(), false);
+    await context.scrollBy(150);
+  }
+  assert.equal(context.isAtBottom(), true);
+  await context.restore();
+  assert.equal(context.getTop(), context.initialTop);
+
+  // Expanding newly loaded cells can shift the grid without any arrow click.
+  position = 0;
+  const fromTop = createWebTransScrollbar(doc);
+  if (!fromTop) throw new Error('webTrans scrollbar was not detected at the top');
+  await fromTop.scrollBy(150);
+  position = 4;
+  await fromTop.restore();
+  assert.equal(position, 0);
+
+  position = lastStep;
+  const fromBottom = createWebTransScrollbar(doc);
+  if (!fromBottom) throw new Error('webTrans scrollbar was not detected at the bottom');
+  await fromBottom.scrollToTop();
+  position = 1;
+  await fromBottom.restore();
+  assert.equal(position, lastStep);
+});
 
 interface RecordedEvent {
   receiver: 'focus' | 'target';

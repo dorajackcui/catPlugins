@@ -4,3 +4,9 @@ const MEMSOURCE_EDITOR_FRAME_URL_RE =
 export function isMemsourceEditorFrameUrl(url?: string): boolean {
   return Boolean(url && MEMSOURCE_EDITOR_FRAME_URL_RE.test(url));
 }
+
+export function isMemoqWebTransFrameUrl(url?: string): boolean {
+  if (!url) return false;
+  try { return /\/webtrans\/translation\.aspx$/i.test(new URL(url).pathname); }
+  catch { return false; }
+}

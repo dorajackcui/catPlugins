@@ -24,9 +24,9 @@ export function shouldRejectNonEmptyTarget(
 }
 
 export interface MemoqRuntimePort {
-  isActive(): boolean;
+  withOriginalTags?<T>(operation: () => Promise<T>): Promise<T>;
   findScrollContext(): ScrollContext | null;
-  collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[];
+  collectVisibleSegments(scrollContext: ScrollContext, includeEmptySources?: boolean): RuntimeSegment[];
   fillSegment(
     segment: RuntimeSegment,
     value: string,
@@ -67,6 +67,12 @@ export class PlatformRuntime {
     return this.platform === 'memoq';
   }
 
+  withMemoqOriginalTags<T>(operation: () => Promise<T>): Promise<T> {
+    return this.isMemoqActive() && this.memoq.withOriginalTags
+      ? this.memoq.withOriginalTags(operation)
+      : operation();
+  }
+
   prepareMemoqTrustedInput(): Promise<void> {
     return this.memoq.prepareTrustedInput();
   }
@@ -76,8 +82,9 @@ export class PlatformRuntime {
     return this[platform].findScrollContext() ?? this.createFallbackScrollContext();
   }
 
-  collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[] {
+  collectVisibleSegments(scrollContext: ScrollContext, includeEmptySources = false): RuntimeSegment[] {
     const platform = requireEditorPlatform(this.platform);
+    if (platform === 'memoq') return this.memoq.collectVisibleSegments(scrollContext, includeEmptySources);
     return this[platform].collectVisibleSegments(scrollContext);
   }
 

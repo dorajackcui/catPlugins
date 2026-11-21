@@ -1,6 +1,7 @@
 import type { ContentScrollHelpers } from '../../content/scroll.ts';
 import type { ScrollContext } from '../../content/types.ts';
 import type { MemoqDomProfile } from './dom-profile.ts';
+import { createWebTransScrollbar } from './webtrans-scrollbar.ts';
 
 export interface MemoqScrollEnvironment {
   root: Document;
@@ -26,6 +27,10 @@ export class MemoqScrollContextResolver {
   ) {}
 
   resolve(): ScrollContext | null {
+    if (this.profile.id === 'legacy-webtrans') {
+      const scrollbar = createWebTransScrollbar(this.environment.root);
+      if (scrollbar) return scrollbar;
+    }
     const profileScrollRoot = this.profile.findScrollRoot(this.environment.root);
     if (
       profileScrollRoot &&

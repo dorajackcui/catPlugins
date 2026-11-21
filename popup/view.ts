@@ -7,16 +7,12 @@ import type {
   PopupViewPort
 } from './contracts.ts';
 
-export function parsePopupFillOptions(
-  rawValue: string,
-  enableMemoqMarkerFill = false
-): FillOptions {
+export function parsePopupFillOptions(rawValue: string): FillOptions {
   const normalizedValue = rawValue.trim();
   if (!normalizedValue) {
     return {
       autoStopAfterFilledCount: null,
-      validatePlaceholders: false,
-      enableMemoqMarkerFill
+      validatePlaceholders: false
     };
   }
 
@@ -27,8 +23,7 @@ export function parsePopupFillOptions(
 
   return {
     autoStopAfterFilledCount: Math.floor(parsed),
-    validatePlaceholders: false,
-    enableMemoqMarkerFill
+    validatePlaceholders: false
   };
 }
 
@@ -44,7 +39,6 @@ export class PopupView implements PopupViewPort {
   private readonly fillButton: HTMLButtonElement | null;
   private readonly stopButton: HTMLButtonElement | null;
   private readonly autoStopCountInput: HTMLInputElement | null;
-  private readonly enableMemoqMarkerFillInput: HTMLInputElement | null;
   private readonly fileInfo: HTMLElement | null;
   private readonly statusNode: HTMLElement | null;
   private readonly editorPlatformSelect: HTMLSelectElement | null;
@@ -61,9 +55,6 @@ export class PopupView implements PopupViewPort {
     this.stopButton = document.querySelector<HTMLButtonElement>('#stop-button');
     this.autoStopCountInput = document.querySelector<HTMLInputElement>(
       '#auto-stop-count'
-    );
-    this.enableMemoqMarkerFillInput = document.querySelector<HTMLInputElement>(
-      '#enable-memoq-marker-fill'
     );
     this.fileInfo = document.querySelector<HTMLElement>('#file-info');
     this.statusNode = document.querySelector<HTMLElement>('#status');
@@ -88,10 +79,6 @@ export class PopupView implements PopupViewPort {
       'change',
       handlers.onAutoStopChange
     );
-    this.enableMemoqMarkerFillInput?.addEventListener(
-      'change',
-      handlers.onMemoqMarkerFillChange
-    );
   }
 
   setBusy(nextBusy: boolean): void {
@@ -103,9 +90,6 @@ export class PopupView implements PopupViewPort {
     }
     if (this.autoStopCountInput) {
       this.autoStopCountInput.disabled = nextBusy;
-    }
-    if (this.enableMemoqMarkerFillInput) {
-      this.enableMemoqMarkerFillInput.disabled = nextBusy;
     }
     this.updateActionButtons();
   }
@@ -152,7 +136,7 @@ export class PopupView implements PopupViewPort {
   }
 
   renderFillOptions(fillOptions?: FillOptions | null): void {
-    if (!this.autoStopCountInput || !this.enableMemoqMarkerFillInput) {
+    if (!this.autoStopCountInput) {
       return;
     }
 
@@ -161,8 +145,6 @@ export class PopupView implements PopupViewPort {
       normalizedFillOptions.autoStopAfterFilledCount === null
         ? ''
         : String(normalizedFillOptions.autoStopAfterFilledCount);
-    this.enableMemoqMarkerFillInput.checked =
-      normalizedFillOptions.enableMemoqMarkerFill === true;
   }
 
   renderEditorPlatform(platform: EditorPlatform | null): void {
@@ -181,10 +163,7 @@ export class PopupView implements PopupViewPort {
   }
 
   readFillOptions(): FillOptions {
-    return parsePopupFillOptions(
-      this.autoStopCountInput?.value ?? '',
-      this.enableMemoqMarkerFillInput?.checked === true
-    );
+    return parsePopupFillOptions(this.autoStopCountInput?.value ?? '');
   }
 
   clearFileSelection(): void {

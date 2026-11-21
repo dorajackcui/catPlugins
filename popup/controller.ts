@@ -1,4 +1,5 @@
 import { describeRunFailure } from '../domain/run-stop.ts';
+import { describeFillResult, includeMemoqTagErrors } from '../domain/fill-failure.ts';
 import { requireEditorPlatform } from '../shared/editor-platform.ts';
 import type {
   ExportSourcesResult,
@@ -69,16 +70,6 @@ export class PopupController {
             'error'
           );
         });
-      },
-      onMemoqMarkerFillChange: () => {
-        void this.persistFillOptions().catch((error) => {
-          this.port.view.renderStatus(
-            error instanceof Error
-              ? error.message
-              : 'Failed to save memoQ marker fill setting.',
-            'error'
-          );
-        });
       }
     });
 
@@ -96,7 +87,10 @@ export class PopupController {
     const popupState = await this.port.sendMessage<PopupState>({
       type: 'GET_STATE'
     });
-    this.runMonitor.renderRunState(popupState.runState);
+    const { runState, previewResult } = popupState;
+    this.runMonitor.renderRunState(runState.phase === 'idle'
+      ? { ...runState, message: includeMemoqTagErrors(runState.message, previewResult) }
+      : runState);
     this.port.view.renderFileInfo(popupState);
     this.port.view.renderFillOptions(popupState.fillOptions);
     if (canRestorePlatform && platformRevision === this.platformRevision) {
@@ -185,14 +179,8 @@ export class PopupController {
         type: 'RUN_FILL',
         payload: { fillOptions }
       });
-      const message =
-        result.stopReason ??
-        (result.stoppedByAutoStop &&
-        result.autoStopAfterFilledCount !== null
-          ? `Filled ${result.filledCount} segment(s) and auto-stopped at ${result.autoStopAfterFilledCount}.`
-          : `Filled ${result.filledCount} segment(s).`);
       this.port.view.renderStatus(
-        message,
+        includeMemoqTagErrors(describeFillResult(result), result.preview),
         result.stopReason ? 'error' : 'default'
       );
     } catch (error) {

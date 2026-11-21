@@ -16,7 +16,6 @@ interface NamedScrollContext extends ScrollContext {
 }
 
 interface HarnessOptions {
-  memoqActive?: boolean;
   memoqSegments?: RuntimeSegment[];
   gientransSegments?: RuntimeSegment[];
   phraseSegments?: RuntimeSegment[];
@@ -68,10 +67,6 @@ function createHarness(options: HarnessOptions = {}): {
   const fallbackScrollContext = makeScrollContext('fallback');
 
   const memoq: MemoqRuntimePort = {
-    isActive: () => {
-      calls.push('memoq.isActive');
-      return options.memoqActive ?? false;
-    },
     findScrollContext: () => {
       calls.push('memoq.findScrollContext');
       return options.memoqScrollContext ?? null;
@@ -200,7 +195,7 @@ test('PlatformRuntime requires a selection before scanning', () => {
 });
 
 test('PlatformRuntime keeps memoQ lifecycle and fill context on the memoQ port', async () => {
-  const harness = createHarness({ memoqActive: true });
+  const harness = createHarness();
   const segment = makeSegment('memoq');
   const context: MemoqFillExecutionContext = {
     runId: 'run-1',

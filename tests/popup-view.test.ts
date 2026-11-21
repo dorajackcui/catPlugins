@@ -6,13 +6,11 @@ import { parsePopupFillOptions } from '../popup/view.ts';
 test('parsePopupFillOptions disables validation and preserves integer rules', () => {
   assert.deepEqual(parsePopupFillOptions(''), {
     autoStopAfterFilledCount: null,
-    validatePlaceholders: false,
-    enableMemoqMarkerFill: false
+    validatePlaceholders: false
   });
-  assert.deepEqual(parsePopupFillOptions(' 12.9 ', true), {
+  assert.deepEqual(parsePopupFillOptions(' 12.9 '), {
     autoStopAfterFilledCount: 12,
-    validatePlaceholders: false,
-    enableMemoqMarkerFill: true
+    validatePlaceholders: false
   });
 
   let parseError: unknown;

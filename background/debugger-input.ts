@@ -118,6 +118,16 @@ export class DebuggerInputController {
     }
   }
 
+  async insertFocusedText(tabId: number, text: string): Promise<void> {
+    if (!text) throw new Error('The focused memoQ input requires text.');
+    await this.prepare(tabId);
+    try {
+      await this.session.sendCommand({ tabId }, 'Input.insertText', { text });
+    } finally {
+      this.session.keepAlive(tabId);
+    }
+  }
+
   private async dispatchClick(
     target: DebuggerTarget,
     x: number,

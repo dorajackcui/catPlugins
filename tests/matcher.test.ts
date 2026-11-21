@@ -1,11 +1,32 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { applyMemoqPreviewCorrection, buildPreview } from '../domain/matcher.ts';
+import { buildPreview } from '../domain/matcher.ts';
 import type { PageSegment, TranslationEntry } from '../shared/types.ts';
 import { normalizeText } from '../shared/utils.ts';
 
-test('buildPreview handles real memoQ line break markers with the existing marker fill gate', () => {
+test('webTrans validates chip membership with QA on or off and still checks ordinary placeholders', () => {
+  const status = (source: string, chips: string[], target: string, validatePlaceholders: boolean) => {
+    const segment: PageSegment = { platform: 'memoq', domId: '906', sourceRaw: source, sourceNormalized: source,
+      memoqSourceMarkers: chips, occurrenceIndex: 1, targetRaw: '', isEmptyTarget: true, placeholderTokens: [] };
+    const entry = { rowIndex: 2, occurrenceIndex: 1, sourceNormalized: source, sourceRaw: source, targetRaw: target };
+    return buildPreview([entry], [segment], { autoStopAfterFilledCount: null, validatePlaceholders }).items[0].status;
+  };
+  for (const qa of [true, false]) {
+    const source = 'A<1>B<2>C<3> %s';
+    const chips = ['<1>','<2>','<3>'];
+    assert.equal(status(source, chips, '<1><2><2><1> %s', qa), 'ready');
+    assert.equal(status(source, chips, 'Texte %s', qa), 'ready');
+    assert.equal(status(source, chips, '<99> %s', qa), 'placeholderError');
+    for (const extra of ['<1>', '{6>', '<7}', '<NewKind/>', '<新标签/>', '{new}']) {
+      assert.equal(status('Plain text', [], 'Texte ' + extra, qa), 'placeholderError');
+    }
+    assert.equal(status('Version {number}', [], 'Version {number}', qa), 'ready');
+    assert.equal(status(source, chips, '<2> missing', qa), qa ? 'placeholderError' : 'ready');
+  }
+});
+
+test('buildPreview handles real memoQ line break markers with default options and placeholder validation', () => {
   for (const [excelSource, memoqSource] of [
     ['First\nSecond', 'First<1>Second'],
     ['${1}.First\n${2}.Second', '${1}.First<1>${2}.Second'],
@@ -34,15 +55,12 @@ test('buildPreview handles real memoQ line break markers with the existing marke
 
     const enabled = buildPreview(lineBreakEntries, segments, {
       autoStopAfterFilledCount: null,
-      validatePlaceholders: true,
-      enableMemoqMarkerFill: true
+      validatePlaceholders: true
     });
     assert.equal(enabled.items[0]?.status, 'ready');
     assert.equal(enabled.items[0]?.translation, target);
 
-    const disabled = buildPreview(lineBreakEntries, segments);
-    assert.equal(disabled.items[0]?.status, 'placeholderError');
-    assert.equal(/disabled/.test(disabled.items[0]?.reason ?? ''), true);
+    assert.equal(buildPreview(lineBreakEntries, segments).items[0]?.status, 'ready');
   }
 });
 
@@ -165,7 +183,7 @@ test('buildPreview rejects a memoQ row-number match when the Excel source differ
   );
 });
 
-test('buildPreview gates matched memoQ protected markers while marker fill is disabled', () => {
+test('buildPreview rejects a translation that duplicates protected breaks', () => {
   const excelSource =
     '1. 活动期间。\\r\\n2. 搭配师可自由选择。\\r\\n3. 若已解锁。\\r\\n4. 可以补购。\\r\\n5. 获得权益。';
   const memoqSource =
@@ -202,7 +220,7 @@ test('buildPreview gates matched memoQ protected markers while marker fill is di
   assert.equal(preview.placeholderErrors, 1);
 });
 
-test('buildPreview gates a row-number memoQ marker match while marker fill is disabled', () => {
+test('buildPreview rejects missing markers even with a matching row number', () => {
   const preview = buildPreview(
     [
       {
@@ -233,7 +251,7 @@ test('buildPreview gates a row-number memoQ marker match while marker fill is di
   assert.equal(preview.items[0]?.translation, 'Target');
 });
 
-test('buildPreview still resolves the correct marker source before applying the disabled gate', () => {
+test('buildPreview resolves the source before checking its marker mapping', () => {
   const preview = buildPreview(
     [
       {
@@ -297,8 +315,7 @@ test('buildPreview enables strictly mapped memoQ marker rows independently', () 
     ],
     {
       autoStopAfterFilledCount: null,
-      validatePlaceholders: true,
-      enableMemoqMarkerFill: true
+      validatePlaceholders: true
     }
   );
 
@@ -333,8 +350,7 @@ test('buildPreview enables paired memoQ markers mapped from XML-like Excel tags'
     ],
     {
       autoStopAfterFilledCount: null,
-      validatePlaceholders: false,
-      enableMemoqMarkerFill: true
+      validatePlaceholders: false
     }
   );
 
@@ -374,8 +390,7 @@ test('buildPreview enables XML-like Excel tags flattened by webTrans', () => {
     ],
     {
       autoStopAfterFilledCount: null,
-      validatePlaceholders: false,
-      enableMemoqMarkerFill: true
+      validatePlaceholders: false
     }
   );
 
@@ -414,7 +429,7 @@ test('buildPreview rejects a marker-only memoQ source without visible matching e
   assert.equal(preview.items[0]?.translation, undefined);
 });
 
-test('memoQ preview correction preserves legitimate unmatched rows', () => {
+test('memoQ preview preserves legitimate unmatched rows', () => {
   const preview = buildPreview([], [
     {
       domId: '171',
@@ -429,10 +444,8 @@ test('memoQ preview correction preserves legitimate unmatched rows', () => {
     }
   ]);
 
-  const corrected = applyMemoqPreviewCorrection(preview);
-
-  assert.equal(corrected.totalSegments, 1);
-  assert.equal(corrected.items[0]?.status, 'unmatched');
+  assert.equal(preview.totalSegments, 1);
+  assert.equal(preview.items[0]?.status, 'unmatched');
 });
 
 test('buildPreview marks placeholder mismatches', () => {

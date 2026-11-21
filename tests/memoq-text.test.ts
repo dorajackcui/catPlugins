@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   escapeMemoqPlainTargetText,
   formatMemoqInlineTag,
+  readMemoqOriginalSource,
   isMemoqCommittedTargetText,
   memoQAccessibilityTextToRenderedText,
   serializeMemoqContent,
@@ -34,6 +35,18 @@ test('formatMemoqInlineTag converts memoQ tag DOM classes to placeholder markup'
   assert.equal(formatMemoqInlineTag('tag inline-empty editor-char', '1'), '<1>');
   assert.equal(formatMemoqInlineTag('tag inline-open editor-char', '2'), '{2>');
   assert.equal(formatMemoqInlineTag('tag inline-close editor-char', '2'), '<2}');
+});
+
+test('webTrans long tags expose the original file value and retain the same native ID', () => {
+  const raw = String.raw`<span color=\"#abcdef\">`;
+  const tag = (label: string) => fakeElement({ className: 'tag inline-empty', children: [
+    fakeElement({ className: 'tag-content', attributes: { 'data-tagid': '12' }, textContent: label })
+  ] });
+  const root = (label: string) => fakeElement({ children: [fakeText('A  '), tag(label), fakeText('B')] }) as unknown as HTMLElement;
+  const long = root(`mq:rxt displaytext="${raw}" val="${raw}"`);
+  assert.equal(serializeMemoqContentExact(long), 'A  <12>B');
+  assert.equal(readMemoqOriginalSource(long), `A  ${raw}B`);
+  assert.equal(readMemoqOriginalSource(root('12')), undefined);
 });
 
 test('memoQ accessibility text can be compared with rendered cell text', () => {

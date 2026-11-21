@@ -18,6 +18,7 @@ test('memoQ marker plan maps real cell line breaks across LF, CRLF, and CR', () 
       assert.deepEqual(result, {
         ok: true,
         plan: {
+          method: 'f9',
           expectedTarget: 'Premier<7>Deuxième',
           skeletonTarget: 'Premier\uE000Deuxième',
           anchors: [{ sentinel: '\uE000', markers: ['<7>'] }]
@@ -37,6 +38,7 @@ test('memoQ marker plan preserves consecutive breaks mixed with placeholders and
   assert.deepEqual(result, {
     ok: true,
     plan: {
+      method: 'f9',
       expectedTarget: 'Premier<1><2><2>{3>Deuxième<4}Fin',
       skeletonTarget: 'Premier\uE000Deuxième\uE001Fin',
       anchors: [
@@ -80,6 +82,7 @@ test('memoQ marker plan maps one Excel placeholder to one native marker', () => 
   assert.deepEqual(result, {
     ok: true,
     plan: {
+      method: 'f9',
       expectedTarget: 'レベル<1>到達で解放',
       skeletonTarget: 'レベル\uE000到達で解放',
       anchors: [{ sentinel: '\uE000', markers: ['<1>'] }]
@@ -97,6 +100,7 @@ test('memoQ marker plan protects only line breaks when numbered placeholders rem
   assert.deepEqual(result, {
     ok: true,
     plan: {
+      method: 'f9',
       expectedTarget: '${1}.ミニゲームを${2}回クリア<1>${3}.すべて収集すると報酬を獲得',
       skeletonTarget: '${1}.ミニゲームを${2}回クリア\uE000${3}.すべて収集すると報酬を獲得',
       anchors: [{ sentinel: '\uE000', markers: ['<1>'] }]
@@ -114,6 +118,7 @@ test('memoQ marker plan leaves named placeholders and color markup literal besid
   assert.deepEqual(result, {
     ok: true,
     plan: {
+      method: 'f9',
       expectedTarget: '<color=#9fe393>%{name}</c>のスキルが<1>レベル%{lv}に達する',
       skeletonTarget: '<color=#9fe393>%{name}</c>のスキルが\uE000レベル%{lv}に達する',
       anchors: [{ sentinel: '\uE000', markers: ['<1>'] }]
@@ -140,6 +145,7 @@ test('memoQ marker plan creates one anchor per native marker sequence', () => {
   assert.deepEqual(result, {
     ok: true,
     plan: {
+      method: 'f9',
       expectedTarget: '<1><2>第<3>位',
       skeletonTarget: '\uE000第\uE001位',
       anchors: [
@@ -184,6 +190,7 @@ test('memoQ marker plan maps paired Excel tags to native memoQ markers', () => {
   assert.deepEqual(result, {
     ok: true,
     plan: {
+      method: 'f9',
       expectedTarget: 'Mon Roi doit {1>lever les yeux vers vous<2}°!',
       skeletonTarget: 'Mon Roi doit \uE000lever les yeux vers vous\uE001°!',
       anchors: [
@@ -202,7 +209,22 @@ test('memoQ marker plan avoids private-use characters already present in text', 
   );
 
   assert.equal(result.ok, true);
-  assert.equal(result.ok ? result.plan.anchors[0]?.sentinel : '', '\uE001');
+  assert.equal(result.ok && result.plan.method === 'f9' ? result.plan.anchors[0]?.sentinel : '', '\uE001');
+});
+
+test('webTrans accepts native ID reuse even when every F9 anchor character is occupied', () => {
+  const occupied = Array.from({ length: 0xf8ff - 0xe000 + 1 }, (_, offset) =>
+    String.fromCharCode(0xe000 + offset)
+  ).join('');
+  const source = 'A<1>B<2>C<3>';
+  const expectedTarget = occupied + '<1><2><2><1>';
+  assert.deepEqual(
+    createMemoqMarkerFillPlan(source, source, expectedTarget, undefined, ['<1>', '<2>', '<3>']),
+    { ok: true, plan: { method: 'webtrans', expectedTarget } }
+  );
+  assert.deepEqual(createMemoqMarkerFillPlan(source, source, occupied + source), {
+    ok: false, reason: 'No safe private-use marker anchors are available.'
+  });
 });
 
 test('memoQ cursor offsets use immutable skeleton graphemes without parsing literal marker text', () => {
@@ -228,6 +250,7 @@ test('memoQ marker plan accepts paired Excel tags flattened to empty memoQ marke
   assert.deepEqual(result, {
     ok: true,
     plan: {
+      method: 'f9',
       expectedTarget: 'Avant<1>nom<2>Après',
       skeletonTarget: 'Avant\uE000nom\uE001Après',
       anchors: [
@@ -248,6 +271,7 @@ test('memoQ marker plan maps the real webTrans span representation', () => {
   assert.deepEqual(result, {
     ok: true,
     plan: {
+      method: 'f9',
       expectedTarget: 'スキルのクールタイムが<1>5<2>秒短縮される。',
       skeletonTarget: 'スキルのクールタイムが\uE0005\uE001秒短縮される。',
       anchors: [
@@ -268,6 +292,7 @@ test('memoQ marker plan maps the repeated span, hyperlink, and counter sequence'
   assert.deepEqual(result, {
     ok: true,
     plan: {
+      method: 'f9',
       expectedTarget:
         'ビーストテクノロジーの<1>薬剤加工ライン<2>を使用して、<3><4><2>を1個製造する(<5>/<6>)',
       skeletonTarget:

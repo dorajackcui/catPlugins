@@ -1,3 +1,4 @@
+import { MEMOQ_MARKER_PATTERN } from '../../domain/memoq-file-tags.ts';
 import { normalizeText } from '../../shared/utils.ts';
 
 const MEMOQ_NUMERIC_PLACEHOLDER_PATTERN = /\{(\d+)\}/g;
@@ -90,12 +91,63 @@ export function formatMemoqInlineTag(className: string, tagText: string): string
   return `<${tagId}>`;
 }
 
-export function serializeMemoqContentExact(content: HTMLElement): string {
-  const fragments: string[] = [];
+function nativeTagText(element: HTMLElement): string {
+  const chip = element.querySelector<HTMLElement>('.tag-content');
+  const id = chip?.getAttribute?.('data-tagid');
+  return formatMemoqInlineTag(element.className,
+    id && /^\d+$/.test(id) ? id : chip?.textContent || element.textContent || '');
+}
+
+export function readMemoqNativeMarkers(content: HTMLElement): string[] {
+  return Array.from(content.querySelectorAll<HTMLElement>('.tag'), nativeTagText);
+}
+
+export function readMemoqOriginalSource(content: HTMLElement): string | undefined {
+  let hasTags = false;
+  let complete = true;
+  const value = serializeContent(content, undefined, element => {
+    hasTags = true;
+    const label = element.querySelector('.tag-content')?.textContent ?? '';
+    // webTrans shows the protected source verbatim in the last val attribute.
+    // Quotes and backslashes inside that value belong to the source file.
+    const match = /^mq:rxt\s+displaytext="[\s\S]*?"\s+val="([\s\S]*)"$/.exec(label);
+    if (!match) complete = false;
+    return match?.[1] ?? '';
+  });
+  return hasTags && complete ? value : undefined;
+}
+
+export function serializeMemoqContentExact(
+  content: HTMLElement,
+  visitText?: (node: Text, start: number) => void
+): string {
+  return serializeContent(content, visitText, nativeTagText);
+}
+
+/** A literal "<1>" in a text node must never confirm a native marker paste. */
+export function matchesMemoqNativeTarget(content: HTMLElement, expected: string): boolean {
+  const markers = expected.matchAll(MEMOQ_MARKER_PATTERN);
+  let matches = true;
+  const actual = serializeContent(content, undefined, (element, offset) => {
+    const marker = nativeTagText(element);
+    const next = markers.next();
+    if (next.done || next.value.index !== offset || next.value[0] !== marker) matches = false;
+    return marker;
+  });
+  return matches && markers.next().done === true && actual === expected;
+}
+
+function serializeContent(
+  content: HTMLElement,
+  visitText: ((node: Text, start: number) => void) | undefined,
+  tagText: (element: HTMLElement, offset: number) => string
+): string {
+  let value = '';
 
   const visit = (node: ChildNode): void => {
     if (node.nodeType === 3) {
-      fragments.push(node.textContent || '');
+      visitText?.(node as Text, value.length);
+      value += node.textContent || '';
       return;
     }
 
@@ -109,18 +161,12 @@ export function serializeMemoqContentExact(content: HTMLElement): string {
     }
 
     if (element.classList.contains('tag')) {
-      const tagContent = element.querySelector<HTMLElement>('.tag-content');
-      fragments.push(
-        formatMemoqInlineTag(
-          element.className,
-          tagContent?.textContent || element.textContent || ''
-        )
-      );
+      value += tagText(element, value.length);
       return;
     }
 
     if (element.classList.contains('ws-space')) {
-      fragments.push(' ');
+      value += ' ';
       return;
     }
 
@@ -133,7 +179,7 @@ export function serializeMemoqContentExact(content: HTMLElement): string {
     visit(child);
   }
 
-  return fragments.join('') || content.innerText || content.textContent || '';
+  return value || content.innerText || content.textContent || '';
 }
 
 export function serializeMemoqContent(content: HTMLElement): string {

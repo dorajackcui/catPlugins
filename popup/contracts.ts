@@ -15,7 +15,6 @@ export interface PopupViewHandlers {
   onFill(): void;
   onStop(): void;
   onAutoStopChange(): void;
-  onMemoqMarkerFillChange(): void;
 }
 
 export interface PopupViewPort {

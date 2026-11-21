@@ -1,6 +1,7 @@
 import type { RuntimeSegment } from '../../content/types.ts';
 import type {
   MemoqFillDiagnosticBase,
+  MemoqFillTrace,
   MemoqFillFailureCode,
   MemoqFillFailureDiagnostic,
   MemoqFillSuccessDiagnostic,
@@ -8,14 +9,9 @@ import type {
 } from '../../shared/fill-outcome-types.ts';
 import type { MemoqDomProfileId } from './dom-profile-types.ts';
 
-export interface MemoqFillDiagnosticBuilderOptions {
+export interface MemoqFillDiagnosticBuilderOptions extends Partial<MemoqFillTrace> {
   profileId: MemoqDomProfileId;
   collectNearbyRows(rowNumber?: string): MemoqVisibleRowSnapshot[];
-  runId?: string;
-  sequence?: number;
-  scanPass?: number;
-  scrollTop?: number;
-  scrollMode?: 'native' | 'synthetic';
 }
 
 export interface MemoqFillDiagnosticInput {

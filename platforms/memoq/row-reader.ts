@@ -2,11 +2,10 @@ import { extractPlaceholderTokens } from '../../domain/qa.ts';
 import { normalizeText } from '../../shared/utils.ts';
 import type { ContentScriptDomHelpers } from '../../content/dom.ts';
 import type { RuntimeSegment, ScrollContext } from '../../content/types.ts';
-import { readMemoqAccessibilityTextBoxValue } from './accessibility-textbox.ts';
-import type { MemoqDomProfile } from './dom-profile.ts';
-import { serializeMemoqContent } from './text.ts';
+import { MEMOQ_TEXTBOX_SELECTOR, readMemoqAccessibilityTextBoxValue } from './accessibility-textbox.ts';
+import { supportsWebTransInput, type MemoqDomProfile } from './dom-profile.ts';
+import { readMemoqNativeMarkers, readMemoqOriginalSource, serializeMemoqContent, serializeMemoqContentExact } from './text.ts';
 
-const MEMOQ_ACCESSIBILITY_TEXTBOX_SELECTOR = 'textarea, input[type="text"]';
 const VISIBLE_ROW_OVERLAP_RATIO = 0.5;
 
 export interface MemoqVisibleRowDiagnostic {
@@ -30,15 +29,16 @@ export class MemoqRowReader {
     this.helpers = helpers;
   }
 
-  collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[] {
+  collectVisibleSegments(scrollContext: ScrollContext, includeEmptySources = false): RuntimeSegment[] {
     const rows = this.helpers.sortByVisualPosition(
       this.profile.findVisibleRows(document),
       scrollContext
     );
     const segments: RuntimeSegment[] = [];
+    const canPasteMarkers = supportsWebTransInput(this.profile);
 
     for (const row of rows) {
-      const segment = this.extractSegment(row, scrollContext);
+      const segment = this.extractSegment(row, scrollContext, canPasteMarkers, includeEmptySources);
       if (segment) {
         segments.push(segment);
       }
@@ -48,7 +48,7 @@ export class MemoqRowReader {
   }
 
   getEditableValue(targetElement: HTMLElement): string {
-    if (targetElement.matches(MEMOQ_ACCESSIBILITY_TEXTBOX_SELECTOR)) {
+    if (targetElement.matches(MEMOQ_TEXTBOX_SELECTOR)) {
       return readMemoqAccessibilityTextBoxValue(
         targetElement as HTMLInputElement | HTMLTextAreaElement
       );
@@ -57,11 +57,11 @@ export class MemoqRowReader {
     return serializeMemoqContent(this.profile.getContentRoot(targetElement));
   }
 
-  getCurrentEditableValue(segment: RuntimeSegment): string {
-    return this.getEditableValue(
-      this.findCurrentTargetByRowNumber(segment.rowNumber) ??
-        (segment.targetElement as HTMLElement)
-    );
+  private readRawCell(cell: HTMLElement, content?: HTMLElement): string {
+    if (cell.matches(MEMOQ_TEXTBOX_SELECTOR)) {
+      return (cell as HTMLInputElement | HTMLTextAreaElement).value ?? cell.textContent ?? '';
+    }
+    return serializeMemoqContentExact(content ?? this.profile.getContentRoot(cell));
   }
 
   findCurrentTargetByRowNumber(rowNumber?: string): HTMLElement | null {
@@ -101,6 +101,16 @@ export class MemoqRowReader {
     return cells ? this.getEditableValue(cells.source) : null;
   }
 
+  matchesCurrentMarkerSource(segment: RuntimeSegment): boolean {
+    const cells = segment.rowNumber ? this.findCurrentCellsByRowNumber(segment.rowNumber)
+      : segment.scanElement?.isConnected ? this.profile.findCells(segment.scanElement as HTMLElement) : null;
+    if (!cells || normalizeText(this.getEditableValue(cells.source)) !== segment.sourceNormalized) return false;
+    if (!segment.memoqSourceMarkers) return true;
+    const current = readMemoqNativeMarkers(this.profile.getContentRoot(cells.source));
+    return current.length === segment.memoqSourceMarkers.length &&
+      segment.memoqSourceMarkers.every((token, i) => token === current[i]);
+  }
+
   collectVisibleRowDiagnostics(
     targetRowNumber?: string,
     radius = 2
@@ -137,21 +147,26 @@ export class MemoqRowReader {
 
   private extractSegment(
     row: HTMLElement,
-    scrollContext: ScrollContext
+    scrollContext: ScrollContext,
+    canPasteMarkers: boolean,
+    includeEmptySources: boolean
   ): RuntimeSegment | null {
+    if (row.classList.contains('not-loaded-row')) return null;
     const cells = this.profile.findCells(row);
     if (!cells) {
       return null;
     }
 
-    const sourceRaw = this.getEditableValue(cells.source);
+    const sourceContent = this.profile.getContentRoot(cells.source);
+    const sourceRaw = this.readRawCell(cells.source, sourceContent);
     const sourceNormalized = normalizeText(sourceRaw);
-    if (!sourceNormalized) {
+    const rowNumber = this.profile.readRowNumber(row);
+    if (!sourceNormalized && !(includeEmptySources && rowNumber)) {
       return null;
     }
 
-    const targetRaw = this.getEditableValue(cells.target);
-    const rowNumber = this.profile.readRowNumber(row);
+    const targetRaw = this.readRawCell(cells.target);
+    const originalSource = sourceContent.querySelector('.tag') ? readMemoqOriginalSource(sourceContent) : undefined;
     const domId =
       rowNumber ||
       row.id ||
@@ -162,6 +177,8 @@ export class MemoqRowReader {
       domId,
       rowNumber,
       sourceRaw,
+      ...(canPasteMarkers ? { memoqSourceMarkers: readMemoqNativeMarkers(sourceContent) } : {}),
+      ...(originalSource !== undefined ? { originalSource } : {}),
       sourceNormalized,
       occurrenceIndex: 0,
       targetRaw,

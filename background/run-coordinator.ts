@@ -1,11 +1,13 @@
 import { normalizeFillOptions } from '../domain/fill-options.ts';
+import { describeFillResult } from '../domain/fill-failure.ts';
 import { normalizePlannedFillCount } from '../domain/fill-throttle.ts';
-import { applyMemoqPreviewCorrection, buildPreview } from '../domain/matcher.ts';
+import { buildPreview } from '../domain/matcher.ts';
 import { isRunActive } from '../domain/run-state.ts';
 import type {
   ApiResponse,
   BackgroundRequest
 } from '../shared/message-types.ts';
+import type { RuntimeState } from '../shared/state-types.ts';
 import type {
   ExportSourcesResult,
   FillRunResult,
@@ -71,10 +73,7 @@ export class BackgroundRunCoordinator {
         }
       );
 
-      const preview = this.buildPreviewForTab(
-        editorPlatform,
-        buildPreview(state.translationEntries, segments, fillOptions)
-      );
+      const preview = buildPreview(state.translationEntries, segments, fillOptions);
       await this.port.writeRuntimeState({
         previewResult: preview,
         fillOptions
@@ -114,7 +113,8 @@ export class BackgroundRunCoordinator {
             editorPlatform,
             maxPasses: EXPORT_SCAN_MAX_PASSES,
             maxSegments: EXPORT_SCAN_MAX_SEGMENTS,
-            scanFromTop: true
+            scanFromTop: true,
+            ...(editorPlatform === 'memoq' ? { readOriginalTags: true } : {})
           }
         }
       );
@@ -153,13 +153,15 @@ export class BackgroundRunCoordinator {
       throw new Error('Another task is already running. Stop it before starting Fill.');
     }
     const fillOptions = normalizeFillOptions(request.payload?.fillOptions);
-    const plannedFillCount = normalizePlannedFillCount(
+    const editorPlatform = requireEditorPlatform(state.editorPlatform);
+    // The current memoQ filter is read during Fill. A previous partial scan
+    // cannot supply a total for the next run.
+    const plannedFillCount = editorPlatform === 'memoq' ? null : normalizePlannedFillCount(
       state.previewResult?.readyToFill ??
         state.uploadMeta?.entryCount ??
         state.translationEntries.length
     );
 
-    const editorPlatform = requireEditorPlatform(state.editorPlatform);
     const tab = await this.editorSession.prepare(editorPlatform);
     const runState = await this.lifecycle.start('fill', tab, {
       fillOptions,
@@ -167,7 +169,7 @@ export class BackgroundRunCoordinator {
     });
 
     try {
-      const fillResult = await this.editorSession.request<FillRunResult>(
+      const result = await this.editorSession.request<FillRunResult>(
         tab,
         {
           type: 'CONTENT_FILL',
@@ -188,19 +190,12 @@ export class BackgroundRunCoordinator {
         }
       );
 
-      const result = this.finalizePreviewForTab(editorPlatform, fillResult);
-
       await this.port.writeRuntimeState({
         previewResult: result.preview,
         fillOptions
       });
       await this.lifecycle.finish(runState.runId ?? '', {
-        message:
-          result.stopReason
-            ? result.stopReason
-            : result.stoppedByAutoStop && result.autoStopAfterFilledCount !== null
-              ? `Filled ${result.filledCount} segment(s) and auto-stopped at ${result.autoStopAfterFilledCount}.`
-              : `Filled ${result.filledCount} segment(s).`,
+        message: describeFillResult(result),
         filledCount: result.filledCount,
         scannedCount: result.preview.totalSegments,
         plannedFillCount
@@ -217,6 +212,18 @@ export class BackgroundRunCoordinator {
     }
   }
 
+  async readPopupState(): Promise<RuntimeState> {
+    const state = await this.port.readRuntimeState();
+    const run = state.runState;
+    if (run.phase === 'stopping' && run.runId && await this.editorSession.receiverIsGone(run)) {
+      await this.lifecycle.finish(run.runId, {
+        message: 'Stopped. The editor was closed or reloaded.'
+      });
+      return this.port.readRuntimeState();
+    }
+    return state;
+  }
+
   async stop(): Promise<ApiResponse<unknown>> {
     const state = await this.port.readRuntimeState();
     if (!isRunActive(state.runState)) {
@@ -226,26 +233,6 @@ export class BackgroundRunCoordinator {
     await this.lifecycle.markStopping(state.runState);
     await this.editorSession.stop(state.runState, state.editorPlatform);
     return { ok: true, data: null };
-  }
-
-  private finalizePreviewForTab<
-    T extends { preview: ReturnType<typeof applyMemoqPreviewCorrection> }
-  >(platform: EditorPlatform, result: T): T {
-    if (platform !== 'memoq') {
-      return result;
-    }
-
-    return {
-      ...result,
-      preview: applyMemoqPreviewCorrection(result.preview)
-    };
-  }
-
-  private buildPreviewForTab(
-    platform: EditorPlatform,
-    preview: ReturnType<typeof buildPreview>
-  ): ReturnType<typeof buildPreview> {
-    return platform === 'memoq' ? applyMemoqPreviewCorrection(preview) : preview;
   }
 
   private createSourceExportFileName(platform: EditorPlatform, url?: string): string {

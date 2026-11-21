@@ -12,7 +12,7 @@ import {
   SegmentScanner
 } from './segment-scanner.ts';
 import type { StartMarker } from './start-marker.ts';
-import type { RuntimeSegment, ScrollContext } from './types.ts';
+import { toPageSegment, type RuntimeSegment, type ScrollContext } from './types.ts';
 import type {
   FillOptions,
   FillRunResult,
@@ -27,14 +27,16 @@ export interface ContentScanOptions {
   maxPasses?: number;
   maxSegments?: number;
   scanFromTop?: boolean;
+  readOriginalTags?: boolean;
 }
 
 export type ContentFillOptions = FillRunOptions;
 
 export interface ContentRunRuntime extends FillRunnerRuntime {
+  withMemoqOriginalTags?<T>(operation: () => Promise<T>): Promise<T>;
   selectPlatform(platform: EditorPlatform): void;
   findScrollContext(): ScrollContext;
-  collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[];
+  collectVisibleSegments(scrollContext: ScrollContext, includeEmptySources?: boolean): RuntimeSegment[];
 }
 
 export interface ContentRunServicePort {
@@ -67,8 +69,8 @@ export class ContentRunService {
   constructor(private readonly port: ContentRunServicePort) {
     this.segmentScanner = new SegmentScanner({
       findScrollContext: () => this.port.runtime.findScrollContext(),
-      collectVisibleSegments: (scrollContext) =>
-        this.port.runtime.collectVisibleSegments(scrollContext),
+      collectVisibleSegments: (scrollContext, includeEmptySources) =>
+        this.port.runtime.collectVisibleSegments(scrollContext, includeEmptySources),
       isMemoqActive: () => this.port.runtime.isMemoqActive(),
       assertNotStopped: () => this.assertNotStopped(),
       delay: (delayMs) => this.port.delay(delayMs),
@@ -98,7 +100,7 @@ export class ContentRunService {
   ): Promise<PageSegment[]> {
     this.resetStopState();
     let scannedCount = 0;
-    const runtimeSegments = await this.segmentScanner.collect(
+    const collect = () => this.segmentScanner.collect(
       async () => {
         scannedCount += 1;
         if (scannedCount === 1 || scannedCount % 10 === 0) {
@@ -115,9 +117,13 @@ export class ContentRunService {
           DEFAULT_SEGMENT_SCAN_MAX_SEGMENTS
         ),
         restoreScrollPosition: true,
-        scanFromTop: options.scanFromTop === true
+        scanFromTop: options.scanFromTop === true,
+        requireComplete: options.readOriginalTags === true
       }
     );
+    const runtimeSegments = options.readOriginalTags && this.port.runtime.withMemoqOriginalTags
+      ? await this.port.runtime.withMemoqOriginalTags(collect)
+      : await collect();
     await this.port.reportProgress(runId, {
       scannedCount: runtimeSegments.length
     });
@@ -167,16 +173,4 @@ export class ContentRunService {
 
     this.assertNotStopped();
   }
-}
-
-function toPageSegment(segment: RuntimeSegment): PageSegment {
-  const {
-    targetElement: _targetElement,
-    scanElement: _scanElement,
-    scanFingerprint: _scanFingerprint,
-    phraseUsesTagMarkup: _phraseUsesTagMarkup,
-    ...pageSegment
-  } = segment;
-
-  return pageSegment;
 }

@@ -1,7 +1,6 @@
 import { normalizeText } from '../shared/utils.ts';
-import { memoqSourceSkeletonMatchesExcelSource } from './memoq-marker-mapping.ts';
+import { MEMOQ_MARKER_PATTERN, resolveExcelMarkerPattern } from './memoq-file-tags.ts';
 
-const MEMOQ_INLINE_TAG_PATTERN = /\{\d+>|<\d+\}|<\d+>/g;
 const MAX_PROTECTED_TEXT_LENGTH_PER_TAG = 256;
 
 interface MemoqProtectedSourcePattern {
@@ -10,7 +9,7 @@ interface MemoqProtectedSourcePattern {
 }
 
 export function hasMemoqInlineTagMarkup(value: string): boolean {
-  return /\{\d+>|<\d+\}|<\d+>/.test(value);
+  return value.search(MEMOQ_MARKER_PATTERN) >= 0;
 }
 
 /**
@@ -42,7 +41,7 @@ export function memoqProtectedSourceMatchesExcelSource(
 
   // A real line break next to spaces disappears under normalizeText. Compare
   // protected skeletons first so that gap still has its own marker position.
-  if (memoqSourceSkeletonMatchesExcelSource(memoqSource, excelSource)) {
+  if (resolveExcelMarkerPattern(memoqSource, excelSource)) {
     return true;
   }
 
@@ -68,7 +67,7 @@ function parseMemoqProtectedSourcePattern(
   let cursor = 0;
   let pendingTagCount = 0;
 
-  for (const match of value.matchAll(MEMOQ_INLINE_TAG_PATTERN)) {
+  for (const match of value.matchAll(MEMOQ_MARKER_PATTERN)) {
     const index = match.index ?? 0;
     const visibleText = value.slice(cursor, index);
 

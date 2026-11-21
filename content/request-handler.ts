@@ -37,6 +37,9 @@ export class ContentRequestHandler {
 
   async handle(request: ContentRequest): Promise<ApiResponse<unknown>> {
     switch (request.type) {
+      case 'CONTENT_PING':
+        return { ok: true, data: null };
+
       case 'CONTENT_SCAN': {
         this.service.selectPlatform(request.payload.editorPlatform);
         const segments = await this.service.scanSegments(
@@ -44,7 +47,8 @@ export class ContentRequestHandler {
           {
             maxPasses: request.payload.maxPasses,
             maxSegments: request.payload.maxSegments,
-            scanFromTop: request.payload.scanFromTop
+            scanFromTop: request.payload.scanFromTop,
+            ...(request.payload.readOriginalTags ? { readOriginalTags: true } : {})
           }
         );
         return { ok: true, data: segments };

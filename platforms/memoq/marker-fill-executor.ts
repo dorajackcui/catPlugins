@@ -1,9 +1,25 @@
 import {
   countMemoqCursorUnitsBeforeAnchor,
-  type MemoqMarkerFillPlan
+  type MemoqSequentialMarkerPlan
 } from '../../domain/memoq-marker-fill.ts';
 import type { DebuggerInputOperation } from '../../shared/message-types.ts';
-import { canonicalMarkerState, MemoqMarkerStateMonitor } from './marker-state-monitor.ts';
+import {
+  canonicalMarkerState,
+  MemoqMarkerStateMonitor,
+  MemoqMarkerTargetChangedError
+} from './marker-state-monitor.ts';
+
+export type MemoqMarkerAction = Extract<
+  DebuggerInputOperation, { type: 'deleteForward' | 'key' | 'undo' }
+>;
+
+export interface MemoqMarkerPosition {
+  expectedValue: string;
+  /** UTF-16 offset in the serialized editor value. */
+  textOffset: number;
+  /** Editor atoms from the start of the row for keyboard navigation. */
+  cursorOffset: number;
+}
 
 export interface MemoqMarkerEditorPort {
   resolveTarget(): HTMLElement | null;
@@ -11,13 +27,14 @@ export interface MemoqMarkerEditorPort {
   writeText(target: HTMLElement, text: string): Promise<void>;
   runInput(
     target: HTMLElement,
-    operations: DebuggerInputOperation[]
+    action: MemoqMarkerAction,
+    position?: MemoqMarkerPosition
   ): Promise<void>;
   wait?(delayMs: number): Promise<void>;
 }
 
 export interface MemoqMarkerFillExecutorOptions {
-  plan: MemoqMarkerFillPlan;
+  plan: MemoqSequentialMarkerPlan;
   editor: MemoqMarkerEditorPort;
 }
 
@@ -35,9 +52,8 @@ export class MemoqMarkerMaterializationError extends Error {
 /**
  * Materializes native memoQ markers as a verified transaction. Text is written
  * once with unique anchors; every anchor is then deleted and replaced through
- * native keyboard navigation plus F9. Each input sequence starts with a
- * trusted click on the first editor atom followed by one ArrowLeft, so no step
- * relies on the previous cursor or memoQ's global Ctrl+Home shortcut.
+ * native Delete and F9. Position each edit independently of the previous
+ * caret and verify its full effect before the next edit.
  */
 export class MemoqMarkerFillExecutor {
   private readonly monitor: MemoqMarkerStateMonitor;
@@ -79,6 +95,7 @@ export class MemoqMarkerFillExecutor {
           );
         }
         const cursorOffset = skeletonOffset + materializedSequenceExpansion;
+        const textOffset = currentExpected.indexOf(anchor.sentinel);
 
         stage = `deleting marker anchor ${index + 1}`;
         const afterDelete = replaceUnique(
@@ -89,9 +106,10 @@ export class MemoqMarkerFillExecutor {
         undoPredecessors.push(currentExpected);
         await editor.runInput(
           this.requireTarget(),
-          buildAbsoluteCursorOperations(cursorOffset, { type: 'deleteForward' })
+          { type: 'deleteForward' },
+          { expectedValue: currentExpected, textOffset, cursorOffset }
         );
-        await this.monitor.waitForStableValue(afterDelete, stage);
+        await this.monitor.waitForEdit(currentExpected, afterDelete, stage);
 
         stage = `materializing native marker sequence ${index + 1}`;
         const afterMarker = replaceUnique(
@@ -102,12 +120,10 @@ export class MemoqMarkerFillExecutor {
         undoPredecessors.push(afterDelete);
         await editor.runInput(
           this.requireTarget(),
-          buildAbsoluteCursorOperations(cursorOffset, {
-            type: 'key',
-            key: 'F9'
-          })
+          { type: 'key', key: 'F9' },
+          { expectedValue: afterDelete, textOffset, cursorOffset }
         );
-        await this.monitor.waitForStableValue(afterMarker, stage);
+        await this.monitor.waitForEdit(afterDelete, afterMarker, stage);
         currentExpected = afterMarker;
         materializedSequenceExpansion += anchor.markers.length - 1;
       }
@@ -119,6 +135,13 @@ export class MemoqMarkerFillExecutor {
       stage = 'holding the final marker target stable';
       await this.monitor.waitForExactHold(currentExpected, stage);
     } catch (error) {
+      if (error instanceof MemoqMarkerTargetChangedError) {
+        throw new MemoqMarkerMaterializationError(
+          `${stage} stopped because the target changed before input. Undo history may belong to another edit.`,
+          false,
+          error
+        );
+      }
       const rollbackSucceeded = await this.rollback(undoPredecessors);
       throw new MemoqMarkerMaterializationError(
         `${stage} failed; rollback ${rollbackSucceeded ? 'succeeded' : 'failed'}.`,
@@ -154,9 +177,7 @@ export class MemoqMarkerFillExecutor {
           continue;
         }
 
-        await this.options.editor.runInput(this.requireTarget(), [
-          { type: 'undo' }
-        ]);
+        await this.options.editor.runInput(this.requireTarget(), { type: 'undo' });
         await this.monitor.waitForStableValue(
           predecessor,
           'rolling back the marker fill'
@@ -173,7 +194,7 @@ export class MemoqMarkerFillExecutor {
 
 export function buildAbsoluteCursorOperations(
   cursorOffset: number,
-  action: Extract<DebuggerInputOperation, { type: 'deleteForward' | 'key' }>
+  action: MemoqMarkerAction
 ): DebuggerInputOperation[] {
   if (!Number.isSafeInteger(cursorOffset) || cursorOffset < 0) {
     throw new Error('Invalid memoQ marker cursor offset.');

@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { ContentScriptDomHelpers, type RuntimeSegment, type ScrollContext } from '../content/dom.ts';
+import { MemoqAdapter } from '../platforms/memoq/adapter.ts';
 import {
   legacyWebtransMemoqProfile,
   modernEditorMemoqProfile
 } from '../platforms/memoq/dom-profile.ts';
 import { MemoqRowReader } from '../platforms/memoq/row-reader.ts';
-import { fakeDocument, fakeElement, type FakeElement } from './memoq-test-dom.ts';
+import { fakeDocument, fakeElement, fakeText, type FakeElement } from './memoq-test-dom.ts';
 
 function asElement<T>(element: T): T & HTMLElement {
   return element as T & HTMLElement;
@@ -121,6 +122,48 @@ function modernFixture(row: FakeElement): FakeElement {
   return fakeElement({ children: [readOnlyPane, table] });
 }
 
+test('webTrans checks actual source chips again if a recycled cell now shows identical literal text', () => {
+  const row = legacyRow({ rowNumber: '906', source: '', target: '', top: 48 });
+  const content = row.querySelectorAll<FakeElement & HTMLElement>('.content-container')[0];
+  const chip = fakeElement({ className: 'tag inline-empty', children: [
+    fakeElement({ className: 'tag-content', attributes: { 'data-tagid': '1' }, textContent: '1' })
+  ] });
+  content.children.push(chip);
+  content.childNodes.push(chip);
+  installDocument(fakeElement({ children: [fakeElement({ id: 'editorHiddenInput' }), row] }));
+  const reader = new MemoqRowReader({ profile: legacyWebtransMemoqProfile, helpers: new ContentScriptDomHelpers() });
+  const [segment] = reader.collectVisibleSegments(scrollContext());
+  assert.deepEqual(segment.memoqSourceMarkers, ['<1>']);
+  assert.equal(reader.matchesCurrentMarkerSource(segment), true);
+  content.children.splice(0);
+  content.childNodes.splice(0, 1, fakeText('<1>'));
+  assert.equal(reader.matchesCurrentMarkerSource(segment), false);
+});
+
+test('a webTrans plan stops before writing if the current editor only supports sequential input', async () => {
+  const row = legacyRow({ rowNumber: '906', source: 'A<1>', target: '', top: 48 });
+  installDocument(fakeElement({ children: [row] }));
+  const adapter = new MemoqAdapter(new ContentScriptDomHelpers());
+  const [segment] = adapter.collectVisibleSegments(scrollContext());
+  const outcome = await adapter.fillSegment(segment, 'B<1><1>', {
+    runId: 'profile-changed', sequence: 1, scanPass: 1, scrollTop: 0, scrollMode: 'native',
+    markerFillPlan: { method: 'webtrans', expectedTarget: 'B<1><1>' }
+  });
+  assert.equal(outcome.filled, false);
+  assert.equal(outcome.reason, 'The webTrans marker input is no longer available.');
+  assert.equal(adapter.collectVisibleSegments(scrollContext())[0].targetRaw, '');
+});
+
+test('only Export includes a rendered empty source, and a pending row never supplies stale text', () => {
+  const empty = legacyRow({ rowNumber: '173', source: '', target: '', top: 48 });
+  const pending = legacyRow({ rowNumber: '174', source: 'previous row', target: '', top: 80 });
+  pending.classList.contains = token => token === 'not-loaded-row';
+  installDocument(fakeElement({ children: [empty, pending] }));
+  const reader = new MemoqRowReader({ profile: legacyWebtransMemoqProfile, helpers: new ContentScriptDomHelpers() });
+  assert.deepEqual(reader.collectVisibleSegments(scrollContext()), []);
+  assert.deepEqual(reader.collectVisibleSegments(scrollContext(), true).map(s => [s.rowNumber, s.sourceRaw]), [['173', '']]);
+});
+
 test('legacy row collection dedupes overlapping recycled rows and preserves the committed copy', () => {
   const emptyDuplicate = legacyRow({
     rowNumber: '8',
@@ -152,6 +195,18 @@ test('legacy row collection dedupes overlapping recycled rows and preserves the 
   assert.equal(segments[0].isEmptyTarget, false);
   assert.equal(segments[0].platform, 'memoq');
   assert.equal(segments[0].scanElement, filledDuplicate);
+});
+
+test('memoQ exports exact target typography while matching uses normalized text', () => {
+  const target = '  Prix\u00a0:  25\u202f€\u00a0! ';
+  const row = legacyRow({ rowNumber: '7', source: '  Price:', target, top: 48 });
+  installDocument(fakeElement({ children: [row] }));
+  const reader = new MemoqRowReader({ profile: legacyWebtransMemoqProfile, helpers: new ContentScriptDomHelpers() });
+  const [segment] = reader.collectVisibleSegments(scrollContext(), true);
+  assert.equal(segment.sourceRaw, '  Price:');
+  assert.equal(segment.targetRaw, target);
+  assert.equal(segment.sourceNormalized, 'Price:');
+  assert.equal(segment.isEmptyTarget, false);
 });
 
 test('legacy row collection keeps adjacent rows with the same source', () => {
@@ -206,8 +261,9 @@ test('current target and source values are re-read by row number', () => {
   });
   const cells = reader.findCurrentCellsByRowNumber('21');
 
-  assert.equal(reader.findCurrentTargetByRowNumber('21'), cells?.target);
-  assert.equal(reader.getCurrentEditableValue(staleSegment), 'Current target');
+  const target = reader.findCurrentTargetByRowNumber(staleSegment.rowNumber);
+  assert.equal(target, cells?.target);
+  assert.equal(target && reader.getEditableValue(target), 'Current target');
   assert.equal(reader.getCurrentSourceValue(staleSegment), 'Current source');
 });
 
@@ -317,7 +373,36 @@ test('modern current cell lookup re-reads source and target through the profile'
   } satisfies RuntimeSegment;
   const cells = reader.findCurrentCellsByRowNumber('1124');
 
-  assert.equal(reader.findCurrentTargetByRowNumber('1124'), cells?.target);
-  assert.equal(reader.getCurrentEditableValue(staleSegment), 'Current modern target');
+  const target = reader.findCurrentTargetByRowNumber(staleSegment.rowNumber);
+  assert.equal(target, cells?.target);
+  assert.equal(target && reader.getEditableValue(target), 'Current modern target');
   assert.equal(reader.getCurrentSourceValue(staleSegment), 'Current modern source');
+});
+test('memoQ restores the short tag display after a failed export and respects an existing long display', async () => {
+  const oldDocument = globalThis.document;
+  let selected = false;
+  let clicks = 0;
+  const button = {
+    classList: { contains: (value: string) => value === 'selected' && selected },
+    click() { selected = !selected; clicks += 1; }
+  };
+  globalThis.document = {
+    getElementById: (id: string) => id === 'gridBtnLongInlineTag' ? button : null
+  } as unknown as Document;
+  try {
+    const adapter = new MemoqAdapter(new ContentScriptDomHelpers());
+    const error = await adapter.withOriginalTags(async () => {
+      assert.equal(selected, true);
+      throw new Error('Export stopped');
+    }).catch((cause: unknown) => cause);
+    assert.equal(error instanceof Error && error.message === 'Export stopped', true);
+    assert.equal(selected, false);
+    assert.equal(clicks, 2);
+    selected = true;
+    await adapter.withOriginalTags(async () => assert.equal(selected, true));
+    assert.equal(selected, true);
+    assert.equal(clicks, 2);
+  } finally {
+    globalThis.document = oldDocument;
+  }
 });

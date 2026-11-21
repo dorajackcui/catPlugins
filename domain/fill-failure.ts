@@ -1,3 +1,5 @@
+import type { FillRunResult, PreviewResult } from '../shared/translation-types.ts';
+
 export interface FillFailureSegment {
   platform?: string;
   domId: string;
@@ -11,6 +13,23 @@ export interface FillFailureOutcome {
 
 export function shouldStopAfterFillFailure(platform?: string): boolean {
   return platform === 'memoq' || platform === 'phrase';
+}
+
+export function describeFillResult(result: FillRunResult): string {
+  if (result.stopReason) return result.stopReason;
+  return result.stoppedByAutoStop && result.autoStopAfterFilledCount !== null
+    ? `Filled ${result.filledCount} segment(s) and auto-stopped at ${result.autoStopAfterFilledCount}.`
+    : `Filled ${result.filledCount} segment(s).`;
+}
+
+export function includeMemoqTagErrors(message: string, preview: PreviewResult | null): string {
+  if (!preview?.placeholderErrors || !message.startsWith('Filled ')) return message;
+  const skipped = preview.items.filter(item => item.platform === 'memoq' && item.status === 'placeholderError');
+  const first = skipped[0];
+  if (!first) return message;
+  const row = first.rowNumber ?? first.domId;
+  const count = skipped.length === 1 ? '1 row' : `${skipped.length} rows`;
+  return `${message} Skipped ${count} with tag errors. Row ${row}. ${first.reason ?? ''}`.trim();
 }
 
 export function describeFillStopReason(

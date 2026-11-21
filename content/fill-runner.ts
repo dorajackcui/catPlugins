@@ -22,7 +22,6 @@ export type {
   FillRunnerScanner,
   FillSegmentProcessorPort
 } from './fill-runner-contracts.ts';
-export { normalizeAutoStopAfterFilledCount } from './fill-segment-processor.ts';
 
 /**
  * Coordinates a complete fill run while platform adapters retain ownership of

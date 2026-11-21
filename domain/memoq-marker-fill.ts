@@ -1,4 +1,9 @@
+import type { PageSegment, TranslationEntry } from '../shared/translation-types.ts';
+import { normalizeText } from '../shared/utils.ts';
+import { findForeignMemoqTagInPlainRow, maskMemoqMarkers } from './memoq-file-tags.ts';
 import { mapMemoqTarget } from './memoq-marker-mapping.ts';
+import { hasMemoqInlineTagMarkup, memoqProtectedSourceMatchesExcelSource } from './memoq-markup.ts';
+import { placeholdersMatch } from './qa.ts';
 
 const ANCHOR_CODE_POINT_START = 0xe000;
 const ANCHOR_CODE_POINT_END = 0xf8ff;
@@ -11,11 +16,16 @@ export interface MemoqMarkerAnchor {
   markers: string[];
 }
 
-export interface MemoqMarkerFillPlan {
+export interface MemoqSequentialMarkerPlan {
+  method: 'f9';
   expectedTarget: string;
   skeletonTarget: string;
   anchors: MemoqMarkerAnchor[];
 }
+
+export type MemoqMarkerFillPlan =
+  | { method: 'webtrans'; expectedTarget: string }
+  | MemoqSequentialMarkerPlan;
 
 export type MemoqMarkerFillPlanResult =
   | {
@@ -27,15 +37,58 @@ export type MemoqMarkerFillPlanResult =
       reason: string;
     };
 
-/** Compile validated text/tag parts for the existing sentinel-based editor writer. */
+/** Used by both Preview and Fill. Only the fill runner keeps the prepared plan. */
+export function prepareMemoqTranslation(
+  entry: TranslationEntry, segment: PageSegment, validatePlaceholders: boolean
+): { ok: true; plan?: MemoqMarkerFillPlan } | { ok: false; reason: string } {
+  let source = segment.sourceRaw;
+  let target = entry.targetRaw;
+  let plan: MemoqMarkerFillPlan | undefined;
+  if (segment.memoqSourceMarkers?.length === 0) {
+    const foreign = findForeignMemoqTagInPlainRow(source, target);
+    if (foreign) return { ok: false, reason: `Target tag ${foreign} is absent from this source row.` };
+  } else if (hasMemoqInlineTagMarkup(source)) {
+    const result = createMemoqMarkerFillPlan(entry.sourceRaw, source, target,
+      segment.originalSource ?? entry.originalSource, segment.memoqSourceMarkers);
+    if (!result.ok) {
+      return segment.memoqSourceMarkers ? result
+        : { ok: false, reason: `memoQ marker fill is not safe for this row: ${result.reason}` };
+    }
+    plan = result.plan;
+    target = plan.expectedTarget;
+    if (plan.method === 'webtrans') {
+      source = maskMemoqMarkers(source);
+      target = maskMemoqMarkers(target);
+    } else if (validatePlaceholders && normalizeText(entry.sourceNormalized) !== normalizeText(segment.sourceNormalized) &&
+      memoqProtectedSourceMatchesExcelSource(source, entry.sourceRaw)) {
+      // The sequential plan already checked every protected file token in order.
+      return result;
+    }
+  }
+  if (validatePlaceholders && !placeholdersMatch(source, target, 'memoq', segment.placeholderTokens)) {
+    return { ok: false, reason: 'Placeholder mismatch between source and translation.' };
+  }
+  return { ok: true, plan };
+}
+
+/** webTrans takes the complete target. Only sequential F9 needs cursor anchors. */
 export function createMemoqMarkerFillPlan(
   excelSource: string,
   memoqSource: string,
-  excelTarget: string
+  excelTarget: string,
+  originalSource?: string,
+  webTransMarkers?: readonly string[]
 ): MemoqMarkerFillPlanResult {
-  const mapping = mapMemoqTarget(excelSource, memoqSource, excelTarget);
+  const mapping = mapMemoqTarget(excelSource, memoqSource, excelTarget, originalSource, webTransMarkers);
   if (!mapping.ok) {
     return mapping;
+  }
+
+  const expectedTarget = mapping.parts.map(part =>
+    part.type === 'text' ? part.text : part.markers.join('')
+  ).join('');
+  if (webTransMarkers !== undefined) {
+    return { ok: true, plan: { method: 'webtrans', expectedTarget } };
   }
 
   const sentinels = allocateAnchorSentinels(
@@ -47,25 +100,23 @@ export function createMemoqMarkerFillPlan(
   }
 
   const skeletonParts: string[] = [];
-  const expectedParts: string[] = [];
   const anchors: MemoqMarkerAnchor[] = [];
   for (const part of mapping.parts) {
     if (part.type === 'text') {
       skeletonParts.push(part.text);
-      expectedParts.push(part.text);
       continue;
     }
 
     const sentinel = sentinels[anchors.length];
     skeletonParts.push(sentinel);
-    expectedParts.push(part.markers.join(''));
     anchors.push({ sentinel, markers: part.markers });
   }
 
   return {
     ok: true,
     plan: {
-      expectedTarget: expectedParts.join(''),
+      method: 'f9',
+      expectedTarget,
       skeletonTarget: skeletonParts.join(''),
       anchors
     }

@@ -25,6 +25,7 @@ export interface RuntimeMessageSender {
 export interface BackgroundDebuggerInputPort {
   keepAlive(tabId: number | undefined): void;
   writeText(tabId: number, x: number, y: number, text: string): Promise<void>;
+  insertFocusedText(tabId: number, text: string): Promise<void>;
   runSequence(
     tabId: number,
     x: number,
@@ -138,6 +139,13 @@ export class BackgroundRequestHandler {
         return { ok: true, data: null };
       }
 
+      case 'MEMOQ_DEBUGGER_INSERT_FOCUSED_TEXT': {
+        const tabId = sender?.tab?.id;
+        if (typeof tabId !== 'number') throw new Error('Focused memoQ input requires a sender tab.');
+        await this.port.debuggerInput.insertFocusedText(tabId, request.payload.text);
+        return { ok: true, data: null };
+      }
+
       case 'DEBUGGER_INPUT_SEQUENCE': {
         const tabId = sender?.tab?.id;
         if (typeof tabId !== 'number') {
@@ -188,7 +196,7 @@ export class BackgroundRequestHandler {
   }
 
   private async getPopupState(): Promise<PopupState> {
-    const state = await this.port.readRuntimeState();
+    const state = await this.runs.readPopupState();
 
     return {
       editorPlatform: state.editorPlatform,
