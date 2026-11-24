@@ -1,15 +1,13 @@
 import {
   readGientTransEditorText,
   readGientTransEditorTextPreservingNbsp,
-  readGientTransTagIdentities,
   stripEditorMarkers
 } from './editor-text.ts';
 import { normalizeGientTransEditorMarkup } from '../../domain/gientrans-markup.ts';
 import { describeGientTransText } from './diagnostics.ts';
+import { readGientTransTagIdentities } from './editor-tags.ts';
 
-export { describeGientTransText } from './diagnostics.ts';
-
-export interface NativeWriteDiagnostic {
+interface NativeWriteDiagnostic {
   method: 'beforeinput-paste' | 'insertText' | 'insertHTML' | 'skipped';
   attempted: boolean;
   ok: boolean;
@@ -27,8 +25,7 @@ export interface GientTransEditorWriterHelpers {
 }
 
 /**
- * Encapsulates GientTrans's contenteditable mechanics. The adapter retains
- * control over fallback ordering and editor lifecycle events.
+ * Writes to the active contenteditable and verifies both its text and native chips.
  */
 export class GientTransEditorWriter {
   constructor(
@@ -46,93 +43,66 @@ export class GientTransEditorWriter {
     target.focus();
   }
 
-  writeText(target: HTMLElement, value: string): NativeWriteDiagnostic {
-    const before = describeGientTransText(readGientTransEditorText(target));
-    if (typeof document.execCommand !== 'function') {
-      return {
-        method: 'insertText',
-        attempted: false,
-        ok: false,
-        reason: 'execCommand-unavailable',
-        before
-      };
+  write(target: HTMLElement, text: string, html: string, expectedTags?: readonly string[]) {
+    const nativeWrite = this.writeBeforeInputPaste(target, text, html, expectedTags);
+    let fallbackNativeWrite = nativeWrite;
+    let nativeHtmlWrite: NativeWriteDiagnostic | null = null;
+
+    if (!nativeWrite.ok) {
+      // insertText cannot preserve native chips or a nonbreaking space.
+      if (expectedTags?.length || text.includes('\u00A0')) {
+        fallbackNativeWrite = {
+          method: 'skipped', attempted: false, ok: false,
+          reason: expectedTags?.length ? 'gientrans-tag-html-path' : 'nbsp-preserve-html-path',
+          before: describeGientTransText(readGientTransEditorText(target))
+        };
+      } else {
+        fallbackNativeWrite = this.writeCommand(target, 'insertText', text, text);
+      }
     }
-
-    const selected = this.selectTargetContents(target);
-    let execResult = false;
-
-    try {
-      execResult = document.execCommand('insertText', false, value);
-    } catch (error) {
-      return {
-        method: 'insertText',
-        attempted: true,
-        ok: false,
-        reason: error instanceof Error ? error.message : 'execCommand-threw',
-        selected,
-        before,
-        after: describeGientTransText(readGientTransEditorText(target))
-      };
+    if (!fallbackNativeWrite.ok) {
+      nativeHtmlWrite = this.writeCommand(target, 'insertHTML', html, text, expectedTags);
+      if (nativeHtmlWrite.ok) fallbackNativeWrite = nativeHtmlWrite;
     }
-
-    const after = describeGientTransText(readGientTransEditorText(target));
-    return {
-      method: 'insertText',
-      attempted: true,
-      ok: this.isTextMatch(target, value),
-      execResult,
-      selected,
-      before,
-      after
-    };
+    const usedFallbackInnerHtml = !fallbackNativeWrite.ok;
+    if (usedFallbackInnerHtml) {
+      target.innerHTML = html;
+      this.selectTarget(target, 'end');
+    }
+    return { nativeWrite, fallbackNativeWrite, nativeHtmlWrite, usedFallbackInnerHtml };
   }
 
-  writeHtml(
+  private writeCommand(
     target: HTMLElement,
-    value: string,
-    editorHtml: string,
+    method: 'insertText' | 'insertHTML',
+    content: string,
+    expectedText: string,
     expectedTags?: readonly string[]
   ): NativeWriteDiagnostic {
     const before = describeGientTransText(readGientTransEditorText(target));
     if (typeof document.execCommand !== 'function') {
-      return {
-        method: 'insertHTML',
-        attempted: false,
-        ok: false,
-        reason: 'execCommand-unavailable',
-        before
-      };
+      return { method, attempted: false, ok: false, reason: 'execCommand-unavailable', before };
     }
 
-    const selected = this.selectTargetContents(target);
-    let execResult = false;
-
+    const selected = this.selectTarget(target, 'contents');
+    let execResult: boolean;
     try {
-      execResult = document.execCommand('insertHTML', false, editorHtml);
+      execResult = document.execCommand(method, false, content);
     } catch (error) {
       return {
-        method: 'insertHTML',
-        attempted: true,
-        ok: false,
+        method, attempted: true, ok: false, selected, before,
         reason: error instanceof Error ? error.message : 'execCommand-threw',
-        selected,
-        before,
         after: describeGientTransText(readGientTransEditorText(target))
       };
     }
-
     return {
-      method: 'insertHTML',
-      attempted: true,
-      ok: this.isTextMatch(target, value, expectedTags),
-      execResult,
-      selected,
-      before,
+      method, attempted: true, ok: this.isTextMatch(target, expectedText, expectedTags),
+      execResult, selected, before,
       after: describeGientTransText(readGientTransEditorText(target))
     };
   }
 
-  writeBeforeInputPaste(
+  private writeBeforeInputPaste(
     target: HTMLElement,
     value: string,
     editorHtml: string,
@@ -149,7 +119,7 @@ export class GientTransEditorWriter {
       };
     }
 
-    const selected = this.selectTargetContents(target);
+    const selected = this.selectTarget(target, 'contents');
     const dataTransfer = new DataTransfer();
     dataTransfer.setData('text/plain', value);
     dataTransfer.setData('text/segment', editorHtml);
@@ -205,11 +175,6 @@ export class GientTransEditorWriter {
     };
   }
 
-  replaceWithHtml(target: HTMLElement, editorHtml: string): void {
-    target.innerHTML = editorHtml;
-    this.collapseSelectionToEnd(target);
-  }
-
   async waitForTextMatch(
     target: HTMLElement,
     expected: string,
@@ -228,7 +193,7 @@ export class GientTransEditorWriter {
     return false;
   }
 
-  private selectTargetContents(target: HTMLElement): boolean {
+  private selectTarget(target: HTMLElement, position: 'contents' | 'end'): boolean {
     if (typeof document.createRange !== 'function' || typeof window.getSelection !== 'function') {
       return false;
     }
@@ -240,24 +205,7 @@ export class GientTransEditorWriter {
 
     const range = document.createRange();
     range.selectNodeContents(target);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    return true;
-  }
-
-  private collapseSelectionToEnd(target: HTMLElement): boolean {
-    if (typeof document.createRange !== 'function' || typeof window.getSelection !== 'function') {
-      return false;
-    }
-
-    const selection = window.getSelection();
-    if (!selection) {
-      return false;
-    }
-
-    const range = document.createRange();
-    range.selectNodeContents(target);
-    range.collapse(false);
+    if (position === 'end') range.collapse(false);
     selection.removeAllRanges();
     selection.addRange(range);
     return true;

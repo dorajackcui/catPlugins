@@ -512,6 +512,21 @@ test('BackgroundRequestHandler names GientTrans exports with the current task ID
   assert.equal(Boolean(result?.bytes.length), true);
 });
 
+test('GientTrans Export reports an empty scan without returning a header-only workbook', async () => {
+  const harness = createHarness({
+    state: makeRuntimeState({ editorPlatform: 'gientrans' }),
+    responses: [{ ok: true, data: [] } satisfies ApiResponse<PageSegment[]>]
+  });
+
+  const error = await captureError(() => harness.handler.handle({ type: 'EXPORT_SOURCES' }));
+  const { runState } = harness.getState();
+  assert.equal(error instanceof Error ? error.message : null, runState.message);
+  assert.equal(runState.message.startsWith('No GientTrans source segments'), true);
+  assert.equal(runState.phase, 'idle');
+  assert.equal(runState.statusKind, 'error');
+  assert.equal(runState.scannedCount, 0);
+});
+
 test('BackgroundRequestHandler finalizes failed Preview runs as errors', async () => {
   const harness = createHarness({
     state: makeRuntimeState({ translationEntries: [ENTRY] }),

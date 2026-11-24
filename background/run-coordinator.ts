@@ -119,6 +119,9 @@ export class BackgroundRunCoordinator {
         }
       );
 
+      if (editorPlatform === 'gientrans' && segments.length === 0) {
+        throw new Error('No GientTrans source segments found. Check that the active editor has loaded and its filters show rows, then export again.');
+      }
       const workbookBytes = buildSourceExportWorkbook(segments);
       const result: ExportSourcesResult = {
         fileName: this.createSourceExportFileName(editorPlatform, tab.url),

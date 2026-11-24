@@ -140,6 +140,27 @@ test('BackgroundEditorSession requires a platform before injection', async () =>
   assert.deepEqual(harness.events, []);
 });
 
+test('GientTrans scans only the editor frame when the tab also has an empty iframe', async () => {
+  const editorUrl = 'https://client.example/#/olEditor?taskId=17';
+  const portalUrl = 'https://client.example/portal';
+  const blankFrame = { frameId: 3, parentFrameId: 0, url: 'about:blank' };
+  for (const { url, frames, expectedFrameId } of [
+    { url: editorUrl, frames: [blankFrame, { frameId: 0, parentFrameId: -1, url: portalUrl }], expectedFrameId: 0 },
+    { url: portalUrl, frames: [blankFrame, { frameId: 8, parentFrameId: 0, url: editorUrl }], expectedFrameId: 8 },
+    { url: portalUrl, frames: [blankFrame], expectedFrameId: 0 }
+  ]) {
+    const harness = createHarness({ tab: { id: 7, url }, frames });
+    const tab = await harness.session.prepare('gientrans');
+    await harness.session.request(tab, {
+      type: 'CONTENT_SCAN',
+      payload: { runId: 'export', editorPlatform: 'gientrans' }
+    });
+
+    assert.equal(tab.frameId, expectedFrameId);
+    assert.deepEqual(harness.messages.map(message => message.options), [{ frameId: expectedFrameId }]);
+  }
+});
+
 test('BackgroundEditorSession accepts custom URLs and uses only the selected platform', async () => {
   const harness = createHarness({
     tab: { id: 9, url: 'http://115.159.195.184/custom-editor' },

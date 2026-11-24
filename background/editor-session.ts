@@ -2,7 +2,7 @@ import type {
   ApiResponse,
   ContentRequest
 } from '../shared/message-types.ts';
-import { isMemoqWebTransFrameUrl, isMemsourceEditorFrameUrl } from './editor-url.ts';
+import { isGientTransEditorFrameUrl, isMemoqWebTransFrameUrl, isMemsourceEditorFrameUrl } from './editor-url.ts';
 import { requireEditorPlatform, type EditorPlatform } from '../shared/editor-platform.ts';
 
 export interface PreparedEditorTab {
@@ -14,6 +14,22 @@ export interface PreparedEditorTab {
 export interface EditorRunTarget {
   tabId?: number | null;
   frameId?: number | null;
+}
+
+function selectEditorFrameId(
+  platform: EditorPlatform,
+  tabUrl: string | undefined,
+  frames: Array<{ frameId: number; url?: string }>
+): number | undefined {
+  switch (platform) {
+    case 'gientrans':
+      if (isGientTransEditorFrameUrl(tabUrl)) return 0;
+      return frames.find(frame => isGientTransEditorFrameUrl(frame.url))?.frameId ?? 0;
+    case 'memoq':
+      return frames.find(frame => isMemoqWebTransFrameUrl(frame.url))?.frameId;
+    case 'phrase':
+      return frames.find(frame => isMemsourceEditorFrameUrl(frame.url))?.frameId;
+  }
 }
 
 export interface BackgroundEditorSessionPort {
@@ -47,20 +63,15 @@ export class BackgroundEditorSession {
     });
 
     const frames = await this.port.getAllFrames(tab.id);
-    const editorFrame = platform === 'phrase' ? frames.find((frame) =>
-      isMemsourceEditorFrameUrl(frame.url)
-    ) : platform === 'memoq' ? frames.find(frame => isMemoqWebTransFrameUrl(frame.url)) : undefined;
+    const frameId = selectEditorFrameId(platform, tab.url, frames);
     this.port.logInfo('Prepared editor tab for CAT run.', {
       tabId: tab.id,
       url: tab.url,
       platform,
-      frameId: editorFrame?.frameId ?? null
+      frameId: frameId ?? null
     });
 
-    return {
-      ...tab,
-      frameId: editorFrame?.frameId
-    };
+    return { ...tab, frameId };
   }
 
   async request<TResult>(

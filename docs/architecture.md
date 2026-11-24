@@ -63,7 +63,7 @@ Keeping these pure rules in `domain/` prevents Phrase and memoQ readers from dep
 - `background/request-handler.ts` routes extension messages to state, run, workbook, and debugger services.
 - `background/run-coordinator.ts` owns Preview, Export, Fill, and Stop lifecycle rules and user-facing status updates.
 - `background/run-lifecycle.ts` owns persisted start, finish, failure, and stopping state transitions shared by every run kind.
-- `background/editor-session.ts` is the single owner of active-tab validation, content-script injection, Phrase iframe selection, content response unwrapping, and stop-message routing.
+- `background/editor-session.ts` owns content-script injection, editor frame selection, content responses, and stop-message routing for the active tab.
 - `background/debugger-session.ts` owns serialized Chrome Debugger attachment, fresh-attach settling, keep-alive, external detach, and idle release.
 - `background/debugger-input.ts` validates and dispatches trusted click/text operation sequences through that session.
 
@@ -205,11 +205,15 @@ adapter orchestration layer.
 
 ## GientTrans adapter
 
-- `platforms/gientrans/row-reader.ts` owns table selectors, scroll-container selection, segment serialization, target re-resolution, source-tag lookup, and scan diagnostics.
-- `platforms/gientrans/editor-text.ts` owns editor text/tag serialization and translation-to-editor HTML conversion.
-- `platforms/gientrans/diagnostics.ts` defines stable text diagnostics shared by scanning and writing.
-- `platforms/gientrans/editor-writer.ts` owns native contenteditable write mechanics and confirmation polling.
-- `platforms/gientrans/adapter.ts` preserves the ordered paste/text/HTML/fallback write transaction behind the common runtime port.
+GientTrans run messages target the top frame when the tab opens the `olEditor` route directly. For an embedded editor, the session selects the frame with that route. A custom URL without a recognized route uses the top frame. Only the selected frame answers the scan, so a hidden auxiliary iframe cannot return an empty result ahead of the editor. Export reports an error when the scan finds zero segments.
+
+Export writes each native chip's `equiv-text` in its source spelling, including XML angle brackets. A paired XLIFF group can supply the closing name through its opening chip with the same `tid`. A placeholder with empty `equiv-text` keeps its full XLIFF tag and ID. Fill maps these spellings back to the current row’s native chips.
+
+- `platforms/gientrans/row-reader.ts` owns table discovery, scrolling, and target lookup by `segid`.
+- `platforms/gientrans/editor-tags.ts` reads native chip identities, resolves their original spelling, and pairs the current row’s opening and closing chips for reuse in the translation.
+- `platforms/gientrans/editor-text.ts` serializes editor content for Export and prepares both the plain text and editor HTML used by Fill. It preserves whitespace inside mapped chips.
+- `platforms/gientrans/editor-writer.ts` tries paste, text insertion, HTML insertion, then direct replacement. Targets containing native chips or nonbreaking spaces skip plain-text insertion. Confirmation checks the resulting text and native chip sequence.
+- `platforms/gientrans/adapter.ts` activates the current target, coordinates the write, dispatches editor events, and returns the confirmation result. Scan and write diagnostics share `platforms/gientrans/diagnostics.ts`.
 
 GientTrans must remain the only platform that may overwrite non-empty targets. Reader refactors must
 retain `segid` target re-resolution so virtualized table rows are not written through stale elements.

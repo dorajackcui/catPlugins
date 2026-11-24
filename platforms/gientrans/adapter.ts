@@ -2,19 +2,11 @@ import type { ContentScriptDomHelpers } from '../../content/dom.ts';
 import type { RuntimeSegment, ScrollContext } from '../../content/types.ts';
 import type { FillOutcome } from '../../shared/fill-outcome-types.ts';
 import { delay } from '../../shared/utils.ts';
-import { describeGientTransText } from './diagnostics.ts';
-import {
-  gientransTextToEditorHtml,
-  prepareGientTransTargetText,
-  tagIdentitiesFromEditorHtml
-} from './editor-text.ts';
-import {
-  GientTransEditorWriter,
-  type NativeWriteDiagnostic
-} from './editor-writer.ts';
+import { describeGientTransTarget, describeGientTransText, logGientTrans } from './diagnostics.ts';
+import { tagIdentitiesFromEditorHtml } from './editor-tags.ts';
+import { prepareGientTransTarget } from './editor-text.ts';
+import { GientTransEditorWriter } from './editor-writer.ts';
 import { GientTransRowReader } from './row-reader.ts';
-
-const DEBUG_PREFIX = '[Phrase Bulk Fill][GientTrans]';
 
 export class GientTransAdapter {
   private fillDebugSequence = 0;
@@ -24,10 +16,6 @@ export class GientTransAdapter {
   constructor(private readonly helpers: ContentScriptDomHelpers) {
     this.editorWriter = new GientTransEditorWriter(helpers, delay);
     this.rowReader = new GientTransRowReader(helpers);
-  }
-
-  isActive(): boolean {
-    return this.rowReader.isActive();
   }
 
   findScrollContext(): ScrollContext | null {
@@ -51,7 +39,7 @@ export class GientTransAdapter {
       segment.domId
     );
     const target = currentTarget ?? (segment.targetElement as HTMLElement);
-    this.debug('fill:start', {
+    logGientTrans('fill:start', {
       fillId,
       domId: segment.domId,
       rowNumber: segment.rowNumber ?? null,
@@ -60,14 +48,14 @@ export class GientTransAdapter {
       translation: describeGientTransText(value),
       targetBefore: describeGientTransText(this.getEditableValue(target)),
       targetHtmlLength: target.innerHTML?.length ?? 0,
-      targetAttrs: describeTarget(target)
+      targetAttrs: describeGientTransTarget(target)
     });
 
     if (!this.editorWriter.isWritable(target)) {
-      this.debug('fill:skip', {
+      logGientTrans('fill:skip', {
         fillId,
         reason: 'target-not-writable',
-        targetAttrs: describeTarget(target)
+        targetAttrs: describeGientTransTarget(target)
       });
       return {
         domId: segment.domId,
@@ -77,85 +65,32 @@ export class GientTransAdapter {
     }
 
     this.editorWriter.activate(target);
-    const { tagHtmlByToken, pairedClosers } =
-      this.rowReader.collectSourceTagHtmlByToken(target);
-    const preparedValue = prepareGientTransTargetText(value, tagHtmlByToken.keys());
-    const editorHtml = gientransTextToEditorHtml(
-      preparedValue,
-      tagHtmlByToken,
-      pairedClosers
-    );
-    const expectedTags = tagHtmlByToken.size ? tagIdentitiesFromEditorHtml(editorHtml) : undefined;
-    const containsMappedTags = Boolean(expectedTags?.length);
-    const shouldPreserveEditorHtml =
-      preparedValue.includes('\u00A0') || containsMappedTags;
-    const nativeWrite = this.editorWriter.writeBeforeInputPaste(
-      target,
-      preparedValue,
-      editorHtml,
-      expectedTags
-    );
-    let fallbackNativeWrite: NativeWriteDiagnostic;
-    let nativeHtmlWrite: NativeWriteDiagnostic | null = null;
-    if (nativeWrite.ok) {
-      fallbackNativeWrite = nativeWrite;
-    } else if (shouldPreserveEditorHtml) {
-      fallbackNativeWrite = {
-        method: 'skipped' as const,
-        attempted: false,
-        ok: false,
-        reason: containsMappedTags
-          ? 'gientrans-tag-html-path'
-          : 'nbsp-preserve-html-path',
-        before: describeGientTransText(this.getEditableValue(target))
-      };
-    } else {
-      fallbackNativeWrite = this.editorWriter.writeText(
-        target,
-        preparedValue
-      );
-    }
+    const sourceTags = this.rowReader.collectSourceTags(target);
+    const { text, html } = prepareGientTransTarget(value, sourceTags);
+    const expectedTags = sourceTags.byToken.size ? tagIdentitiesFromEditorHtml(html) : undefined;
+    const write = this.editorWriter.write(target, text, html, expectedTags);
 
-    if (!fallbackNativeWrite.ok) {
-      nativeHtmlWrite = this.editorWriter.writeHtml(
-        target,
-        preparedValue,
-        editorHtml,
-        expectedTags
-      );
-      if (nativeHtmlWrite.ok) {
-        fallbackNativeWrite = nativeHtmlWrite;
-      }
-    }
-
-    if (!fallbackNativeWrite.ok) {
-      this.editorWriter.replaceWithHtml(target, editorHtml);
-    }
-
-    this.debug('fill:write', {
+    logGientTrans('fill:write', {
       fillId,
-      removedTrailingLineWhitespace: preparedValue !== value,
-      nativeWrite,
-      fallbackNativeWrite,
-      nativeHtmlWrite,
-      usedFallbackInnerHtml: !fallbackNativeWrite.ok,
+      removedTrailingLineWhitespace: text !== value,
+      ...write,
       activeElementMatchesTarget: document.activeElement === target,
       targetAfterWrite: describeGientTransText(this.getEditableValue(target)),
       targetHtmlLength: target.innerHTML?.length ?? 0
     });
 
-    this.helpers.dispatchInput(target, preparedValue);
+    this.helpers.dispatchInput(target, text);
     this.helpers.dispatchChange(target);
     await delay(20);
     this.helpers.dispatchBlur(target);
 
     const confirmed = await this.editorWriter.waitForTextMatch(
       target,
-      preparedValue,
+      text,
       expectedTags
     );
 
-    this.debug('fill:complete', {
+    logGientTrans('fill:complete', {
       fillId,
       confirmed,
       targetAfterEvents: describeGientTransText(this.getEditableValue(target)),
@@ -171,19 +106,4 @@ export class GientTransAdapter {
         : 'Unable to confirm target update after writing.'
     };
   }
-
-  private debug(label: string, payload: Record<string, unknown>): void {
-    console.info(DEBUG_PREFIX, label, payload);
-  }
-}
-
-function describeTarget(target: HTMLElement): Record<string, unknown> {
-  return {
-    tagName: target.tagName,
-    className: target.className,
-    contenteditable: target.getAttribute('contenteditable'),
-    isContentEditable: target.isContentEditable,
-    editortype: target.getAttribute('editortype'),
-    segid: target.getAttribute('segid')
-  };
 }

@@ -99,7 +99,7 @@ test('GientTransRowReader re-resolves a target and reads source tag HTML from it
       currentTarget as never
     );
     assert.deepEqual(
-      reader.collectSourceTagHtmlByToken(currentTarget as never).tagHtmlByToken,
+      reader.collectSourceTags(currentTarget as never).byToken,
       new Map([
         ['❮color=#FFA500❯', [firstTagHtml, secondTagHtml]]
       ])

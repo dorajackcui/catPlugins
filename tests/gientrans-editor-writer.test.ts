@@ -5,6 +5,7 @@ import {
   GientTransEditorWriter,
   type GientTransEditorWriterHelpers
 } from '../platforms/gientrans/editor-writer.ts';
+import { installGientTransPasteEvents } from './gientrans-test-dom.ts';
 
 class TestEditor {
   private html: string;
@@ -51,29 +52,6 @@ class TestEditor {
   dispatchEvent(event: Event): boolean {
     this.events.push(event.type);
     return this.dispatchHandler?.(event) ?? true;
-  }
-}
-
-class FakeDataTransfer {
-  private readonly values = new Map<string, string>();
-
-  setData(type: string, value: string): void {
-    this.values.set(type, value);
-  }
-
-  getData(type: string): string {
-    return this.values.get(type) ?? '';
-  }
-}
-
-class FakeInputEvent extends Event {
-  readonly data: string | null;
-  readonly inputType: string;
-
-  constructor(type: string, init?: InputEventInit) {
-    super(type, init);
-    this.data = init?.data ?? null;
-    this.inputType = init?.inputType ?? '';
   }
 }
 
@@ -136,10 +114,7 @@ test('GientTransEditorWriter writes text through execCommand with diagnostics', 
   });
 
   try {
-    const diagnostic = createWriter().writeText(
-      target as unknown as HTMLElement,
-      'Bonjour'
-    );
+    const diagnostic = createWriter().write(target as unknown as HTMLElement, 'Bonjour', 'Bonjour').fallbackNativeWrite;
 
     assert.deepEqual(commands, [
       { command: 'insertText', value: 'Bonjour' }
@@ -169,10 +144,8 @@ test('GientTransEditorWriter does not collapse a missing line break during confi
   });
 
   try {
-    const diagnostic = createWriter().writeText(
-      target as unknown as HTMLElement,
-      'Lance\nDracopousse'
-    );
+    const text = 'Lance\nDracopousse';
+    const diagnostic = createWriter().write(target as unknown as HTMLElement, text, text).fallbackNativeWrite;
 
     assert.equal(diagnostic.ok, false);
   } finally {
@@ -181,13 +154,10 @@ test('GientTransEditorWriter does not collapse a missing line break during confi
 });
 
 test('GientTransEditorWriter sends plain text and editor HTML through beforeinput', () => {
-  const previousInputEvent = globalThis.InputEvent;
-  const previousDataTransfer = globalThis.DataTransfer;
+  const restorePaste = installGientTransPasteEvents();
   const target = new TestEditor({ contenteditable: 'true' }, 'Old target');
   const restore = installDomGlobals();
   const received: Array<{ plainText: string; editorHtml: string }> = [];
-  globalThis.InputEvent = FakeInputEvent as never;
-  globalThis.DataTransfer = FakeDataTransfer as never;
   target.dispatchHandler = (event) => {
     const inputEvent = event as InputEvent & { dataTransfer?: DataTransfer };
     const plainText = inputEvent.dataTransfer?.getData('text/plain') ?? '';
@@ -199,11 +169,7 @@ test('GientTransEditorWriter sends plain text and editor HTML through beforeinpu
   };
 
   try {
-    const diagnostic = createWriter().writeBeforeInputPaste(
-      target as unknown as HTMLElement,
-      'Bonjour',
-      'Bonjour'
-    );
+    const diagnostic = createWriter().write(target as unknown as HTMLElement, 'Bonjour', 'Bonjour').nativeWrite;
 
     assert.deepEqual(received, [
       { plainText: 'Bonjour', editorHtml: 'Bonjour' }
@@ -213,8 +179,43 @@ test('GientTransEditorWriter sends plain text and editor HTML through beforeinpu
     assert.equal(diagnostic.dispatchResult, false);
     assert.equal(diagnostic.defaultPrevented, true);
   } finally {
-    globalThis.InputEvent = previousInputEvent;
-    globalThis.DataTransfer = previousDataTransfer;
+    restorePaste();
+    restore();
+  }
+});
+
+test('a paste that leaves a tag as plain text retries with HTML and verifies the native chip', () => {
+  const text = '[Key]';
+  const identity = '❮ph equiv-text="[Key]" id="4"/❯';
+  const html = '<input type="tag" value="4">';
+  const chips: Array<{ getAttribute(name: string): string | null }> = [];
+  const target = Object.assign(new TestEditor({ contenteditable: 'true' }, ''), {
+    querySelectorAll: () => chips
+  });
+  const attempts: string[] = [];
+  const restorePaste = installGientTransPasteEvents();
+  const restore = installDomGlobals({
+    execCommand(command, _showUi, content) {
+      attempts.push(command);
+      assert.equal(content, html);
+      chips.push({ getAttribute: name => name === 'tfull' ? identity : null });
+      return true;
+    }
+  });
+  target.dispatchHandler = event => {
+    attempts.push(event.type);
+    target.innerHTML = text;
+    return true;
+  };
+
+  try {
+    const result = createWriter().write(target as unknown as HTMLElement, text, html, [identity]);
+    assert.deepEqual(attempts, ['beforeinput', 'insertHTML']);
+    assert.equal(result.nativeWrite.ok, false);
+    assert.equal(result.nativeHtmlWrite?.ok, true);
+    assert.equal(result.usedFallbackInnerHtml, false);
+  } finally {
+    restorePaste();
     restore();
   }
 });

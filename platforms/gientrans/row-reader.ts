@@ -2,11 +2,9 @@ import type { ContentScriptDomHelpers } from '../../content/dom.ts';
 import type { RuntimeSegment, ScrollContext } from '../../content/types.ts';
 import { extractPlaceholderTokens } from '../../domain/qa.ts';
 import { normalizeText } from '../../shared/utils.ts';
-import { describeGientTransText } from './diagnostics.ts';
-import {
-  collectGientTransTagHtmlByToken,
-  readGientTransEditorText
-} from './editor-text.ts';
+import { describeGientTransText, logGientTrans } from './diagnostics.ts';
+import { collectGientTransSourceTags } from './editor-tags.ts';
+import { readGientTransEditorText } from './editor-text.ts';
 
 const GIENTRANS_ROOT_SELECTOR = '#o-editor.online-editor';
 const GIENTRANS_TABLE_SELECTOR = '.editor__table';
@@ -17,7 +15,6 @@ const GIENTRANS_SOURCE_SELECTOR =
 const GIENTRANS_TARGET_SELECTOR =
   'td.target-cell pre.edit__input[editortype="target"]';
 const GIENTRANS_ROW_NUMBER_SELECTOR = '.sort-index';
-const DEBUG_PREFIX = '[Phrase Bulk Fill][GientTrans]';
 const MAX_SCAN_DEBUG_LOGS = 12;
 
 /** Owns GientTrans table discovery, segment serialization, and row lookup. */
@@ -29,8 +26,7 @@ export class GientTransRowReader {
   isActive(): boolean {
     return (
       document.querySelector(GIENTRANS_ROOT_SELECTOR) !== null ||
-      document.querySelector(GIENTRANS_TABLE_SELECTOR) !== null ||
-      document.querySelector(GIENTRANS_ROW_SELECTOR) !== null
+      document.querySelector(GIENTRANS_TABLE_SELECTOR) !== null
     );
   }
 
@@ -92,11 +88,11 @@ export class GientTransRowReader {
     );
   }
 
-  collectSourceTagHtmlByToken(target: HTMLElement) {
+  collectSourceTags(target: HTMLElement) {
     const row = target.closest<HTMLElement>(GIENTRANS_ROW_SELECTOR);
     const source =
       row?.querySelector<HTMLElement>(GIENTRANS_SOURCE_SELECTOR) ?? null;
-    return collectGientTransTagHtmlByToken(source);
+    return collectGientTransSourceTags(source);
   }
 
   private extractRowSegment(
@@ -156,15 +152,12 @@ export class GientTransRowReader {
     rows: HTMLElement[],
     segments: RuntimeSegment[]
   ): void {
-    if (!this.isActive() && rows.length === 0 && segments.length === 0) {
-      return;
-    }
-    if (this.scanDebugCount >= MAX_SCAN_DEBUG_LOGS) {
+    if (this.scanDebugCount >= MAX_SCAN_DEBUG_LOGS || (rows.length === 0 && !this.isActive())) {
       return;
     }
 
     this.scanDebugCount += 1;
-    console.info(DEBUG_PREFIX, 'scan:visible', {
+    logGientTrans('scan:visible', {
       scanLog: this.scanDebugCount,
       rowsFound: rows.length,
       segmentsFound: segments.length,
