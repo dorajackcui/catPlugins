@@ -65,7 +65,6 @@ export async function writeMemoqSegment(
         return new MemoqMarkerFillExecutor({ plan, editor }).execute();
       }
       return writeTrustedTextToElement(target, escapeMemoqPlainTargetText(text), {
-        requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
         settleMs: 20,
         ...(segment.rowNumber && { requireResolvedElement: true, resolveElement: resolveWriteTarget })
       });

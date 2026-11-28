@@ -1,5 +1,5 @@
 import { describeRunFailure } from '../domain/run-stop.ts';
-import { describeFillResult, includeMemoqTagErrors } from '../domain/fill-failure.ts';
+import { describeFillResult, includeEditorTagErrors } from '../domain/fill-failure.ts';
 import { requireEditorPlatform } from '../shared/editor-platform.ts';
 import type {
   ExportSourcesResult,
@@ -89,7 +89,7 @@ export class PopupController {
     });
     const { runState, previewResult } = popupState;
     this.runMonitor.renderRunState(runState.phase === 'idle'
-      ? { ...runState, message: includeMemoqTagErrors(runState.message, previewResult) }
+      ? { ...runState, message: includeEditorTagErrors(runState.message, previewResult) }
       : runState);
     this.port.view.renderFileInfo(popupState);
     this.port.view.renderFillOptions(popupState.fillOptions);
@@ -180,7 +180,7 @@ export class PopupController {
         payload: { fillOptions }
       });
       this.port.view.renderStatus(
-        includeMemoqTagErrors(describeFillResult(result), result.preview),
+        includeEditorTagErrors(describeFillResult(result), result.preview),
         result.stopReason ? 'error' : 'default'
       );
     } catch (error) {

@@ -4,17 +4,17 @@ import type {
   RuntimeSegment,
   ScrollContext
 } from '../../content/types.ts';
+import type { PhraseMarkerFillPlan } from '../../domain/phrase-marker-fill.ts';
 import type { FillOutcome } from '../../shared/fill-outcome-types.ts';
 import { waitForNormalizedTextMatch } from '../../shared/utils.ts';
 import { PhraseEditorWriter } from './editor-writer.ts';
 import { PhraseRowReader } from './row-reader.ts';
 
 export class PhraseAdapter {
-  private readonly editorWriter: PhraseEditorWriter;
+  private readonly editorWriter = new PhraseEditorWriter();
   private readonly rowReader: PhraseRowReader;
 
   constructor(private readonly helpers: ContentScriptDomHelpers) {
-    this.editorWriter = new PhraseEditorWriter(helpers);
     this.rowReader = new PhraseRowReader(helpers);
   }
 
@@ -32,18 +32,21 @@ export class PhraseAdapter {
 
   async fillSegment(
     segment: RuntimeSegment,
-    value: string
+    value: string,
+    markerFillPlan?: PhraseMarkerFillPlan
   ): Promise<FillOutcome> {
     const target = segment.targetElement;
 
-    if (target instanceof HTMLElement && target.matches('.twe_target')) {
-      await this.editorWriter.activate(target);
+    let filled: boolean;
+    if (segment.platform === 'phrase') {
       try {
-        await this.editorWriter.write(
-          target,
-          value,
-          segment.phraseUsesTagMarkup === true
-        );
+        if (segment.phraseSourceMarkers?.length && !markerFillPlan) {
+          throw new Error('Native Phrase markers require a validated translation.');
+        }
+        filled = await this.editorWriter.write({
+          resolve: () => this.rowReader.resolveTarget(segment),
+          read: (cell) => this.rowReader.readTarget(cell)
+        }, value, markerFillPlan);
       } catch (error) {
         return {
           domId: segment.domId,
@@ -54,36 +57,22 @@ export class PhraseAdapter {
         };
       }
 
-      const confirmed = await this.editorWriter.waitForTextMatch(
+    } else {
+      this.helpers.setEditableValue(target, value);
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+      this.helpers.dispatchChange(target);
+      this.helpers.dispatchBlur(target);
+      filled = await waitForNormalizedTextMatch(
         () => this.getEditableValue(target),
-        value
+        value,
+        { attempts: 4, delayMs: 60 }
       );
-      return {
-        domId: segment.domId,
-        filled: confirmed,
-        reason: confirmed
-          ? undefined
-          : 'Unable to confirm target update after writing.'
-      };
     }
-
-    this.helpers.setEditableValue(target, value);
-    target.dispatchEvent(new Event('input', { bubbles: true }));
-    this.helpers.dispatchChange(target);
-    this.helpers.dispatchBlur(target);
-
-    const confirmed = await waitForNormalizedTextMatch(
-      () => this.getEditableValue(target),
-      value,
-      { attempts: 4, delayMs: 60 }
-    );
 
     return {
       domId: segment.domId,
-      filled: confirmed,
-      reason: confirmed
-        ? undefined
-        : 'Unable to confirm target update after writing.'
+      filled,
+      reason: filled ? undefined : 'Unable to confirm target update after writing.'
     };
   }
 }

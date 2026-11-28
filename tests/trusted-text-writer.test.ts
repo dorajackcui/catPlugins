@@ -41,9 +41,7 @@ test('writeTrustedTextToElement sends memoQ debugger text write with center coor
   } as unknown as HTMLElement;
 
   try {
-    await writeTrustedTextToElement(target, 'Bonjour', {
-      requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT'
-    });
+    await writeTrustedTextToElement(target, 'Bonjour');
   } finally {
     restoreChrome();
   }
@@ -131,7 +129,6 @@ test('writeTrustedTextToElement re-resolves the target after settling', async ()
 
   try {
     await writeTrustedTextToElement(staleTarget, 'Bonjour', {
-      requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
       settleMs: 20,
       resolveElement: () => {
         resolveCount += 1;
@@ -180,7 +177,6 @@ test('writeTrustedTextToElement refuses a missing required re-resolved target', 
 
     try {
       await writeTrustedTextToElement(target, 'Bonjour', {
-        requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
         settleMs: 20,
         requireResolvedElement: true,
         resolveElement: () => null
@@ -216,9 +212,7 @@ test('writeTrustedTextToElement rejects zero-size targets', async () => {
   let error: unknown;
 
   try {
-    await writeTrustedTextToElement(target, 'Bonjour', {
-      requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT'
-    });
+    await writeTrustedTextToElement(target, 'Bonjour');
   } catch (nextError) {
     error = nextError;
   }
@@ -247,9 +241,7 @@ test('writeTrustedTextToElement surfaces background write errors', async () => {
     let error: unknown;
 
     try {
-      await writeTrustedTextToElement(target, 'Bonjour', {
-        requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT'
-      });
+      await writeTrustedTextToElement(target, 'Bonjour');
     } catch (nextError) {
       error = nextError;
     }

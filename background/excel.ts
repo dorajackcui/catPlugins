@@ -3,6 +3,7 @@ import { read, utils as xlsxUtils, write } from 'xlsx';
 import type {
   PageSegment,
   ParseExcelResult,
+  PhraseExportedTarget,
   TranslationEntry
 } from '../shared/translation-types.ts';
 import { normalizeText, toText } from '../shared/utils.ts';
@@ -22,6 +23,7 @@ function resolveColumnMapping(rows: IndexedRow[]): {
   rowNumberIndex: number;
   occurrenceIndexIndex: number;
   originalSourceIndex: number;
+  phraseTargetIndex: number;
   dataRows: IndexedRow[];
 } {
   const [headerRow] = rows;
@@ -29,6 +31,7 @@ function resolveColumnMapping(rows: IndexedRow[]): {
   const sourceIndex = headers.findIndex((cell) => normalizeHeader(cell) === 'source');
   const targetIndex = headers.findIndex((cell) => normalizeHeader(cell) === 'target');
   const originalSourceIndex = headers.findIndex((cell) => normalizeHeader(cell) === 'originalsource');
+  const phraseTargetIndex = headers.findIndex((cell) => normalizeHeader(cell) === 'phrasetargetmarkers');
   const rowNumberIndex = headers.findIndex((cell) =>
     ['rownumber', 'row', 'segmentnumber', 'segment'].includes(normalizeHeader(cell))
   );
@@ -43,6 +46,7 @@ function resolveColumnMapping(rows: IndexedRow[]): {
       rowNumberIndex,
       occurrenceIndexIndex,
       originalSourceIndex,
+      phraseTargetIndex,
       dataRows: rows.slice(1)
     };
   }
@@ -53,6 +57,7 @@ function resolveColumnMapping(rows: IndexedRow[]): {
     rowNumberIndex: -1,
     occurrenceIndexIndex: -1,
     originalSourceIndex: -1,
+    phraseTargetIndex: -1,
     dataRows: rows
   };
 }
@@ -71,6 +76,25 @@ function normalizeOccurrenceIndex(value: unknown): number | null {
 
 function toRawCellText(value: unknown): string {
   return toText(value).replace(/^[\t\n\r ]+|[\t\n\r ]+$/g, '');
+}
+
+function readPhraseExportedTarget(value: unknown): PhraseExportedTarget | undefined {
+  if (typeof value !== 'string' || !value) return undefined;
+  try {
+    const data = JSON.parse(value) as Partial<PhraseExportedTarget> | null;
+    if (typeof data?.text === 'string' && Array.isArray(data.markers) && data.markers.every((marker) =>
+      marker && typeof marker.token === 'string' && marker.token &&
+      Number.isSafeInteger(marker.offset) && marker.offset >= 0
+    )) {
+      return {
+        text: data.text,
+        markers: data.markers.map(({ token, offset }) => ({ token, offset }))
+      };
+    }
+  } catch {
+    // A workbook edited outside the extension can omit its saved marker information.
+  }
+  return undefined;
 }
 
 export function parseExcelBuffer(
@@ -107,6 +131,7 @@ export function parseExcelBuffer(
     rowNumberIndex,
     occurrenceIndexIndex,
     originalSourceIndex,
+    phraseTargetIndex,
     dataRows
   } = resolveColumnMapping(visibleRows);
   const occurrences = new Map<string, number>();
@@ -122,6 +147,9 @@ export function parseExcelBuffer(
       rowNumberIndex >= 0
         ? normalizeRowNumber(values[rowNumberIndex])
         : undefined;
+    const phraseExportedTarget = exportedRowNumber && numberedExport && phraseTargetIndex >= 0
+      ? readPhraseExportedTarget(values[phraseTargetIndex])
+      : undefined;
 
     const sourceNormalized = normalizeText(sourceRaw);
     if (!sourceNormalized || !normalizeText(targetRaw)) {
@@ -140,6 +168,7 @@ export function parseExcelBuffer(
       rowNumber: exportedRowNumber,
       ...(exportedRowNumber && numberedExport ? { matchMemoqRowOnly: true } : {}),
       ...(originalSource ? { originalSource } : {}),
+      ...(phraseExportedTarget ? { phraseExportedTarget } : {}),
       sourceRaw,
       sourceNormalized,
       targetRaw,
@@ -161,19 +190,29 @@ export function parseExcelBuffer(
 export function buildSourceExportWorkbook(segments: PageSegment[]): Uint8Array {
   const workbook = xlsxUtils.book_new();
   const includeOriginal = segments.some(segment => segment.platform === 'memoq' && segment.originalSource !== undefined);
+  const phraseTargets = segments.map((segment) => {
+    if (segment.platform !== 'phrase' || !segment.rowNumber ||
+      !segment.phraseSourceMarkers?.length || !segment.targetRaw) return '';
+    const markers = (segment.phraseTargetMarkers ?? []).map(({ token, offset }) => ({ token, offset }));
+    const value = JSON.stringify({ text: segment.targetRaw, markers } satisfies PhraseExportedTarget);
+    return value.length <= 32_767 ? value : '';
+  });
+  const includePhraseTargets = phraseTargets.some(Boolean);
   const rows: Array<Array<string | number>> = [
-    ['rowNumber', 'source', 'target', 'occurrenceIndex', ...(includeOriginal ? ['originalSource'] : [])],
-    ...segments.map((segment) => [
+    ['rowNumber', 'source', 'target', 'occurrenceIndex', ...(includeOriginal ? ['originalSource'] : []),
+      ...(includePhraseTargets ? ['phraseTargetMarkers'] : [])],
+    ...segments.map((segment, index) => [
       segment.rowNumber ?? '',
       segment.sourceRaw,
       segment.targetRaw,
       segment.occurrenceIndex,
-      ...(includeOriginal ? [segment.originalSource ?? ''] : [])
+      ...(includeOriginal ? [segment.originalSource ?? ''] : []),
+      ...(includePhraseTargets ? [phraseTargets[index]] : [])
     ])
   ];
   const worksheet = xlsxUtils.aoa_to_sheet(rows);
   const worksheetWithColumns = worksheet as typeof worksheet & {
-    '!cols'?: Array<{ wch: number }>;
+    '!cols'?: Array<{ wch: number; hidden?: boolean }>;
   };
 
   worksheetWithColumns['!cols'] = [
@@ -181,10 +220,11 @@ export function buildSourceExportWorkbook(segments: PageSegment[]): Uint8Array {
     { wch: 60 },
     { wch: 60 },
     { wch: 16 },
-    ...(includeOriginal ? [{ wch: 72 }] : [])
+    ...(includeOriginal ? [{ wch: 72 }] : []),
+    ...(includePhraseTargets ? [{ wch: 20, hidden: true }] : [])
   ];
   xlsxUtils.book_append_sheet(workbook, worksheet, 'Sources');
 
-  const buffer = write(workbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer | Uint8Array;
+  const buffer = write(workbook, { bookType: 'xlsx', type: 'array', cellStyles: includePhraseTargets }) as ArrayBuffer | Uint8Array;
   return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
 }

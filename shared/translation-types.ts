@@ -4,10 +4,24 @@ export interface TranslationEntry {
   /** A numbered row from the editor export must stay on that row in memoQ. */
   matchMemoqRowOnly?: true;
   originalSource?: string;
+  phraseExportedTarget?: PhraseExportedTarget;
   sourceRaw: string;
   sourceNormalized: string;
   targetRaw: string;
   occurrenceIndex: number;
+}
+
+export interface PhraseNativeMarker {
+  id: number;
+  token: string;
+  label: string;
+  /** UTF-16 offset of the original label in the serialized cell text. */
+  offset: number;
+}
+
+export interface PhraseExportedTarget {
+  text: string;
+  markers: Array<Pick<PhraseNativeMarker, 'token' | 'offset'>>;
 }
 
 export interface PageSegment {
@@ -17,6 +31,8 @@ export interface PageSegment {
   originalSource?: string;
   /** Native chips observed in a webTrans row that accepts explicit marker IDs. */
   memoqSourceMarkers?: string[];
+  phraseSourceMarkers?: PhraseNativeMarker[];
+  phraseTargetMarkers?: PhraseNativeMarker[];
   sourceNormalized: string;
   occurrenceIndex: number;
   targetRaw: string;

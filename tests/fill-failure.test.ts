@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import {
   describeFillResult,
-  includeMemoqTagErrors,
+  includeEditorTagErrors,
   describeFillStopReason,
   shouldStopAfterFillFailure
 } from '../domain/fill-failure.ts';
@@ -14,7 +14,7 @@ test('the completion status names a rejected memoQ row and its foreign tag', () 
     preview: summarizePreview([{ platform: 'memoq', domId: '910', rowNumber: '910', status: 'placeholderError',
       reason: 'Target tag <99> is absent from this source row.', sourceRaw: 'A<1>', sourceNormalized: 'A<1>',
       occurrenceIndex: 1, targetRaw: '', isEmptyTarget: true, placeholderTokens: [] }]) };
-  assert.equal(includeMemoqTagErrors(describeFillResult(result), result.preview),
+  assert.equal(includeEditorTagErrors(describeFillResult(result), result.preview),
     'Filled 3 segment(s). Skipped 1 row with tag errors. Row 910. Target tag <99> is absent from this source row.');
 });
 

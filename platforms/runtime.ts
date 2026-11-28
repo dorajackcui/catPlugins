@@ -1,4 +1,5 @@
 import { ContentScriptDomHelpers } from '../content/dom.ts';
+import type { PhraseMarkerFillPlan } from '../domain/phrase-marker-fill.ts';
 import type {
   EditableElement,
   RuntimeSegment,
@@ -15,6 +16,11 @@ import {
 import { PhraseAdapter } from './phrase/adapter.ts';
 
 export type { MemoqFillExecutionContext } from './memoq/adapter.ts';
+
+export interface PlatformFillContext {
+  memoq?: MemoqFillExecutionContext;
+  phrase?: PhraseMarkerFillPlan;
+}
 
 export function shouldRejectNonEmptyTarget(
   platform: RuntimeSegment['platform'],
@@ -46,7 +52,7 @@ export interface PhraseRuntimePort {
   findScrollContext(): ScrollContext | null;
   collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[];
   getEditableValue(targetElement: EditableElement): string;
-  fillSegment(segment: RuntimeSegment, value: string): Promise<FillOutcome>;
+  fillSegment(segment: RuntimeSegment, value: string, markerFillPlan?: PhraseMarkerFillPlan): Promise<FillOutcome>;
 }
 
 export class PlatformRuntime {
@@ -100,10 +106,10 @@ export class PlatformRuntime {
   async fillSegment(
     segment: RuntimeSegment,
     value: string,
-    memoqContext?: MemoqFillExecutionContext
+    context?: PlatformFillContext
   ): Promise<FillOutcome> {
     if (segment.platform === 'memoq') {
-      return this.memoq.fillSegment(segment, value, memoqContext);
+      return this.memoq.fillSegment(segment, value, context?.memoq);
     }
 
     const isGientTrans = segment.platform === 'gientrans';
@@ -111,7 +117,7 @@ export class PlatformRuntime {
       return this.gientrans.fillSegment(segment, value);
     }
 
-    return this.phrase.fillSegment(segment, value);
+    return this.phrase.fillSegment(segment, value, context?.phrase);
   }
 }
 

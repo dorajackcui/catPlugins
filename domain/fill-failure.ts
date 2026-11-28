@@ -22,9 +22,10 @@ export function describeFillResult(result: FillRunResult): string {
     : `Filled ${result.filledCount} segment(s).`;
 }
 
-export function includeMemoqTagErrors(message: string, preview: PreviewResult | null): string {
+export function includeEditorTagErrors(message: string, preview: PreviewResult | null): string {
   if (!preview?.placeholderErrors || !message.startsWith('Filled ')) return message;
-  const skipped = preview.items.filter(item => item.platform === 'memoq' && item.status === 'placeholderError');
+  const skipped = preview.items.filter(item => item.status === 'placeholderError' &&
+    (item.platform === 'memoq' || item.platform === 'phrase'));
   const first = skipped[0];
   if (!first) return message;
   const row = first.rowNumber ?? first.domId;

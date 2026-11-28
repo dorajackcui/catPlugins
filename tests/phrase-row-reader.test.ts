@@ -1,42 +1,42 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 
 import { PhraseRowReader } from '../platforms/phrase/row-reader.ts';
 import type { ScrollContext } from '../content/types.ts';
 
 class FakeElement {
+  readonly nodeType = 1;
+  isConnected = true;
+  ownerDocument = document;
   id = '';
-  className = '';
+  row: FakeElement | null = null;
   target: FakeElement | null = null;
-  scopeRoots: FakeElement[] = [];
-  tagChips: FakeElement[] = [];
+  textContainer: FakeElement | null = null;
+  position: { textContent: string } | null = null;
+  tagLabel: { textContent: string } | null = null;
+  childNodes: Array<FakeElement | ReturnType<typeof textNode>>;
   attributes = new Map<string, string>();
 
-  matches(selector: string): boolean {
-    return selector === '.twe_target' && this.className.includes('twe_target');
+  constructor(private readonly className = '', readonly tagName = 'SPAN', ...children: FakeElement['childNodes']) {
+    this.childNodes = children;
   }
 
-  querySelector<T extends Element = Element>(selector: string): T | null {
-    return selector === '.twe_target' && this.target
-      ? (this.target as unknown as T)
-      : null;
+  matches(selector: string): boolean { return selector === `.${this.className}`; }
+  closest() { return this.row; }
+
+  querySelector(selector: string) {
+    if (selector.includes('.te_text_container')) return this.textContainer;
+    if (selector === '.twe_target') return this.target;
+    if (selector === '.twe_position .position_number') return this.position;
+    if (selector === '.tag_metadata_content') return this.tagLabel;
+    return null;
   }
 
-  querySelectorAll<T extends Element = Element>(selector: string): T[] {
-    if (selector.includes('.text-area-source-container')) {
-      return this.scopeRoots as unknown as T[];
-    }
+  getAttribute(name: string): string | null { return this.attributes.get(name) ?? null; }
+}
 
-    if (selector.includes('[contenteditable="false"]')) {
-      return this.tagChips as unknown as T[];
-    }
-
-    return [];
-  }
-
-  getAttribute(name: string): string | null {
-    return this.attributes.get(name) ?? null;
-  }
+function textNode(textContent: string) {
+  return { nodeType: 3, textContent };
 }
 
 const SCROLL_CONTEXT: ScrollContext = {
@@ -50,126 +50,122 @@ const SCROLL_CONTEXT: ScrollContext = {
   restore() {}
 };
 
-test('PhraseRowReader serializes native rows and detects visible tag markup', () => {
+function setDocument(t: TestContext, overrides: Partial<Document>) {
   const previousDocument = globalThis.document;
-  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  globalThis.document = { querySelector: () => null, ...overrides } as unknown as Document;
+  globalThis.Node = { ELEMENT_NODE: 1, TEXT_NODE: 3 } as typeof Node;
+  t.after(() => {
+    globalThis.document = previousDocument;
+    globalThis.Node = previousNode;
+  });
+}
+
+function makeReader(overrides: Record<string, unknown> = {}) {
+  return new PhraseRowReader({
+    sortByVisualPosition: (elements: unknown[]) => elements,
+    isElementVisible: () => true,
+    ...overrides
+  } as never);
+}
+
+test('PhraseRowReader serializes literal text and line breaks in native cells', t => {
+  const rows: FakeElement[] = [];
+  setDocument(t, { querySelectorAll: (() => rows) as never });
   const row = new FakeElement();
-  row.id = 'phrase-row-1';
-  const target = new FakeElement();
-  target.className = 'twe_target';
-  const sourceScope = new FakeElement();
-  sourceScope.tagChips = [new FakeElement()];
-  row.target = target;
-  row.scopeRoots = [sourceScope];
+  row.id = 'segment-position-37';
+  row.position = { textContent: '38' };
+  row.textContainer = new FakeElement('', 'DIV', textNode('Hello {name}'), new FakeElement('', 'BR'), textNode('again'));
+  row.target = new FakeElement('twe_target');
+  row.target.textContainer = new FakeElement('', 'DIV', textNode('Already translated'));
+  rows.push(row);
+  const reader = makeReader();
 
-  globalThis.HTMLElement = FakeElement as never;
-  globalThis.document = {
-    querySelectorAll(selector: string) {
-      return selector.includes('.segment-row') ? [row] : [];
-    }
-  } as unknown as Document;
+  const [segment] = reader.collectVisibleSegments(SCROLL_CONTEXT);
 
-  try {
-    const reader = new PhraseRowReader({
-      sortByVisualPosition: (elements: unknown[]) => elements,
-      isElementVisible: () => true,
-      readTextBySelectors: (
-        element: FakeElement,
-        selectors: string[]
-      ) =>
-        element === row && selectors.some((selector) => selector.includes('source'))
-          ? 'Hello {name}'
-          : '',
-      getAbsoluteTop: () => 100
-    } as never);
-
-    const segments = reader.collectVisibleSegments(SCROLL_CONTEXT);
-
-    assert.equal(segments.length, 1);
-    assert.equal(segments[0]?.domId, 'phrase-row-1');
-    assert.equal(segments[0]?.sourceRaw, 'Hello {name}');
-    assert.equal(segments[0]?.sourceNormalized, 'Hello {name}');
-    assert.equal(segments[0]?.targetRaw, '');
-    assert.equal(segments[0]?.isEmptyTarget, true);
-    assert.deepEqual(segments[0]?.placeholderTokens, ['{name}']);
-    assert.equal(segments[0]?.targetElement, target as never);
-    assert.equal(segments[0]?.platform, 'phrase');
-    assert.equal(segments[0]?.phraseUsesTagMarkup, true);
-    assert.equal(reader.getEditableValue(target as never), '');
-  } finally {
-    globalThis.document = previousDocument;
-    globalThis.HTMLElement = previousHTMLElement;
-  }
+  assert.equal(segment.domId, row.id);
+  assert.equal(segment.rowNumber, '38');
+  assert.equal(segment.sourceRaw, 'Hello {name}\nagain');
+  assert.deepEqual(segment.placeholderTokens, ['{name}']);
+  assert.equal(segment.isEmptyTarget, false);
+  assert.equal(segment.targetRaw, 'Already translated');
+  assert.equal(reader.getEditableValue(segment.targetElement), segment.targetRaw);
 });
 
-test('PhraseRowReader falls back to generic editable discovery', () => {
-  const previousDocument = globalThis.document;
-  const previousHTMLElement = globalThis.HTMLElement;
-  const target = new FakeElement();
-  const container = new FakeElement();
+test('PhraseRowReader resolves a native row only while its number, text and chips still match', t => {
+  const rows: FakeElement[] = [];
+  setDocument(t, {
+    querySelectorAll: (() => rows) as never,
+    getElementById: id => (rows.find(row => row.id === id) as unknown as HTMLElement | undefined) ?? null
+  });
+  const row = new FakeElement();
+  row.id = 'segment-position-37';
+  row.position = { textContent: '38' };
+  row.target = new FakeElement('twe_target');
+  row.target.row = row;
+  row.target.textContainer = new FakeElement();
+  const chip = new FakeElement('te_tag', 'SPAN', textNode('1{days_left}'));
+  chip.attributes.set('data-tag-id', '1');
+  chip.attributes.set('data-tag-content', '{1}');
+  chip.tagLabel = { textContent: '{days_left}' };
+  row.textContainer = new FakeElement('', 'DIV', textNode('12'), chip, textNode(' days remaining'));
+  rows.push(row);
+  const reader = makeReader();
 
-  globalThis.HTMLElement = FakeElement as never;
-  globalThis.document = {
-    querySelectorAll(selector: string) {
-      if (selector.includes('.segment-row')) {
-        return [];
-      }
+  const [segment] = reader.collectVisibleSegments(SCROLL_CONTEXT);
 
-      return selector.includes('textarea') ? [target] : [];
-    }
-  } as unknown as Document;
+  assert.equal(segment.sourceRaw, '12{days_left} days remaining');
+  assert.deepEqual(segment.phraseSourceMarkers, [
+    { id: 1, token: '{1}', label: '{days_left}', offset: 2 }
+  ]);
+  assert.equal(segment.isEmptyTarget, true);
+  assert.equal(reader.resolveTarget(segment), segment.targetElement);
 
-  try {
-    const reader = new PhraseRowReader({
-      sortByVisualPosition: (elements: unknown[]) => elements,
-      isElementVisible: () => true,
-      isEditableCandidate: () => true,
-      findSegmentContainer: () => container,
-      findSourceText: () => '  Generic source  ',
-      getGenericEditableValue: () => ' Existing target ',
-      getAbsoluteTop: () => 123.6
-    } as never);
-
-    const segments = reader.collectVisibleSegments(SCROLL_CONTEXT);
-
-    assert.equal(segments.length, 1);
-    assert.equal(segments[0]?.domId, 'Generic source::124');
-    assert.equal(segments[0]?.sourceRaw, '  Generic source  ');
-    assert.equal(segments[0]?.sourceNormalized, 'Generic source');
-    assert.equal(segments[0]?.targetRaw, ' Existing target ');
-    assert.equal(segments[0]?.isEmptyTarget, false);
-    assert.equal(segments[0]?.platform, 'generic');
-    assert.equal(segments[0]?.targetElement, target as never);
-  } finally {
-    globalThis.document = previousDocument;
-    globalThis.HTMLElement = previousHTMLElement;
-  }
+  row.position.textContent = '39';
+  assert.equal(reader.resolveTarget(segment), null);
+  row.position.textContent = '38';
+  chip.attributes.set('data-tag-id', '2');
+  assert.equal(reader.resolveTarget(segment), null);
+  chip.attributes.delete('data-tag-id');
+  assert.deepEqual(reader.collectVisibleSegments(SCROLL_CONTEXT), []);
 });
 
-test('PhraseRowReader resolves the best scroll container from editor candidates', () => {
-  const previousDocument = globalThis.document;
-  const candidate = new FakeElement();
-  const container = new FakeElement();
-  let receivedCandidates: unknown[] = [];
+test('PhraseRowReader uses the Phrase scroll container even when the filter returns no rows', t => {
+  const scroller = {} as HTMLElement;
+  setDocument(t, {
+    querySelector: ((selector: string) => selector === '#translation-table-virtual-scroll' ? scroller : null) as never,
+    querySelectorAll: ((selector: string) => selector.includes('textarea') ? [{}] : []) as never
+  });
+  const reader = makeReader({
+    toElementScrollContext: (element: HTMLElement) => {
+      assert.equal(element, scroller);
+      return SCROLL_CONTEXT;
+    }
+  });
 
-  globalThis.document = {
-    querySelectorAll: () => [candidate]
-  } as unknown as Document;
+  assert.equal(reader.findScrollContext(), SCROLL_CONTEXT);
+  assert.deepEqual(reader.collectVisibleSegments(SCROLL_CONTEXT), []);
+});
 
-  try {
-    const reader = new PhraseRowReader({
-      findBestScrollContainer: (candidates: unknown[]) => {
-        receivedCandidates = candidates;
-        return container;
-      },
-      toElementScrollContext: () => SCROLL_CONTEXT
-    } as never);
+test('PhraseRowReader falls back to generic editables on pages without a Phrase grid', t => {
+  const rows: FakeElement[] = [];
+  setDocument(t, { querySelectorAll: ((selector: string) => selector.includes('textarea') ? rows : []) as never });
+  rows.push(new FakeElement());
+  const reader = makeReader({
+    findBestScrollContainer: () => ({}),
+    toElementScrollContext: () => SCROLL_CONTEXT,
+    isEditableCandidate: () => true,
+    findSegmentContainer: () => ({}),
+    findSourceText: () => '  Generic source  ',
+    getGenericEditableValue: () => ' Existing target ',
+    getAbsoluteTop: () => 123.6
+  });
 
-    const scrollContext = reader.findScrollContext();
-
-    assert.deepEqual(receivedCandidates, [candidate]);
-    assert.equal(scrollContext, SCROLL_CONTEXT);
-  } finally {
-    globalThis.document = previousDocument;
-  }
+  assert.equal(reader.findScrollContext(), SCROLL_CONTEXT);
+  const [segment] = reader.collectVisibleSegments(SCROLL_CONTEXT);
+  assert.equal(segment.domId, 'Generic source::124');
+  assert.equal(segment.sourceRaw, '  Generic source  ');
+  assert.equal(segment.targetRaw, ' Existing target ');
+  assert.equal(segment.isEmptyTarget, false);
+  assert.equal(segment.platform, 'generic');
 });

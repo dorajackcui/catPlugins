@@ -103,7 +103,7 @@ function createHarness(options: {
     },
     async fillSegment(segment, value, context) {
       events.push(`fill:${segment.domId}`);
-      fillCalls.push({ domId: segment.domId, value, context });
+      fillCalls.push({ domId: segment.domId, value, context: context?.memoq });
       return (
         options.outcomes?.[segment.domId] ?? {
           domId: segment.domId,

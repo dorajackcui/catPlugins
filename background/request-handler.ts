@@ -7,7 +7,7 @@ import {
 import type {
   ApiResponse,
   BackgroundRequest,
-  DebuggerInputOperation
+  DebuggerInputSequence
 } from '../shared/message-types.ts';
 import type { PopupState } from '../shared/state-types.ts';
 import { parseExcelBuffer } from './excel.ts';
@@ -26,12 +26,7 @@ export interface BackgroundDebuggerInputPort {
   keepAlive(tabId: number | undefined): void;
   writeText(tabId: number, x: number, y: number, text: string): Promise<void>;
   insertFocusedText(tabId: number, text: string): Promise<void>;
-  runSequence(
-    tabId: number,
-    x: number,
-    y: number,
-    operations: DebuggerInputOperation[]
-  ): Promise<void>;
+  runSequence(tabId: number, sequence: DebuggerInputSequence): Promise<void>;
   prepare(tabId: number): Promise<void>;
 }
 
@@ -123,8 +118,7 @@ export class BackgroundRequestHandler {
         return { ok: true, data: null };
       }
 
-      case 'MEMOQ_DEBUGGER_WRITE_TEXT':
-      case 'DEBUGGER_WRITE_TEXT': {
+      case 'MEMOQ_DEBUGGER_WRITE_TEXT': {
         const tabId = sender?.tab?.id;
         if (typeof tabId !== 'number') {
           throw new Error('Trusted write requires a sender tab.');
@@ -152,19 +146,15 @@ export class BackgroundRequestHandler {
           throw new Error('Trusted input sequence requires a sender tab.');
         }
 
-        await this.port.debuggerInput.runSequence(
-          tabId,
-          request.payload.x,
-          request.payload.y,
-          request.payload.operations
-        );
+        await this.port.debuggerInput.runSequence(tabId, request.payload);
         return { ok: true, data: null };
       }
 
+      case 'DEBUGGER_PREPARE':
       case 'MEMOQ_DEBUGGER_PREPARE': {
         const tabId = sender?.tab?.id;
         if (typeof tabId !== 'number') {
-          throw new Error('memoQ trusted input requires a sender tab.');
+          throw new Error('Trusted input preparation requires a sender tab.');
         }
 
         await this.port.debuggerInput.prepare(tabId);

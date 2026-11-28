@@ -1,216 +1,152 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 
-import type { BackgroundRequest } from '../shared/types.ts';
-import {
-  PhraseEditorWriter,
-  type PhraseEditorWriterHelpers,
-  type PhraseEditorWriterServices
-} from '../platforms/phrase/editor-writer.ts';
+import type { PhraseCellContent } from '../domain/phrase-marker-fill.ts';
+import { PhraseEditorWriter } from '../platforms/phrase/editor-writer.ts';
+import type { BackgroundRequest } from '../shared/message-types.ts';
 
-function makeRect(
-  left: number,
-  top: number,
-  width: number,
-  height: number
-): DOMRect {
-  return {
-    left,
-    top,
-    width,
-    height,
-    right: left + width,
-    bottom: top + height,
-    x: left,
-    y: top,
-    toJSON: () => ({})
-  };
-}
+function createHarness(t: TestContext) {
+  const previousHTMLElement = globalThis.HTMLElement;
+  const doc = Object.assign(new EventTarget(), { activeElement: null as Cell | null });
+  class Cell {
+    ownerDocument = doc;
+    isConnected = true;
 
-class TestElement {
-  focusCalls = 0;
-  scrollCalls = 0;
+    constructor(
+      private readonly rect: { left: number; top: number; width: number; height: number },
+      private readonly input?: Cell
+    ) {}
 
-  constructor(
-    private readonly rect: DOMRect,
-    private readonly activationTarget: TestElement | null = null
-  ) {}
-
-  querySelector<T extends Element = Element>(): T | null {
-    return this.activationTarget as unknown as T | null;
+    contains(element: unknown): boolean { return element === this || element === this.input; }
+    matches(selector: string): boolean { return selector === 'input.twe-main-input'; }
+    getBoundingClientRect() { return this.rect; }
   }
+  const input = new Cell({ left: 0, top: 0, width: 1, height: 1 });
+  const target = new Cell({ left: 10, top: 20, width: 100, height: 40 }, input);
+  const button = new Cell({ left: 200, top: 100, width: 40, height: 20 });
+  Object.assign(doc, {
+    querySelector: () => button,
+    elementFromPoint: (x: number) => x < 100 ? target : button
+  });
+  globalThis.HTMLElement = Cell as never;
+  t.after(() => { globalThis.HTMLElement = previousHTMLElement; });
 
-  focus(): void {
-    this.focusCalls += 1;
-  }
-
-  scrollIntoView(): void {
-    this.scrollCalls += 1;
-  }
-
-  getBoundingClientRect(): DOMRect {
-    return this.rect;
-  }
-}
-
-function createHarness(options: {
-  response?: { ok: true; data: null } | { ok: false; error: string };
-  isVisible?: boolean;
-  onWait?: (delayMs: number) => void;
-} = {}) {
-  const mouseSequences: Array<{ target: HTMLElement; eventNames: string[] }> = [];
-  const messages: BackgroundRequest[] = [];
   const waits: number[] = [];
-  const helpers: PhraseEditorWriterHelpers = {
-    dispatchMouseSequence(target, eventNames) {
-      mouseSequences.push({ target, eventNames });
-    },
-    isElementVisible: () => options.isVisible ?? true
+  const messages: BackgroundRequest[] = [];
+  const state = {
+    cell: { text: '', markers: [] } as PhraseCellContent,
+    onRequest: (_request: BackgroundRequest) => {},
+    error: ''
   };
-  const services: PhraseEditorWriterServices = {
-    sendMessage: async (request) => {
+  const writer = new PhraseEditorWriter({
+    sendMessage: async request => {
       messages.push(request);
-      return options.response ?? { ok: true, data: null };
+      if (request.type === 'DEBUGGER_INPUT_SEQUENCE' && !request.payload.alreadyFocused) doc.activeElement = input;
+      state.onRequest(request);
+      return state.error ? { ok: false, error: state.error } : { ok: true, data: null };
     },
-    wait: async (delayMs) => {
-      waits.push(delayMs);
-      options.onWait?.(delayMs);
-    }
+    wait: async ms => { waits.push(ms); }
+  });
+  const row = {
+    resolve: () => target as unknown as HTMLElement,
+    read: () => state.cell
   };
-
-  return {
-    writer: new PhraseEditorWriter(helpers, services),
-    mouseSequences,
-    messages,
-    waits
-  };
+  return { doc, button, writer, row, state, waits, messages };
 }
 
-function installDocumentQuery(result: HTMLElement | null): () => void {
-  const previousDocument = globalThis.document;
-  globalThis.document = {
-    querySelector: () => result
-  } as unknown as Document;
+const FOCUS_REQUEST = {
+  type: 'DEBUGGER_INPUT_SEQUENCE',
+  payload: { x: 60, y: 40, operations: [{ type: 'wait', milliseconds: 30 }] }
+};
 
-  return () => {
-    globalThis.document = previousDocument;
+test('PhraseEditorWriter sends literal placeholder text through the verified native input', async t => {
+  const { writer, row, state, messages } = createHarness(t);
+  const text = 'Bonjour {1}';
+  state.onRequest = request => {
+    if (request.type === 'DEBUGGER_INPUT_SEQUENCE' && request.payload.alreadyFocused) {
+      state.cell = { text, markers: [] };
+    }
   };
-}
 
-test('PhraseEditorWriter activates the nested target surface and waits for layout', async () => {
-  const clickTarget = new TestElement(makeRect(10, 20, 100, 40));
-  const target = new TestElement(makeRect(10, 20, 100, 40), clickTarget);
-  const harness = createHarness();
-
-  await harness.writer.activate(target as unknown as HTMLElement);
-
-  assert.deepEqual(harness.mouseSequences, [
-    {
-      target: clickTarget as unknown as HTMLElement,
-      eventNames: ['mousedown', 'mouseup', 'click', 'dblclick']
-    }
-  ]);
-  assert.equal(clickTarget.focusCalls, 1);
-  assert.deepEqual(harness.waits, [80]);
-});
-
-test('PhraseEditorWriter sends plain text at the target center', async () => {
-  const target = new TestElement(makeRect(10, 20, 100, 40));
-  const harness = createHarness();
-
-  await harness.writer.write(target as unknown as HTMLElement, 'Bonjour', false);
-
-  assert.equal(target.scrollCalls, 1);
-  assert.deepEqual(harness.waits, [20]);
-  assert.deepEqual(harness.messages, [
-    {
-      type: 'DEBUGGER_WRITE_TEXT',
-      payload: {
-        x: 60,
-        y: 40,
-        text: 'Bonjour'
-      }
-    }
+  assert.equal(await writer.write(row, text), true);
+  assert.deepEqual(messages, [
+    { type: 'DEBUGGER_PREPARE' }, FOCUS_REQUEST,
+    { type: 'DEBUGGER_INPUT_SEQUENCE', payload: { alreadyFocused: true, operations: [{ type: 'text', text }] } }
   ]);
 });
 
-test('PhraseEditorWriter converts Phrase markup into tag-button click operations', async () => {
-  const target = new TestElement(makeRect(10, 20, 100, 40));
-  const insertTagButton = new TestElement(makeRect(200, 100, 40, 20));
-  const restoreDocument = installDocumentQuery(
-    insertTagButton as unknown as HTMLElement
-  );
-  const harness = createHarness();
+test('PhraseEditorWriter inserts a reordered marker by ID and preserves the remaining button order', async t => {
+  const { writer, row, state, messages } = createHarness(t);
+  const first = { id: 1, token: '{1}', label: '{0}', offset: 0 };
+  const second = { id: 2, token: '{2}', label: '{1}', offset: 3 };
+  const tenth = { id: 10, token: '{10}', label: '<color=red>', offset: 6 };
+  const text = '{1}×{0}<color=red>';
+  state.onRequest = () => {
+    if (messages.length === 6) state.cell = {
+      text, markers: [{ ...second, offset: 0 }, { ...first, offset: 4 }, { ...tenth, offset: 7 }]
+    };
+  };
 
-  try {
-    await harness.writer.write(
-      target as unknown as HTMLElement,
-      'Before {1} after',
-      true
-    );
-  } finally {
-    restoreDocument();
-  }
-
-  assert.equal(target.scrollCalls, 1);
-  assert.equal(insertTagButton.scrollCalls, 1);
-  assert.deepEqual(harness.waits, []);
-  assert.deepEqual(harness.messages, [
-    {
-      type: 'DEBUGGER_INPUT_SEQUENCE',
-      payload: {
-        x: 60,
-        y: 40,
-        operations: [
-          { type: 'text', text: 'Before ' },
-          { type: 'click', x: 220, y: 110 },
-          { type: 'text', text: ' after' }
-        ]
-      }
-    }
-  ]);
-});
-
-test('PhraseEditorWriter surfaces background trusted-input errors', async () => {
-  const target = new TestElement(makeRect(10, 20, 100, 40));
-  const harness = createHarness({
-    response: { ok: false, error: 'Debugger denied.' }
-  });
-  let writeError: unknown;
-
-  try {
-    await harness.writer.write(target as unknown as HTMLElement, 'Bonjour', false);
-  } catch (error) {
-    writeError = error;
-  }
-
-  assert.equal(
-    writeError instanceof Error ? writeError.message : null,
-    'Debugger denied.'
-  );
-});
-
-test('PhraseEditorWriter confirms normalized tag clips after retrying', async () => {
-  let currentValue = 'Wrong';
-  const harness = createHarness({
-    onWait: () => {
-      currentValue = '9 {1}';
-    }
+  const filled = await writer.write(row, text, {
+    sourceMarkers: [first, second, tenth],
+    parts: [
+      { type: 'tag', marker: second }, { type: 'text', value: '×' },
+      { type: 'tag', marker: first }, { type: 'tag', marker: tenth }
+    ]
   });
 
-  assert.equal(
-    await harness.writer.waitForTextMatch(() => currentValue, '{1}'),
-    true
-  );
-  assert.deepEqual(harness.waits, [120]);
+  assert.equal(filled, true);
+  assert.deepEqual(messages, [
+    { type: 'DEBUGGER_PREPARE' }, FOCUS_REQUEST,
+    ...[
+      { type: 'phraseTag', id: 2 }, { type: 'text', text: '×' },
+      { type: 'click', x: 220, y: 110 }, { type: 'click', x: 220, y: 110 }
+    ].map(operation => ({ type: 'DEBUGGER_INPUT_SEQUENCE', payload: { alreadyFocused: true, operations: [operation] } }))
+  ]);
 });
 
-test('PhraseEditorWriter makes seven waits before confirmation times out', async () => {
-  const harness = createHarness();
+test('PhraseEditorWriter rejects literal text in place of a native marker', async t => {
+  const { writer, row, state, waits } = createHarness(t);
+  const marker = { id: 1, token: '{1}', label: '{name}', offset: 0 };
+  state.onRequest = request => {
+    if (request.type === 'DEBUGGER_INPUT_SEQUENCE' && request.payload.alreadyFocused) {
+      state.cell = { text: marker.label, markers: [] };
+    }
+  };
 
-  assert.equal(
-    await harness.writer.waitForTextMatch(() => 'Wrong', 'Expected'),
-    false
-  );
-  assert.deepEqual(harness.waits, [120, 120, 120, 120, 120, 120, 120]);
+  assert.equal(await writer.write(row, marker.label, {
+    sourceMarkers: [marker], parts: [{ type: 'tag', marker }]
+  }), false);
+  assert.deepEqual(waits.filter(ms => ms === 120), Array(7).fill(120));
+});
+
+test('PhraseEditorWriter blocks text if input moves to another row after the trusted click', async t => {
+  const { doc, button, writer, row, state } = createHarness(t);
+  let canceled = false;
+  state.onRequest = request => {
+    if (request.type !== 'DEBUGGER_INPUT_SEQUENCE' || !request.payload.alreadyFocused) return;
+    doc.activeElement = button;
+    const event = new Event('beforeinput', { cancelable: true });
+    Object.defineProperty(event, 'target', { value: button });
+    doc.dispatchEvent(event);
+    canceled = event.defaultPrevented;
+  };
+
+  await assert.rejects(writer.write(row, 'Target text'), /active Phrase target changed/);
+  assert.equal(canceled, true);
+});
+
+test('PhraseEditorWriter refuses a target populated during debugger preparation', async t => {
+  const { writer, row, state, messages } = createHarness(t);
+  state.onRequest = () => { state.cell = { text: 'Existing translation', markers: [] }; };
+
+  await assert.rejects(writer.write(row, 'Target text'), /empty target changed before input/);
+  assert.deepEqual(messages, [{ type: 'DEBUGGER_PREPARE' }]);
+});
+
+test('PhraseEditorWriter surfaces background trusted input errors', async t => {
+  const { writer, row, state } = createHarness(t);
+  state.error = 'Debugger denied.';
+
+  await assert.rejects(writer.write(row, 'Bonjour'), /Debugger denied/);
 });

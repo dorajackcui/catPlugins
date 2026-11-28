@@ -44,7 +44,6 @@ export function createMemoqMarkerEditor({
       target,
       escapeMemoqPlainTargetText(skeleton),
       {
-        requestType: 'MEMOQ_DEBUGGER_WRITE_TEXT',
         settleMs: 20,
         ...resolveOptions(resolveWriteTarget)
       }

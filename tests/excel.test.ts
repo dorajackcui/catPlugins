@@ -4,7 +4,8 @@ import test from 'node:test';
 import { read, utils as xlsxUtils, write } from 'xlsx';
 
 import { buildSourceExportWorkbook, parseExcelBuffer } from '../background/excel.ts';
-import { buildPreview } from '../domain/matcher.ts';
+import { buildPreview, classifySegment, createEntryLookup } from '../domain/matcher.ts';
+import type { PageSegment } from '../shared/translation-types.ts';
 
 test('parseExcelBuffer falls back to the first two columns when no source/target header is found', () => {
   const workbook = xlsxUtils.book_new();
@@ -183,4 +184,47 @@ test('a translated filtered memoQ export stays on its segment number and native 
     { ...segment, sourceRaw: 'In <9>Cradle<2>.', sourceNormalized: 'In <9>Cradle<2>.' }
   ], options);
   assert.deepEqual(preview.items.map(item => item.status), ['unmatched', 'ready', 'unmatched']);
+});
+
+test('Phrase export preserves repeated and reordered native IDs even when their labels are identical', () => {
+  const source = '{name} / {name}';
+  const target = '{name}＋{name}／{name}';
+  const markers = [
+    { id: 1, token: '{1}', label: '{name}', offset: 0 },
+    { id: 2, token: '{2}', label: '{name}', offset: source.lastIndexOf('{name}') }
+  ];
+  const original: PageSegment = {
+    domId: 'segment-position-50', rowNumber: '51', sourceRaw: source, sourceNormalized: source,
+    occurrenceIndex: 1, targetRaw: target, isEmptyTarget: false, placeholderTokens: ['{name}', '{name}'],
+    platform: 'phrase', phraseSourceMarkers: markers,
+    phraseTargetMarkers: [
+      { ...markers[1], offset: 0 }, { ...markers[1], offset: 7 }, { ...markers[0], offset: 14 }
+    ]
+  };
+  const buffer = buildSourceExportWorkbook([original]);
+  const file = read(buffer, { type: 'array', cellStyles: true });
+  const sheet = file.Sheets.Sources as typeof file.Sheets.Sources & { '!cols'?: { hidden?: boolean }[] };
+  const rows = xlsxUtils.sheet_to_json<unknown[]>(sheet, { header: 1 });
+  assert.deepEqual(rows[1].slice(0, 4), ['51', source, target, 1]);
+  assert.equal(sheet['!cols']?.[4]?.hidden, true);
+
+  const { entries } = parseExcelBuffer(buffer, 'phrase-sources.xlsx');
+  const empty = { ...original, targetRaw: '', isEmptyTarget: true, phraseTargetMarkers: undefined };
+  const { item, phraseMarkerFillPlan } = classifySegment(createEntryLookup(entries), empty);
+  assert.equal(item.status, 'ready');
+  assert.deepEqual(phraseMarkerFillPlan?.parts.flatMap(part => part.type === 'tag' ? [part.marker.id] : []), [2, 2, 1]);
+  const conflictingMetadata = parseExcelBuffer(buildSourceExportWorkbook([
+    original, { ...original, phraseTargetMarkers: original.phraseTargetMarkers?.map(marker => ({ ...marker, token: '{1}' })) }
+  ]), 'conflicting-phrase-sources.xlsx');
+  assert.equal(buildPreview(conflictingMetadata.entries, [empty]).matched, 0);
+  assert.equal(buildPreview(entries, [{ ...empty, rowNumber: '52' }]).matched, 0);
+  const renumbered = [{ ...markers[0], id: 4, token: '{4}' }, { ...markers[1], id: 5, token: '{5}' }];
+  assert.equal(buildPreview(entries, [{ ...empty, phraseSourceMarkers: renumbered }]).placeholderErrors, 1);
+
+  rows[1][2] = '{name}と{name}';
+  file.Sheets.Sources = xlsxUtils.aoa_to_sheet(rows);
+  const edited = parseExcelBuffer(write(file, { type: 'array', bookType: 'xlsx' }), 'phrase-edited.xlsx');
+  const updated = classifySegment(createEntryLookup(edited.entries), empty);
+  assert.equal(updated.item.status, 'ready');
+  assert.deepEqual(updated.phraseMarkerFillPlan?.parts.flatMap(part => part.type === 'tag' ? [part.marker.id] : []), [1, 2]);
 });

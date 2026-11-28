@@ -19,7 +19,6 @@ function makeSegment(): RuntimeSegment {
     placeholderTokens: [],
     targetElement: {} as HTMLElement,
     platform: 'phrase',
-    phraseUsesTagMarkup: true,
     scanElement: {} as Element,
     scanFingerprint: 'runtime-only'
   };
@@ -98,7 +97,6 @@ test('ContentRunService resets stop state and returns serializable scan data', a
   assert.equal('targetElement' in (segments[0] ?? {}), false);
   assert.equal('scanElement' in (segments[0] ?? {}), false);
   assert.equal('scanFingerprint' in (segments[0] ?? {}), false);
-  assert.equal('phraseUsesTagMarkup' in (segments[0] ?? {}), false);
   assert.deepEqual(harness.progress, [
     { runId: 'scan-1', scannedCount: 1 },
     { runId: 'scan-1', scannedCount: 1 }

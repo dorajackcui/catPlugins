@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  filterSegmentsFromStartMarker,
   filterSegmentsFromPendingStartMarker,
   findStartSegmentIndex,
   hasUnresolvedStartMarker
@@ -50,9 +49,9 @@ test('findStartSegmentIndex finds the clicked target element', () => {
     1
   );
   assert.deepEqual(
-    filterSegmentsFromStartMarker(segments, {
+    filterSegmentsFromPendingStartMarker(segments, {
       targetElement: clickedTarget as unknown as Element
-    }).map((segment) => segment.domId),
+    }).segments.map((segment) => segment.domId),
     ['b', 'c']
   );
 });
@@ -78,11 +77,13 @@ test('findStartSegmentIndex falls back to a stable domId', () => {
   assert.equal(findStartSegmentIndex(segments, { domId: 'c' }), 2);
 });
 
-test('filterSegmentsFromStartMarker leaves segments unchanged when marker is missing', () => {
-  const segments = [makeSegment('a'), makeSegment('b')];
-
-  assert.equal(findStartSegmentIndex(segments, { domId: 'missing' }), null);
-  assert.deepEqual(filterSegmentsFromStartMarker(segments, { domId: 'missing' }), segments);
+test('a recycled Phrase target cannot redirect the recorded start row', () => {
+  const recycledElement = makeElement();
+  const recycled = { ...makeSegment('segment-position-51', recycledElement), platform: 'phrase' as const };
+  const intended = { ...makeSegment('segment-position-50'), platform: 'phrase' as const };
+  const marker = { domId: intended.domId, targetElement: recycledElement as unknown as Element };
+  assert.equal(findStartSegmentIndex([recycled, intended], marker), 1);
+  assert.equal(filterSegmentsFromPendingStartMarker([recycled], marker).shouldKeepStartMarker, true);
 });
 
 test('pending start marker suppresses segments until the marker is found', () => {

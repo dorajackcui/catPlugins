@@ -208,7 +208,7 @@ test('PlatformRuntime keeps memoQ lifecycle and fill context on the memoQ port',
   harness.runtime.selectPlatform('memoq');
   assert.equal(harness.runtime.isMemoqActive(), true);
   await harness.runtime.prepareMemoqTrustedInput();
-  assert.equal((await harness.runtime.fillSegment(segment, 'translation', context)).filled, true);
+  assert.equal((await harness.runtime.fillSegment(segment, 'translation', { memoq: context })).filled, true);
   assert.deepEqual(harness.memoqContexts, [context]);
   assert.deepEqual(harness.calls, [
     'memoq.prepareTrustedInput',

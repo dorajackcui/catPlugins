@@ -64,17 +64,12 @@ export interface MemoqDebuggerPrepareRequest {
   type: 'MEMOQ_DEBUGGER_PREPARE';
 }
 
-export interface MemoqDebuggerWriteTextRequest {
-  type: 'MEMOQ_DEBUGGER_WRITE_TEXT';
-  payload: {
-    x: number;
-    y: number;
-    text: string;
-  };
+export interface DebuggerPrepareRequest {
+  type: 'DEBUGGER_PREPARE';
 }
 
-export interface DebuggerWriteTextRequest {
-  type: 'DEBUGGER_WRITE_TEXT';
+export interface MemoqDebuggerWriteTextRequest {
+  type: 'MEMOQ_DEBUGGER_WRITE_TEXT';
   payload: {
     x: number;
     y: number;
@@ -97,6 +92,10 @@ export type DebuggerInputOperation =
       key: 'F9';
     }
   | {
+      type: 'phraseTag';
+      id: number;
+    }
+  | {
       type: 'wait';
       milliseconds: number;
     }
@@ -114,19 +113,23 @@ export type DebuggerInputOperation =
       count: number;
     }
   | {
+      type: 'selectLeft';
+    }
+  | {
       type: 'deleteForward';
     }
   | {
       type: 'undo';
     };
 
+export type DebuggerInputSequence = { operations: DebuggerInputOperation[] } & (
+  | { x: number; y: number; alreadyFocused?: never }
+  | { alreadyFocused: true }
+);
+
 export interface DebuggerInputSequenceRequest {
   type: 'DEBUGGER_INPUT_SEQUENCE';
-  payload: {
-    x: number;
-    y: number;
-    operations: DebuggerInputOperation[];
-  };
+  payload: DebuggerInputSequence;
 }
 
 export type BackgroundRequest =
@@ -139,10 +142,10 @@ export type BackgroundRequest =
   | SetFillOptionsRequest
   | SetEditorPlatformRequest
   | ReportRunProgressRequest
+  | DebuggerPrepareRequest
   | MemoqDebuggerPrepareRequest
   | MemoqDebuggerWriteTextRequest
   | MemoqDebuggerInsertFocusedTextRequest
-  | DebuggerWriteTextRequest
   | DebuggerInputSequenceRequest;
 
 export interface ContentScanRequest {

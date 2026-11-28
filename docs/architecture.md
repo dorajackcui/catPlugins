@@ -44,7 +44,8 @@ domain modules.
 ## Domain matching and markup
 
 - `domain/gientrans-markup.ts` canonicalizes GientTrans tokens and XML-like markup for both matching and editor writes.
-- `domain/phrase-markup.ts` canonicalizes Phrase tag clips and splits ordered text/tag operations.
+- `domain/phrase-source-matching.ts` matches numbered Phrase exports by segment number and source, and unnumbered spreadsheets by source text.
+- `domain/phrase-marker-fill.ts` resolves original labels against the current source and checks the written target.
 - `domain/memoq-fill-diagnostics.ts` formats stable user-facing stop reasons from platform-neutral diagnostic data.
 
 Keeping these pure rules in `domain/` prevents Phrase and memoQ readers from depending indirectly on another platform implementation through shared QA.
@@ -196,9 +197,15 @@ literal tag stops the run before it touches the next row.
 
 ## Phrase adapter
 
-- `platforms/phrase/row-reader.ts` owns Phrase row selectors, generic editable fallback discovery, tag-chip detection, scroll-container selection, and segment serialization.
+- `platforms/phrase/row-reader.ts` reads the translation grid through its own scroll container and serializes each native chip using its original label, editor ID and position. Generic editable discovery runs on pages without the Phrase grid.
 - `platforms/phrase/editor-writer.ts` owns trusted Phrase activation, text/tag input, and confirmation polling.
 - `platforms/phrase/adapter.ts` composes the reader and writer behind the common platform runtime port.
+
+Preview and Fill check the document row number and source text when the workbook supplies row numbers. For an unnumbered workbook, every matching source must have the same translation. A filtered scan can start on any occurrence of a repeated source.
+
+Export keeps the original labels in the source and target cells. For an existing target in a tagged row, a hidden column records the native marker IDs and positions. Reimport uses that metadata when the target text is the same and each marker still exists in the matching source row. Editing the target cell uses the same source-label matching as a regular upload.
+
+All native rows use the same writer. It re-resolves the source row and verifies the empty target before the trusted focus click. Input is allowed only while the intended target owns the active editor input. The writer uses the insert-tag button for the next available source chip and the numbered shortcut to select a different chip. It can omit unused chips and copy an already inserted chip through the editor's clipboard events. An ambiguous label with several source IDs or an unsupported first insertion stops before entering text. Confirmation checks target text and all native chips at their expected positions.
 
 Phrase DOM changes should be contained in the reader or writer rather than adding selectors to the
 adapter orchestration layer.

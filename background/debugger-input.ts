@@ -1,4 +1,4 @@
-import type { DebuggerInputOperation } from '../shared/message-types.ts';
+import type { DebuggerInputOperation, DebuggerInputSequence } from '../shared/message-types.ts';
 import {
   DebuggerSession,
   type ChromeDebuggerInputApi,
@@ -17,6 +17,8 @@ interface DebuggerKeyDescriptor {
 }
 
 const CONTROL_MODIFIER = 2;
+const ALT_MODIFIER = 1;
+const SHIFT_MODIFIER = 8;
 const CONTROL_KEY: DebuggerKeyDescriptor = {
   key: 'Control',
   code: 'ControlLeft',
@@ -95,13 +97,10 @@ export class DebuggerInputController {
     this.session.keepAlive(tabId);
   }
 
-  async runSequence(
-    tabId: number,
-    x: number,
-    y: number,
-    operations: DebuggerInputOperation[]
-  ): Promise<void> {
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !operations.length) {
+  async runSequence(tabId: number, sequence: DebuggerInputSequence): Promise<void> {
+    const { operations } = sequence;
+    const point = sequence.alreadyFocused === true ? null : sequence;
+    if (!operations.length || (point && (!Number.isFinite(point.x) || !Number.isFinite(point.y)))) {
       throw new Error('Invalid trusted sequence payload.');
     }
 
@@ -109,7 +108,7 @@ export class DebuggerInputController {
     const target = { tabId };
 
     try {
-      await this.dispatchClick(target, x, y);
+      if (point) await this.dispatchClick(target, point.x, point.y);
       for (const operation of operations) {
         await this.dispatchOperation(target, operation);
       }
@@ -180,6 +179,11 @@ export class DebuggerInputController {
       return;
     }
 
+    if (operation.type === 'selectLeft') {
+      await this.dispatchKey(target, ARROW_LEFT_KEY, SHIFT_MODIFIER);
+      return;
+    }
+
     if (operation.type === 'undo') {
       await this.dispatchControlKey(target, Z_KEY);
       return;
@@ -187,6 +191,20 @@ export class DebuggerInputController {
 
     if (operation.type === 'key') {
       await this.dispatchKey(target, F9_KEY);
+      return;
+    }
+
+    if (operation.type === 'phraseTag') {
+      const { id } = operation;
+      if (!Number.isInteger(id) || id < 0 || id > 9) {
+        throw new Error('Invalid Phrase tag shortcut number.');
+      }
+      await this.dispatchKey(target, {
+        key: String(id),
+        code: `Digit${id}`,
+        windowsVirtualKeyCode: 48 + id,
+        nativeVirtualKeyCode: 48 + id
+      }, CONTROL_MODIFIER | ALT_MODIFIER);
       return;
     }
 

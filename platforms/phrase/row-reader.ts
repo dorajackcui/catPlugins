@@ -5,48 +5,18 @@ import type {
   ScrollContext
 } from '../../content/types.ts';
 import { extractPlaceholderTokens } from '../../domain/qa.ts';
+import { isEmptyPhraseCell, type PhraseCellContent } from '../../domain/phrase-marker-fill.ts';
 import { normalizeText } from '../../shared/utils.ts';
 
-const ROW_SELECTORS = ['.segment-row[role="row"]', '.segment-row', '.twe_segment'];
-const SOURCE_ROW_SELECTORS = [
-  '.text-area-source-container .te_text_container',
-  '.text-area-source-container .te_txt',
-  '.twe_source .te_text_container',
-  '.twe_source .te_txt'
-];
-const TARGET_ROW_SELECTORS = [
-  '.twe_target .te_text_container',
-  '.twe_target .te_txt'
-];
-const TAG_MARKUP_SCOPE_SELECTORS = [
-  ...SOURCE_ROW_SELECTORS,
-  ...TARGET_ROW_SELECTORS
-];
-const TAG_CHIP_SELECTORS = [
-  '[contenteditable="false"]',
-  'input[type="tag"]',
-  '[class*="tag"]',
-  '[class*="Tag"]',
-  '[data-testid*="tag"]',
-  '[data-testid*="Tag"]',
-  '[data-test*="tag"]',
-  '[data-test*="Tag"]',
-  '[data-qa*="tag"]',
-  '[data-qa*="Tag"]',
-  '[aria-label*="tag"]',
-  '[aria-label*="Tag"]',
-  '[aria-label*="鏍囪"]',
-  '[title*="tag"]',
-  '[title*="Tag"]',
-  '[title*="鏍囪"]'
-];
+const ROW_SELECTOR = '.segment-row, .twe_segment';
+const TARGET_SELECTOR = '.twe_target';
+const SOURCE_TEXT_SELECTOR = '.text-area-source-container .te_text_container, .twe_source .te_text_container';
+const SCROLL_SELECTOR = '#translation-table-virtual-scroll';
 const SOURCE_SELECTORS = [
   '[data-testid*="source"]',
   '[data-test*="source"]',
   '[data-qa*="source"]',
-  '[class*="source"]',
-  '[data-testid*="segment-source"]',
-  '[class*="segment-source"]'
+  '[class*="source"]'
 ];
 const CONTAINER_SELECTORS = [
   '[data-testid*="segment"]',
@@ -66,21 +36,23 @@ export class PhraseRowReader {
   constructor(private readonly helpers: ContentScriptDomHelpers) {}
 
   findScrollContext(): ScrollContext | null {
-    const editables = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        [...ROW_SELECTORS, ...EDITABLE_SELECTORS, '.twe_target'].join(',')
-      )
-    );
-    const bestContainer = this.helpers.findBestScrollContainer(editables);
-    return bestContainer
-      ? this.helpers.toElementScrollContext(bestContainer)
-      : null;
+    const scroller = document.querySelector<HTMLElement>(SCROLL_SELECTOR) ??
+      this.helpers.findBestScrollContainer(Array.from(document.querySelectorAll<HTMLElement>(
+        [ROW_SELECTOR, TARGET_SELECTOR, ...EDITABLE_SELECTORS].join(',')
+      )));
+    return scroller ? this.helpers.toElementScrollContext(scroller) : null;
   }
 
   collectVisibleSegments(scrollContext: ScrollContext): RuntimeSegment[] {
-    const rowSegments = this.collectRowSegments(scrollContext);
-    if (rowSegments.length > 0) {
-      return rowSegments;
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(ROW_SELECTOR));
+    if (rows.length || document.querySelector(SCROLL_SELECTOR)) {
+      const visibleRows = this.helpers.sortByVisualPosition(
+        rows.filter(row => this.helpers.isElementVisible(row)), scrollContext
+      );
+      return visibleRows.flatMap(row => {
+        const segment = this.extractRowSegment(row);
+        return segment ? [segment] : [];
+      });
     }
 
     const editables = this.helpers.sortByVisualPosition(
@@ -102,78 +74,58 @@ export class PhraseRowReader {
   }
 
   getEditableValue(targetElement: EditableElement): string {
-    if (
-      targetElement instanceof HTMLElement &&
-      targetElement.matches('.twe_target')
-    ) {
-      return this.helpers.readTextBySelectors(
-        targetElement,
-        TARGET_ROW_SELECTORS
-      );
-    }
-
-    return this.helpers.getGenericEditableValue(targetElement);
+    return targetElement.matches(TARGET_SELECTOR)
+      ? this.readTarget(targetElement)?.text ?? ''
+      : this.helpers.getGenericEditableValue(targetElement);
   }
 
-  private collectRowSegments(scrollContext: ScrollContext): RuntimeSegment[] {
-    const rows = this.helpers.sortByVisualPosition(
-      Array.from(
-        document.querySelectorAll<HTMLElement>(ROW_SELECTORS.join(','))
-      ).filter((row) => this.helpers.isElementVisible(row)),
-      scrollContext
-    );
-    const segments: RuntimeSegment[] = [];
-
-    for (const row of rows) {
-      const segment = this.extractRowSegment(row, scrollContext);
-      if (segment) {
-        segments.push(segment);
-      }
-    }
-
-    return segments;
+  readTarget(target: HTMLElement): PhraseCellContent | null {
+    return readPhraseCell(target.querySelector('.te_text_container'));
   }
 
-  private extractRowSegment(
-    row: HTMLElement,
-    scrollContext: ScrollContext
-  ): RuntimeSegment | null {
-    const targetElement = row.querySelector<HTMLElement>('.twe_target');
-    if (!targetElement) {
-      return null;
-    }
+  resolveTarget(segment: RuntimeSegment): HTMLElement | null {
+    const { targetElement, domId } = segment;
+    const row = targetElement.ownerDocument.getElementById(domId) ?? targetElement.closest<HTMLElement>(ROW_SELECTOR);
+    if (!row?.isConnected || readRowId(row) !== domId ||
+      readRowNumber(row) !== segment.rowNumber) return null;
 
-    const sourceRaw = this.helpers.readTextBySelectors(
-      row,
-      SOURCE_ROW_SELECTORS
-    );
-    const sourceNormalized = normalizeText(sourceRaw);
-    if (!sourceNormalized) {
-      return null;
-    }
+    const source = readPhraseCell(row.querySelector(SOURCE_TEXT_SELECTOR));
+    const savedMarkers = segment.phraseSourceMarkers ?? [];
+    if (!source || source.text !== segment.sourceRaw || source.markers.length !== savedMarkers.length ||
+      source.markers.some(({ id, token, label, offset }, index) => {
+        const before = savedMarkers[index];
+        return id !== before.id || token !== before.token || label !== before.label || offset !== before.offset;
+      })) return null;
 
-    const targetRaw = this.helpers.readTextBySelectors(
-      row,
-      TARGET_ROW_SELECTORS
-    );
-    const domId =
-      row.id ||
-      row.getAttribute('data-position') ||
-      `${sourceNormalized}::${Math.round(
-        this.helpers.getAbsoluteTop(row, scrollContext)
-      )}`;
+    return row.querySelector(TARGET_SELECTOR);
+  }
+
+  private extractRowSegment(row: HTMLElement): RuntimeSegment | null {
+    const domId = readRowId(row);
+    const targetElement = row.querySelector<HTMLElement>(TARGET_SELECTOR);
+    if (!domId || !targetElement) return null;
+
+    const source = readPhraseCell(row.querySelector(SOURCE_TEXT_SELECTOR));
+    const target = this.readTarget(targetElement);
+    if (!source || !target) return null;
+    const sourceNormalized = normalizeText(source.text);
+    if (!sourceNormalized) return null;
+
+    const rowNumber = readRowNumber(row);
 
     return {
       domId,
-      sourceRaw,
+      ...(rowNumber && { rowNumber }),
+      sourceRaw: source.text,
       sourceNormalized,
       occurrenceIndex: 0,
-      targetRaw,
-      isEmptyTarget: normalizeText(targetRaw) === '',
-      placeholderTokens: extractPlaceholderTokens(sourceRaw),
+      targetRaw: target.text,
+      isEmptyTarget: isEmptyPhraseCell(target),
+      placeholderTokens: extractPlaceholderTokens(source.text),
       targetElement,
       platform: 'phrase',
-      phraseUsesTagMarkup: this.hasPhraseTagMarkup(row)
+      ...(source.markers.length && { phraseSourceMarkers: source.markers }),
+      ...(target.markers.length && { phraseTargetMarkers: target.markers })
     };
   }
 
@@ -215,19 +167,46 @@ export class PhraseRowReader {
       platform: 'generic'
     };
   }
+}
 
-  private hasPhraseTagMarkup(row: HTMLElement): boolean {
-    const scopedRoots = Array.from(
-      row.querySelectorAll<HTMLElement>(TAG_MARKUP_SCOPE_SELECTORS.join(','))
-    );
-    const roots = scopedRoots.length > 0 ? scopedRoots : [row];
+function readRowId(row: HTMLElement): string | null {
+  return row.id || row.getAttribute('data-position');
+}
 
-    return roots.some((root) => this.hasVisibleTagChip(root));
+function readRowNumber(row: HTMLElement): string | undefined {
+  const value = row.querySelector('.twe_position .position_number')?.textContent?.trim();
+  return value && /^\d+$/.test(value) ? value : undefined;
+}
+
+function readPhraseCell(root: Element | null): PhraseCellContent | null {
+  if (!root) return null;
+
+  const content: PhraseCellContent = { text: '', markers: [] };
+  function readNode(node: Node): boolean {
+    if (node.nodeType === Node.TEXT_NODE) {
+      content.text += node.textContent ?? '';
+      return true;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return true;
+
+    const element = node as Element;
+    if (element.matches('.te_tag')) {
+      const token = element.getAttribute('data-tag-content') ?? '';
+      const rawId = element.getAttribute('data-tag-id');
+      const id = Number(rawId);
+      if (!token || !rawId || !Number.isSafeInteger(id) || id < 0) return false;
+
+      const label = element.querySelector('.tag_metadata_content')?.textContent || token;
+      content.markers.push({ id, token, label, offset: content.text.length });
+      content.text += label;
+      return true;
+    }
+    if (element.tagName === 'BR') content.text += '\n';
+    for (const child of Array.from(element.childNodes)) {
+      if (!readNode(child)) return false;
+    }
+    return true;
   }
 
-  private hasVisibleTagChip(root: HTMLElement): boolean {
-    return Array.from(
-      root.querySelectorAll<HTMLElement>(TAG_CHIP_SELECTORS.join(','))
-    ).some((element) => this.helpers.isElementVisible(element));
-  }
+  return readNode(root) ? content : null;
 }

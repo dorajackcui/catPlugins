@@ -148,13 +148,13 @@ test('DebuggerInputController writes text after a trusted press and release', as
 test('DebuggerInputController dispatches memoQ marker navigation without global Home', async () => {
   const harness = createHarness();
 
-  await harness.controller.runSequence(13, 10, 20, [
+  await harness.controller.runSequence(13, { x: 10, y: 20, operations: [
     { type: 'moveLeft', count: 1 },
     { type: 'moveRight', count: 2 },
     { type: 'deleteForward' },
     { type: 'undo' },
     { type: 'key', key: 'F9' }
-  ]);
+  ] });
 
   assert.deepEqual(
     harness.commands.map(({ method, params }) => ({
@@ -234,13 +234,21 @@ test('DebuggerInputController dispatches memoQ marker navigation without global 
   );
 });
 
+test('DebuggerInputController dispatches a Phrase numbered tag in the focused input with Ctrl and Alt', async () => {
+  const harness = createHarness();
+  await harness.controller.runSequence(13, { alreadyFocused: true, operations: [{ type: 'phraseTag', id: 2 }] });
+  assert.deepEqual(harness.commands.map(({ method, params }) => ({ method, params })),
+    ['rawKeyDown', 'keyUp'].map(type => ({
+      method: 'Input.dispatchKeyEvent',
+      params: { type, modifiers: 3, key: '2', code: 'Digit2', windowsVirtualKeyCode: 50, nativeVirtualKeyCode: 50 }
+    })));
+});
+
 test('DebuggerInputController keeps four consecutive marker sequences on their own segment coordinates', async () => {
   const harness = createHarness();
 
   for (const y of [20, 60, 100, 140]) {
-    await harness.controller.runSequence(13, 10, y, [
-      { type: 'deleteForward' }
-    ]);
+    await harness.controller.runSequence(13, { x: 10, y, operations: [{ type: 'deleteForward' }] });
   }
 
   const presses = harness.commands.filter(
@@ -305,7 +313,7 @@ test('DebuggerInputController forgets externally detached tabs and validates pay
 
   let sequenceError: unknown;
   try {
-    await harness.controller.runSequence(19, 10, 20, []);
+    await harness.controller.runSequence(19, { x: 10, y: 20, operations: [] });
   } catch (error) {
     sequenceError = error;
   }

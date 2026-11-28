@@ -11,7 +11,7 @@ import {
 import { describeMemoqFillDiagnostic } from '../domain/memoq-fill-diagnostics.ts';
 import {
   shouldRejectNonEmptyTarget,
-  type MemoqFillExecutionContext
+  type PlatformFillContext
 } from '../platforms/runtime.ts';
 import type { FillOutcome } from '../shared/fill-outcome-types.ts';
 import type {
@@ -65,7 +65,7 @@ export class FillSegmentProcessor {
     segment,
     scanContext
   ) => {
-    const { item, markerFillPlan } = classifySegment(
+    const { item, markerFillPlan, phraseMarkerFillPlan } = classifySegment(
       this.entryLookup,
       toPageSegment(segment),
       this.normalizedFillOptions
@@ -104,11 +104,10 @@ export class FillSegmentProcessor {
       });
     }
 
-    const outcome = await this.fillSegment(
-      segment,
-      item.translation,
-      memoqContext
-    );
+    const outcome = await this.fillSegment(segment, item.translation, {
+      memoq: memoqContext,
+      phrase: phraseMarkerFillPlan
+    });
     let shouldRescanVisibleSnapshot = false;
     if (outcome.filled) {
       this.filledDomIds.push(outcome.domId);
@@ -204,15 +203,11 @@ export class FillSegmentProcessor {
   private async fillSegment(
     segment: RuntimeSegment,
     value: string,
-    memoqContext?: MemoqFillExecutionContext
+    context: PlatformFillContext
   ): Promise<FillOutcome> {
     this.port.assertNotStopped();
-    if (segment.platform === 'memoq') {
-      return this.port.runtime.fillSegment(segment, value, memoqContext);
-    }
-
-    const currentValue = this.port.runtime.getEditableValue(segment);
-    if (shouldRejectNonEmptyTarget(segment.platform, currentValue)) {
+    if (segment.platform !== 'memoq' &&
+      shouldRejectNonEmptyTarget(segment.platform, this.port.runtime.getEditableValue(segment))) {
       return {
         domId: segment.domId,
         filled: false,
@@ -220,7 +215,7 @@ export class FillSegmentProcessor {
       };
     }
 
-    return this.port.runtime.fillSegment(segment, value);
+    return this.port.runtime.fillSegment(segment, value, context);
   }
 
   private getInterFillDelayMs(segment: RuntimeSegment): number {

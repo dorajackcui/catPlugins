@@ -13,22 +13,6 @@ export type {
 } from './types.ts';
 
 export class ContentScriptDomHelpers extends ContentScrollHelpers {
-  readTextBySelectors(root: ParentNode, selectors: string[]): string {
-    for (const selector of selectors) {
-      const node = root.querySelector<HTMLElement>(selector);
-      if (!node) {
-        continue;
-      }
-
-      const text = normalizeText(node.innerText || node.textContent || '');
-      if (text) {
-        return text;
-      }
-    }
-
-    return '';
-  }
-
   findSegmentContainer(
     targetElement: EditableElement,
     selectors: string[]

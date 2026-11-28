@@ -20,12 +20,11 @@ export interface ScrollContext {
 export interface RuntimeSegment extends PageSegment {
   targetElement: EditableElement;
   platform: NonNullable<PageSegment['platform']>;
-  phraseUsesTagMarkup?: boolean;
   scanElement?: Element;
   scanFingerprint?: string;
 }
 
 export function toPageSegment(segment: RuntimeSegment): PageSegment {
-  const { targetElement, scanElement, scanFingerprint, phraseUsesTagMarkup, ...pageSegment } = segment;
+  const { targetElement, scanElement, scanFingerprint, ...pageSegment } = segment;
   return pageSegment;
 }

@@ -1,5 +1,5 @@
 import type { RuntimeSegment } from './types.ts';
-import type { MemoqFillExecutionContext } from '../platforms/runtime.ts';
+import type { PlatformFillContext } from '../platforms/runtime.ts';
 import type { FillOutcome } from '../shared/fill-outcome-types.ts';
 import type { ReportRunProgressRequest } from '../shared/message-types.ts';
 import type {
@@ -28,7 +28,7 @@ export interface FillRunnerRuntime {
   fillSegment(
     segment: RuntimeSegment,
     value: string,
-    memoqContext?: MemoqFillExecutionContext
+    context?: PlatformFillContext
   ): Promise<FillOutcome>;
 }
 

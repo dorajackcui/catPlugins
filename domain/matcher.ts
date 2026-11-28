@@ -17,15 +17,17 @@ import {
   memoqProtectedSourceMatchesExcelSource
 } from './memoq-markup.ts';
 import { prepareMemoqTranslation, type MemoqMarkerFillPlan } from './memoq-marker-fill.ts';
-import { normalizePhraseTagClipText } from './phrase-markup.ts';
+import { preparePhraseTranslation, type PhraseMarkerFillPlan } from './phrase-marker-fill.ts';
+import { PhraseSourceLookup } from './phrase-source-matching.ts';
 import { normalizeText } from '../shared/utils.ts';
 
-const entriesByLookup = new WeakMap<
-  Map<string, TranslationEntry>,
-  TranslationEntry[]
->();
+interface TranslationLookup {
+  byKey: Map<string, TranslationEntry>;
+  memoqFallback: TranslationEntry[];
+  phrase: PhraseSourceLookup;
+}
 
-export function buildMatchKey(sourceNormalized: string, occurrenceIndex: number): string {
+function buildMatchKey(sourceNormalized: string, occurrenceIndex: number): string {
   return `source:${sourceNormalized}::${occurrenceIndex}`;
 }
 
@@ -39,52 +41,57 @@ function gientransSourceKey(source: string, occurrence: number): string {
 
 export function createEntryLookup(
   entries: TranslationEntry[]
-): Map<string, TranslationEntry> {
-  const lookup = new Map<string, TranslationEntry>();
-  // Numbered exports have their own row keys. A filtered row must not be
-  // offered as a text-only match elsewhere when the editor filter changes.
-  entriesByLookup.set(lookup, entries.filter(entry => !entry.matchMemoqRowOnly));
+): TranslationLookup {
+  const byKey = new Map<string, TranslationEntry>();
 
   for (const entry of entries) {
     if (entry.rowNumber) {
-      lookup.set(buildRowNumberMatchKey(entry.rowNumber), entry);
+      byKey.set(buildRowNumberMatchKey(entry.rowNumber), entry);
     }
 
-    addSourceLookupEntry(lookup, entry, entry.sourceNormalized);
-    addSourceLookupEntry(lookup, entry, normalizePhraseTagClipText(entry.sourceRaw));
+    addSourceLookupEntry(byKey, entry, entry.sourceNormalized);
 
     const canonicalGientTransSource = normalizeText(
       normalizeGientTransInlineMarkup(entry.sourceRaw)
     );
-    addSourceLookupEntry(lookup, entry, canonicalGientTransSource);
+    addSourceLookupEntry(byKey, entry, canonicalGientTransSource);
     const editorKey = gientransSourceKey(entry.sourceRaw, entry.occurrenceIndex);
-    if (!lookup.has(editorKey)) lookup.set(editorKey, entry);
+    if (!byKey.has(editorKey)) byKey.set(editorKey, entry);
 
-    addSourceLookupEntry(lookup, entry, stripGientTransInlineMarkup(entry.sourceRaw));
+    addSourceLookupEntry(byKey, entry, stripGientTransInlineMarkup(entry.sourceRaw));
   }
 
-  return lookup;
+  return {
+    byKey,
+    // Numbered memoQ exports must stay on their document rows.
+    memoqFallback: entries.filter(entry => !entry.matchMemoqRowOnly),
+    phrase: new PhraseSourceLookup(entries)
+  };
 }
 
 export function classifySegment(
-  entryLookup: Map<string, TranslationEntry>,
+  entryLookup: TranslationLookup,
   segment: PageSegment,
   fillOptions?: FillOptions | null
-): { item: PreviewItem; markerFillPlan?: MemoqMarkerFillPlan } {
+): { item: PreviewItem; markerFillPlan?: MemoqMarkerFillPlan; phraseMarkerFillPlan?: PhraseMarkerFillPlan } {
   const { validatePlaceholders } = normalizeFillOptions(fillOptions);
   const rowNumberEntry = segment.rowNumber
-    ? entryLookup.get(buildRowNumberMatchKey(segment.rowNumber))
+    ? entryLookup.byKey.get(buildRowNumberMatchKey(segment.rowNumber))
     : undefined;
   const matchingRowNumberEntry =
     rowNumberEntry &&
     (segment.platform !== 'memoq' || memoqSourcesMatch(rowNumberEntry, segment))
       ? rowNumberEntry
       : undefined;
-  const entry = matchingRowNumberEntry ?? findEntryBySource(entryLookup, segment);
+  const entry = segment.platform === 'phrase'
+    ? entryLookup.phrase.find(segment)
+    : matchingRowNumberEntry ?? findEntryBySource(entryLookup, segment);
   if (!entry) {
-    const reason = segment.platform === 'memoq' && rowNumberEntry
-      ? `Excel row ${segment.rowNumber} source does not match the current memoQ source.`
-      : 'No matching source row found in Excel.';
+    const reason = entry === null
+      ? 'Excel has different translations for this Phrase source without a unique row match.'
+      : rowNumberEntry && (segment.platform === 'memoq' || segment.platform === 'phrase')
+        ? `Excel row ${segment.rowNumber} source does not match the current ${segment.platform === 'memoq' ? 'memoQ' : 'Phrase'} source.`
+        : 'No matching source row found in Excel.';
     return { item: { ...segment, status: 'unmatched', reason } };
   }
 
@@ -98,6 +105,13 @@ export function classifySegment(
     if (!prepared.ok) return { item: { ...matched, status: 'placeholderError', reason: prepared.reason } };
     return { item: { ...matched, status: 'ready' }, markerFillPlan: prepared.plan };
   }
+  if (segment.platform === 'phrase' && segment.phraseSourceMarkers?.length) {
+    const prepared = preparePhraseTranslation(
+      segment.sourceRaw, segment.phraseSourceMarkers, entry.targetRaw, validatePlaceholders, entry.phraseExportedTarget
+    );
+    if (!prepared.ok) return { item: { ...matched, status: 'placeholderError', reason: prepared.reason } };
+    return { item: { ...matched, status: 'ready' }, phraseMarkerFillPlan: prepared.plan };
+  }
   if (validatePlaceholders && !placeholdersMatch(segment.sourceRaw, entry.targetRaw, segment.platform, segment.placeholderTokens)) {
     return { item: { ...matched, status: 'placeholderError', reason: 'Placeholder mismatch between source and translation.' } };
   }
@@ -105,52 +119,35 @@ export function classifySegment(
 }
 
 function findEntryBySource(
-  entryLookup: Map<string, TranslationEntry>,
+  { byKey, memoqFallback }: TranslationLookup,
   segment: PageSegment
 ): TranslationEntry | undefined {
-  const exactEntry = entryLookup.get(
+  const exactEntry = byKey.get(
     buildMatchKey(segment.sourceNormalized, segment.occurrenceIndex)
   );
   if (exactEntry && (segment.platform !== 'memoq' || !exactEntry.matchMemoqRowOnly)) {
     return exactEntry;
   }
 
-  if (segment.platform !== 'gientrans') {
-    if (segment.platform === 'memoq') {
-      const protectedSourceMatches = (entriesByLookup.get(entryLookup) ?? [])
-        .filter((entry) =>
-          memoqProtectedSourceMatchesExcelSource(
-            segment.sourceRaw,
-            entry.sourceRaw
-          )
-        );
-      const occurrenceMatches = protectedSourceMatches.filter(
-        (entry) => entry.occurrenceIndex === segment.occurrenceIndex
-      );
-
-      if (occurrenceMatches.length === 1) {
-        return occurrenceMatches[0];
-      }
-
-      // Synthetic memoQ navigation can begin in the middle of a document, so
-      // its scan-local occurrence index is not always the workbook occurrence
-      // index. A globally unique source remains safe to match.
-      return protectedSourceMatches.length === 1
-        ? protectedSourceMatches[0]
-        : undefined;
+  if (segment.platform === 'memoq') {
+    const protectedSourceMatches = memoqFallback.filter(entry =>
+      memoqProtectedSourceMatchesExcelSource(segment.sourceRaw, entry.sourceRaw)
+    );
+    const occurrenceMatches = protectedSourceMatches.filter(
+      (entry) => entry.occurrenceIndex === segment.occurrenceIndex
+    );
+    if (occurrenceMatches.length === 1) {
+      return occurrenceMatches[0];
     }
 
-    if (segment.platform === 'phrase' || segment.platform === 'generic') {
-      const canonicalPhraseSource = normalizePhraseTagClipText(segment.sourceRaw);
-      return entryLookup.get(
-        buildMatchKey(canonicalPhraseSource, segment.occurrenceIndex)
-      );
-    }
-
-    return undefined;
+    // A scan can start partway through a job. A globally unique source remains safe
+    // when the scan-local occurrence index differs from the workbook index.
+    return protectedSourceMatches.length === 1 ? protectedSourceMatches[0] : undefined;
   }
 
-  const canonicalEntry = entryLookup.get(
+  if (segment.platform !== 'gientrans') return undefined;
+
+  const canonicalEntry = byKey.get(
     gientransSourceKey(segment.sourceRaw, segment.occurrenceIndex)
   );
   if (canonicalEntry) {
@@ -162,7 +159,7 @@ function findEntryBySource(
     return undefined;
   }
 
-  return entryLookup.get(
+  return byKey.get(
     buildMatchKey(sourceWithoutGientTransTags, segment.occurrenceIndex)
   );
 }

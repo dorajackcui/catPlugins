@@ -8,6 +8,7 @@ import {
 import type { RuntimeStateUpdate } from '../background/storage.ts';
 import { DEFAULT_FILL_OPTIONS } from '../domain/fill-options.ts';
 import { DEFAULT_RUN_STATE } from '../domain/run-state.ts';
+import type { DebuggerInputSequence } from '../shared/message-types.ts';
 import type {
   ApiResponse,
   BackgroundRequest,
@@ -101,12 +102,7 @@ function createHarness(options: {
     y: number;
     text: string;
   }> = [];
-  const sequenceCalls: Array<{
-    tabId: number;
-    x: number;
-    y: number;
-    operations: unknown[];
-  }> = [];
+  const sequenceCalls: Array<{ tabId: number } & DebuggerInputSequence> = [];
   const focusedWrites: Array<{ tabId: number; text: string }> = [];
   const prepareCalls: number[] = [];
   const infoLogs: Array<{
@@ -123,8 +119,8 @@ function createHarness(options: {
         writeTextCalls.push({ tabId, x, y, text });
       },
       async insertFocusedText(tabId, text) { focusedWrites.push({ tabId, text }); },
-      async runSequence(tabId, x, y, operations) {
-        sequenceCalls.push({ tabId, x, y, operations });
+      async runSequence(tabId, sequence) {
+        sequenceCalls.push({ tabId, ...sequence });
       },
       async prepare(tabId) {
         prepareCalls.push(tabId);
@@ -626,7 +622,7 @@ test('BackgroundRequestHandler forwards trusted input only for sender tabs', asy
 
   await harness.handler.handle(
     {
-      type: 'DEBUGGER_WRITE_TEXT',
+      type: 'MEMOQ_DEBUGGER_WRITE_TEXT',
       payload: { x: 12, y: 34, text: 'Text' }
     },
     { tab: { id: 55 } }
@@ -662,7 +658,7 @@ test('BackgroundRequestHandler forwards trusted input only for sender tabs', asy
 
   const error = await captureError(() =>
     harness.handler.handle({
-      type: 'DEBUGGER_WRITE_TEXT',
+      type: 'MEMOQ_DEBUGGER_WRITE_TEXT',
       payload: { x: 1, y: 2, text: 'Missing sender' }
     })
   );

@@ -37,7 +37,6 @@ export type {
   ContentStopRequest,
   DebuggerInputOperation,
   DebuggerInputSequenceRequest,
-  DebuggerWriteTextRequest,
   ExportSourcesRequest,
   GetStateRequest,
   MemoqDebuggerPrepareRequest,

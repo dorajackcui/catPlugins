@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildPreview } from '../domain/matcher.ts';
+import { buildPreview, classifySegment, createEntryLookup } from '../domain/matcher.ts';
+import { phraseTargetMatches } from '../domain/phrase-marker-fill.ts';
 import type { PageSegment, TranslationEntry } from '../shared/types.ts';
 import { normalizeText } from '../shared/utils.ts';
 
@@ -673,166 +674,116 @@ test('buildPreview can skip placeholder validation when disabled', () => {
   assert.equal(preview.items[0]?.status, 'ready');
 });
 
-test('buildPreview matches Phrase tag clips against plain placeholder source text', () => {
-  const preview = buildPreview(
-    [
-      {
-        rowIndex: 2,
-        sourceRaw: '奋力争抢生效范围增加{1}米。',
-        sourceNormalized: '奋力争抢生效范围增加{1}米。',
-        targetRaw: '奮力争抢の有効範囲が{1}m増加する。',
-        occurrenceIndex: 1
-      }
-    ],
-    [
-      {
-        domId: 'phrase-tag-clip-1',
-        sourceRaw: '奋力争抢生效范围增加1{1}米。',
-        sourceNormalized: '奋力争抢生效范围增加1{1}米。',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: ['{1}'],
-        platform: 'phrase'
-      }
-    ]
-  );
-
-  assert.equal(preview.readyToFill, 1);
-  assert.equal(preview.items[0]?.translation, '奮力争抢の有効範囲が{1}m増加する。');
+test('Phrase resolves source marker labels to native IDs in workbook target order', () => {
+  const source = 'Use {0}{1} to restore {2} points';
+  const target = '{1}×{0} restores {2} points';
+  const markers = [
+    { id: 1, token: '{1}', label: '{0}', offset: source.indexOf('{0}') },
+    { id: 2, token: '{2}', label: '{1}', offset: source.indexOf('{1}') },
+    { id: 3, token: '{3}', label: '{2}', offset: source.indexOf('{2}') }
+  ];
+  const entry = { rowIndex: 52, occurrenceIndex: 1, sourceRaw: source, sourceNormalized: source, targetRaw: target };
+  const segment: PageSegment = {
+    domId: 'segment-position-50', sourceRaw: source, sourceNormalized: source,
+    occurrenceIndex: 1, targetRaw: '', isEmptyTarget: true, placeholderTokens: [],
+    platform: 'phrase', phraseSourceMarkers: markers
+  };
+  const { item, phraseMarkerFillPlan } = classifySegment(createEntryLookup([entry]), segment, {
+    autoStopAfterFilledCount: null, validatePlaceholders: true
+  });
+  assert.equal(item.status, 'ready');
+  assert.deepEqual(phraseMarkerFillPlan?.parts, [
+    { type: 'tag', marker: markers[1] }, { type: 'text', value: '×' },
+    { type: 'tag', marker: markers[0] }, { type: 'text', value: ' restores ' },
+    { type: 'tag', marker: markers[2] }, { type: 'text', value: ' points' }
+  ]);
+  const actualMarkers = [
+    { ...markers[1], offset: 0 },
+    { ...markers[0], offset: 4 },
+    { ...markers[2], offset: target.indexOf('{2}') }
+  ];
+  const parts = phraseMarkerFillPlan!.parts;
+  assert.equal(phraseTargetMatches({ text: target, markers: actualMarkers }, parts), true);
+  assert.equal(phraseTargetMatches({ text: target, markers: [] }, parts), false);
+  assert.equal(phraseTargetMatches({
+    text: target, markers: [{ ...actualMarkers[0], id: 1 }, ...actualMarkers.slice(1)]
+  }, parts), false);
 });
 
-test('buildPreview matches Phrase delimiter tag clips against gender source text', () => {
-  const preview = buildPreview(
-    [
-      {
-        rowIndex: 7,
-        sourceRaw: '可这次的事件毕竟牵扯到神弃者同盟和军团，{性别：他|她}的处境非常危险。',
-        sourceNormalized: '可这次的事件毕竟牵扯到神弃者同盟和军团，{性别：他|她}的处境非常危险。',
-        targetRaw: 'ですが、今回は帝国軍まで動いています。{性别：彼|彼女}の身に何かあってからでは――',
-        occurrenceIndex: 1
-      }
-    ],
-    [
-      {
-        domId: 'phrase-gender-tag-clips',
-        sourceRaw: '可这次的事件毕竟牵扯到神弃者同盟和军团，{性别：他1|她2}的处境非常危险。',
-        sourceNormalized: '可这次的事件毕竟牵扯到神弃者同盟和军团，{性别：他1|她2}的处境非常危险。',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: ['{性别：他1|她2}'],
-        platform: 'phrase'
-      }
-    ],
-    {
-      autoStopAfterFilledCount: null,
-      validatePlaceholders: false
-    }
-  );
-
-  assert.equal(preview.readyToFill, 1);
-  assert.equal(preview.items[0]?.status, 'ready');
+test('Phrase uses only observed marker spellings, keeping ordinary placeholders as text', () => {
+  const source = '第12{number_daysRemaining}天到期，%s';
+  const marker = { id: 1, token: '{1}', label: '{number_daysRemaining}', offset: 3 };
+  const segment: PageSegment = {
+    domId: 'phrase-named', sourceRaw: source, sourceNormalized: source,
+    occurrenceIndex: 1, targetRaw: '', isEmptyTarget: true, placeholderTokens: [],
+    platform: 'phrase', phraseSourceMarkers: [marker]
+  };
+  const entry = { rowIndex: 2, occurrenceIndex: 1, sourceRaw: source, sourceNormalized: source, targetRaw: '{number_daysRemaining}日後に期限切れ、%s' };
+  const fillOptions = { autoStopAfterFilledCount: null, validatePlaceholders: true };
+  const result = classifySegment(createEntryLookup([entry]), segment, fillOptions);
+  assert.equal(result.item.status, 'ready');
+  assert.deepEqual(result.phraseMarkerFillPlan?.parts, [
+    { type: 'tag', marker }, { type: 'text', value: '日後に期限切れ、%s' }
+  ]);
+  const otherSource = source.replace('12', '13');
+  assert.equal(buildPreview([{ ...entry, sourceRaw: otherSource, sourceNormalized: otherSource }], [segment]).matched, 0);
+  assert.equal(buildPreview([{ ...entry, targetRaw: entry.targetRaw.replace('%s', '%d') }], [segment], fillOptions).placeholderErrors, 1);
+  const missing = buildPreview([{ ...entry, targetRaw: '日後に期限切れ、%s' }], [segment]);
+  assert.equal(missing.readyToFill, 1);
 });
 
-test('buildPreview matches Phrase numbered empty closing tags', () => {
-  const preview = buildPreview(
-    [
-      {
-        rowIndex: 508,
-        sourceRaw: '因为我<H>亲眼看见了</>。',
-        sourceNormalized: '因为我<H>亲眼看见了</>。',
-        targetRaw: '私は、<H>この目で見た</>から。',
-        occurrenceIndex: 1
-      }
-    ],
-    [
-      {
-        domId: 'phrase-empty-closing-tag-clips',
-        sourceRaw: '因为我1<H>亲眼看见了2</>。',
-        sourceNormalized: '因为我1<H>亲眼看见了2</>。',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: ['<H>', '</>'],
-        platform: 'phrase'
-      }
-    ],
-    {
-      autoStopAfterFilledCount: null,
-      validatePlaceholders: false
-    }
-  );
-
-  assert.equal(preview.readyToFill, 1);
-  assert.equal(preview.items[0]?.status, 'ready');
+test('Phrase can map native markers 1,2,3 to 1,2,2,1', () => {
+  const source = '{first}{second}{third}';
+  const labels = ['{first}', '{second}', '{third}'];
+  const markers = labels.map((label, index) => ({
+    id: index + 1, token: `{${index + 1}}`, label, offset: source.indexOf(label)
+  }));
+  const segment: PageSegment = {
+    domId: 'phrase-repeat', sourceRaw: source, sourceNormalized: source,
+    occurrenceIndex: 1, targetRaw: '', isEmptyTarget: true, placeholderTokens: [],
+    platform: 'phrase', phraseSourceMarkers: markers
+  };
+  const entry = { rowIndex: 2, occurrenceIndex: 1, sourceRaw: source, sourceNormalized: source,
+    targetRaw: '{first}{second}{second}{first}' };
+  const { item, phraseMarkerFillPlan } = classifySegment(createEntryLookup([entry]), segment);
+  assert.equal(item.status, 'ready');
+  assert.deepEqual(phraseMarkerFillPlan?.parts.map(part => part.type === 'tag' ? part.marker.id : part.value), [1, 2, 2, 1]);
 });
 
-test('buildPreview matches Phrase repeated placeholder tag clips with different chip numbers', () => {
-  const preview = buildPreview(
-    [
-      {
-        rowIndex: 2,
-        sourceRaw: '无球移动速度+{1}米每秒，运球移动速度+{1}米每秒',
-        sourceNormalized: '无球移动速度+{1}米每秒，运球移动速度+{1}米每秒',
-        targetRaw: 'オフボール移動速度+{1}m/s、ドリブル移動速度+{1}m/s',
-        occurrenceIndex: 1
-      }
-    ],
-    [
-      {
-        domId: 'phrase-repeated-placeholder-tag-clip',
-        sourceRaw: '无球移动速度+1{1}米每秒，运球移动速度+2{1}米每秒',
-        sourceNormalized: '无球移动速度+1{1}米每秒，运球移动速度+2{1}米每秒',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: ['{1}', '{1}'],
-        platform: 'phrase'
-      }
-    ]
-  );
-
-  assert.equal(preview.readyToFill, 1);
-  assert.equal(
-    preview.items[0]?.translation,
-    'オフボール移動速度+{1}m/s、ドリブル移動速度+{1}m/s'
-  );
+test('Phrase will not use scan-local occurrence count to choose between conflicting translations', () => {
+  const source = '重复文案';
+  const segment: PageSegment = {
+    domId: 'segment-position-50', rowNumber: '51', sourceRaw: source, sourceNormalized: source,
+    occurrenceIndex: 1, targetRaw: '', isEmptyTarget: true, placeholderTokens: [], platform: 'phrase'
+  };
+  const entries = [
+    { rowIndex: 30, occurrenceIndex: 1, sourceRaw: source, sourceNormalized: source, targetRaw: '最初' },
+    { rowIndex: 52, occurrenceIndex: 2, sourceRaw: source, sourceNormalized: source, targetRaw: '二番目' }
+  ];
+  const ambiguous = buildPreview(entries, [segment]).items[0];
+  assert.equal(ambiguous.status, 'unmatched');
+  assert.equal(ambiguous.reason?.includes('different translations'), true);
+  const numbered = entries.map((entry, index) => ({ ...entry, rowNumber: index ? '51' : '29' }));
+  assert.equal(buildPreview(numbered, [segment]).items[0].translation, '二番目');
+  assert.equal(buildPreview(numbered, [{ ...segment, sourceRaw: '另一段', sourceNormalized: '另一段' }]).matched, 0);
+  assert.equal(buildPreview(entries.map(entry => ({ ...entry, targetRaw: '翻訳' })), [segment]).readyToFill, 1);
 });
 
-test('buildPreview matches Phrase numbered color tag clips against plain XML-like source text', () => {
-  const preview = buildPreview(
-    [
-      {
-        rowIndex: 2,
-        sourceRaw: '布拉德米勒<color=#fa7000>背打转身后</color>，利用转身惯性快速勾手<color=#fa7000>投篮</color>。',
-        sourceNormalized: '布拉德米勒<color=#fa7000>背打转身后</color>，利用转身惯性快速勾手<color=#fa7000>投篮</color>。',
-        targetRaw: 'ブラッド・ミラーが<color=#fa7000>ポストターン後</color>、ターンの勢いを利用して素早くフック<color=#fa7000>シュート</color>を決める。',
-        occurrenceIndex: 1
-      }
-    ],
-    [
-      {
-        domId: 'phrase-color-tag-clip-1',
-        sourceRaw: '布拉德米勒1<color=#fa7000>背打转身后2</color>，利用转身惯性快速勾手3<color=#fa7000>投篮4</color>。',
-        sourceNormalized: '布拉德米勒1<color=#fa7000>背打转身后2</color>，利用转身惯性快速勾手3<color=#fa7000>投篮4</color>。',
-        occurrenceIndex: 1,
-        targetRaw: '',
-        isEmptyTarget: true,
-        placeholderTokens: [
-          '<color=#fa7000>',
-          '</color>',
-          '<color=#fa7000>',
-          '</color>'
-        ],
-        platform: 'phrase'
-      }
-    ]
-  );
-
-  assert.equal(preview.readyToFill, 1);
-  assert.equal(
-    preview.items[0]?.translation,
-    'ブラッド・ミラーが<color=#fa7000>ポストターン後</color>、ターンの勢いを利用して素早くフック<color=#fa7000>シュート</color>を決める。'
-  );
+test('Phrase maps repeated observed labels to distinct chips and rejects ambiguous literal copies', () => {
+  const label = '[[bonus]]';
+  const source = `${label} a ${label}`;
+  const markers = [
+    { id: 4, token: '{4}', label, offset: 0 },
+    { id: 8, token: '{8}', label, offset: source.lastIndexOf(label) }
+  ];
+  const segment: PageSegment = {
+    domId: 'phrase-repeated', sourceRaw: source, sourceNormalized: source,
+    occurrenceIndex: 1, targetRaw: '', isEmptyTarget: true, placeholderTokens: [],
+    platform: 'phrase', phraseSourceMarkers: markers
+  };
+  const entry = { rowIndex: 2, occurrenceIndex: 1, sourceRaw: source, sourceNormalized: source, targetRaw: `${label}${label}` };
+  const { phraseMarkerFillPlan } = classifySegment(createEntryLookup([entry]), segment);
+  assert.deepEqual(phraseMarkerFillPlan?.parts, markers.map(marker => ({ type: 'tag', marker })));
+  const ambiguous = buildPreview([entry], [{ ...segment, phraseSourceMarkers: markers.slice(0, 1) }]);
+  assert.equal(/literal text/.test(ambiguous.items[0].reason ?? ''), true);
 });

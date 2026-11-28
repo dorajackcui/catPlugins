@@ -2,30 +2,24 @@ import { runtimeSendMessage } from '../shared/chrome-api.ts';
 import type {
   ApiResponse,
   BackgroundRequest,
-  DebuggerInputOperation
+  DebuggerInputOperation,
+  MemoqDebuggerWriteTextRequest
 } from '../shared/message-types.ts';
 
-export type TrustedTextWriteRequestType = 'MEMOQ_DEBUGGER_WRITE_TEXT' | 'DEBUGGER_WRITE_TEXT';
-
 export interface TrustedTextWriteOptions {
-  requestType: TrustedTextWriteRequestType;
   settleMs?: number;
   resolveElement?: () => HTMLElement | null | undefined;
   requireResolvedElement?: boolean;
 }
 
-export type TrustedInputSequenceOptions = Omit<
-  TrustedTextWriteOptions,
-  'requestType'
-> & {
+export interface TrustedInputSequenceOptions extends TrustedTextWriteOptions {
   focusPosition?: 'center' | 'text-start';
   directInput?: {
     locate(element: HTMLElement): { x: number; y: number } | null;
     operations: DebuggerInputOperation[];
   };
-};
+}
 
-type TrustedTextWriteRequest = Extract<BackgroundRequest, { type: TrustedTextWriteRequestType }>;
 const REQUIRED_RESOLVE_ATTEMPTS = 4;
 const REQUIRED_RESOLVE_DELAY_MS = 40;
 
@@ -47,7 +41,7 @@ function delay(ms: number): Promise<void> {
 export async function writeTrustedTextToElement(
   targetElement: HTMLElement,
   text: string,
-  options: TrustedTextWriteOptions
+  options: TrustedTextWriteOptions = {}
 ): Promise<void> {
   const resolveTarget = async (fallback: HTMLElement): Promise<HTMLElement> => {
     if (!options.resolveElement) {
@@ -85,18 +79,16 @@ export async function writeTrustedTextToElement(
     throw new Error('Trusted text target element is not visible enough to write.');
   }
 
-  if (options.requestType === 'MEMOQ_DEBUGGER_WRITE_TEXT') {
-    console.info('[Phrase Bulk Fill]', 'memoQ trusted-write:coordinates', {
-      x,
-      y,
-      width: rect.width,
-      height: rect.height,
-      textLength: text.length
-    });
-  }
+  console.info('[Phrase Bulk Fill]', 'memoQ trusted-write:coordinates', {
+    x,
+    y,
+    width: rect.width,
+    height: rect.height,
+    textLength: text.length
+  });
 
-  const response = await runtimeSendMessage<TrustedTextWriteRequest, ApiResponse<null>>({
-    type: options.requestType,
+  const response = await runtimeSendMessage<MemoqDebuggerWriteTextRequest, ApiResponse<null>>({
+    type: 'MEMOQ_DEBUGGER_WRITE_TEXT',
     payload: {
       x,
       y,

@@ -21,32 +21,20 @@ export function findStartSegmentIndex(
     return null;
   }
 
+  const domIdIndex = marker.domId ? segments.findIndex(segment => segment.domId === marker.domId) : -1;
+  if (segments[domIdIndex]?.platform === 'phrase') return domIdIndex;
+
   const markerElement = marker.targetElement;
   if (markerElement) {
     const elementIndex = segments.findIndex((segment) =>
-      elementsOverlap(segment.targetElement, markerElement)
+      !(segment.platform === 'phrase' && marker.domId) && elementsOverlap(segment.targetElement, markerElement)
     );
     if (elementIndex >= 0) {
       return elementIndex;
     }
   }
 
-  if (marker.domId) {
-    const domIdIndex = segments.findIndex((segment) => segment.domId === marker.domId);
-    if (domIdIndex >= 0) {
-      return domIdIndex;
-    }
-  }
-
-  return null;
-}
-
-export function filterSegmentsFromStartMarker<T extends RuntimeSegment>(
-  segments: T[],
-  marker: StartMarker | null | undefined
-): T[] {
-  const startIndex = findStartSegmentIndex(segments, marker);
-  return startIndex === null ? segments : segments.slice(startIndex);
+  return domIdIndex >= 0 ? domIdIndex : null;
 }
 
 export function filterSegmentsFromPendingStartMarker<T extends RuntimeSegment>(
